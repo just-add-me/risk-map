@@ -112,7 +112,7 @@ function zoneStyle(f) {
   const p = f.properties;
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
-  const s = { color: t.color, weight: 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.18, inl: 0.1 }[layer] };
+  const s = { color: t.color, weight: layer === "ibf" ? 1.8 : 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.2, inl: 0.1 }[layer] };
   if (t.dash) s.dashArray = t.dash;
   if (layer === "inl" && !inSeason(p)) s.fillOpacity = 0.03;
   if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
