@@ -28,7 +28,8 @@ CHUNK = 50
 STALL_S = 120
 MESSAGE_TYPES = ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport",
                  "ShipStaticData", "StaticDataReport",
-                 # происшествия: текстовые сообщения безопасности и спасательная авиация
+                 # Текстовые сообщения безопасности и спасательная авиация. На 21.10.2026 aisstream их не передаёт
+                 # (приходят только позиции и паспортные данные), подписка оставлена на случай, если начнёт.
                  "SafetyBroadcastMessage", "AddressedSafetyMessage", "StandardSearchAndRescueAircraftReport"]
 
 status: dict[str, Any] = {"connected": 0, "last_message": None, "messages": 0, "last_error": None}

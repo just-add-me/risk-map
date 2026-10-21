@@ -1250,7 +1250,10 @@ function renderIncidents() {
   const inc = state.inc;
   const counts = {};
   inc.items.forEach((it) => { if (!it.test || $("#inc-tests").checked) counts[it.kind] = (counts[it.kind] || 0) + 1; });
-  $("#inc-kinds").innerHTML = Object.entries(inc.kinds).map(([k, d]) => `
+  // текстовые сообщения о безопасности и спасательную авиацию aisstream не передаёт (проверено 21.10.2026) —
+  // показываем эти типы, только если такие события всё же появятся
+  $("#inc-kinds").innerHTML = Object.entries(inc.kinds).filter(([k]) => !["safety", "sar"].includes(k) || counts[k])
+    .map(([k, d]) => `
     <button class="fchip ${inc.hidden.has(k) ? "" : "on"}" data-kind="${k}">
       <span class="inc-dot" style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</span>${esc(d.label)}
       <span class="muted">${counts[k] || 0}</span></button>`).join("");
