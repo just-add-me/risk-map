@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gzip
+import hashlib
 import hmac
 import json
 import logging
 import secrets
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -82,17 +85,30 @@ def api(handler):
 
 
 LOGIN_HTML = (config.STATIC_DIR / "login.html")
+# Поиск фото на Wikimedia идёт строго по одному запросу в секунду. В общем пуле потоков очередь из
+# таких поисков занимала все потоки, и остальные запросы ждали по 10+ секунд — поэтому свой пул.
+PHOTO_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="photo")
+PHOTO_WAIT_S = 6
+
+
+_login_tpl: str = ""
+
+
+def _login_html(error: str) -> str:
+    global _login_tpl
+    if not _login_tpl:
+        _login_tpl = LOGIN_HTML.read_text(encoding="utf-8")
+    return _login_tpl.replace("{{error}}", error)
 
 
 async def login_page(request: Request):
     if request.method == "GET":
-        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace("{{error}}", ""))
+        return HTMLResponse(_login_html(""))
     ip = request.client.host if request.client else "?"
     now = time.time()
     _failed[ip] = [t for t in _failed[ip] if now - t < 900]
     if len(_failed[ip]) >= 10:
-        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace(
-            "{{error}}", "Слишком много попыток. Подождите 15 минут."), status_code=429)
+        return HTMLResponse(_login_html("Слишком много попыток. Подождите 15 минут."), status_code=429)
     form = await request.form()
     user, pwd = str(form.get("username", "")), str(form.get("password", ""))
     if hmac.compare_digest(user, config.ADMIN_USER):
@@ -103,7 +119,7 @@ async def login_page(request: Request):
         _failed[ip].append(now)
         await asyncio.sleep(1.0)
         msg = "Неверный логин или пароль"
-        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace("{{error}}", msg), status_code=401)
+        return HTMLResponse(_login_html(msg), status_code=401)
     request.session["user"] = user
     return RedirectResponse("/", status_code=303)
 
@@ -142,15 +158,37 @@ async def api_status(request: Request):
 
 @api
 async def api_zones(request: Request):
-    fc = zones.raw() or {"type": "FeatureCollection", "features": [], "properties": {}}
-    return Response(json.dumps(fc, ensure_ascii=False, separators=(",", ":")),
-                    media_type="application/json", headers={"Cache-Control": "no-store"})
+    def build() -> object:
+        return zones.raw() or {"type": "FeatureCollection", "features": [], "properties": {}}
+    return await _versioned_json(request, "zones", zones.version(), build)
 
 
 @api
 async def api_ports(request: Request):
-    data = await asyncio.to_thread(ports.with_zones)
-    return JSONResponse({"ports": data}, headers={"Cache-Control": "no-store"})
+    return await _versioned_json(request, "ports", zones.version(), lambda: {"ports": ports.with_zones()})
+
+
+# Большие ответы, которые меняются только при обновлении зон (2 МБ зон, 1100 портов): собираем
+# и сжимаем один раз на версию; браузер с тем же ETag получает 304 «не изменилось» без тела.
+_json_cache: dict[str, tuple[object, str, bytes, bytes]] = {}
+
+
+async def _versioned_json(request: Request, name: str, version: object, build) -> Response:
+    cached = _json_cache.get(name)
+    if not cached or cached[0] != version:
+        def make():
+            raw = json.dumps(build(), ensure_ascii=False, separators=(",", ":")).encode()
+            return raw, gzip.compress(raw, compresslevel=6)
+        raw, gz = await asyncio.to_thread(make)
+        cached = (version, f'"{name}-{hashlib.sha1(raw).hexdigest()[:16]}"', raw, gz)
+        _json_cache[name] = cached
+    _, etag, raw, gz = cached
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache", "Vary": "Accept-Encoding"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(gz, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(raw, media_type="application/json", headers=headers)
 
 
 @api
@@ -268,7 +306,11 @@ async def api_traffic_track(request: Request):
 
 @api
 async def api_ship_photo(request: Request):
-    photo = await asyncio.to_thread(photos.get, request.path_params["imo"])
+    fut = asyncio.get_running_loop().run_in_executor(PHOTO_POOL, photos.get, request.path_params["imo"])
+    try:
+        photo = await asyncio.wait_for(asyncio.shield(fut), timeout=PHOTO_WAIT_S)
+    except asyncio.TimeoutError:     # очередь к Wikimedia длинная — карточка без фото; поиск доделается и закэшируется
+        return JSONResponse({"photo": None, "pending": True}, headers={"Cache-Control": "no-store"})
     return JSONResponse({"photo": photo}, headers={"Cache-Control": "private, max-age=3600"})
 
 
@@ -766,14 +808,39 @@ async def _maintenance_loop(stop: asyncio.Event):
             alerts.check_stale()
             incidents.cleanup()
             rules.periodic()
+            db.cleanup_notifications()
+            now = time.time()
+            for ip in [ip for ip, ts in _failed.items() if not ts or now - max(ts) > 900]:
+                del _failed[ip]
         except Exception:  # noqa: BLE001
             log.exception("Ошибка обслуживания")
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=600)
 
 
+async def _supervise(name: str, factory, stop: asyncio.Event, first_delay: float = 5) -> None:
+    """Фоновая задача упала из-за непредвиденной ошибки — перезапускаем, а не теряем её молча."""
+    delay = first_delay
+    while not stop.is_set():
+        started = time.monotonic()
+        try:
+            await factory(stop)
+            return                                  # задача завершилась сама (например, нет ключа AIS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("Фоновая задача «%s» упала — перезапуск через %d с", name, delay)
+        if time.monotonic() - started > 600:        # долго проработала — значит, сбой разовый
+            delay = first_delay
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+        delay = min(delay * 2, 300)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app):
+    # запросы карты, поиск, построение зон выполняются в потоках; на 2 ядрах стандартный пул — всего 6
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=16, thread_name_prefix="work"))
     db.connect()
     zones.load_active()
     if not config.ADMIN_PASSWORD:
@@ -784,11 +851,9 @@ async def lifespan(app):
         from .ais import aisstream as ais_source
     else:
         from .ais import simulator as ais_source
-    tasks = [asyncio.create_task(ais_source.run(stop)),
-             asyncio.create_task(_circular_loop(stop)),
-             asyncio.create_task(_maintenance_loop(stop)),
-             asyncio.create_task(_traffic_snapshot_loop(stop)),
-             asyncio.create_task(_screening_loop(stop))]
+    tasks = [asyncio.create_task(_supervise(name, fn, stop)) for name, fn in (
+        ("приём AIS", ais_source.run), ("циркуляры и IBF", _circular_loop), ("обслуживание", _maintenance_loop),
+        ("снимок судов", _traffic_snapshot_loop), ("санкции и задержания", _screening_loop))]
     try:
         yield
     finally:
@@ -796,6 +861,7 @@ async def lifespan(app):
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        PHOTO_POOL.shutdown(wait=False, cancel_futures=True)
         try:
             n = traffic.save()
             log.info("Снимок судов сохранён при остановке: %d", n)

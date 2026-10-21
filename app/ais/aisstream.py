@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from typing import Any, Optional
 
 from .. import config, db
@@ -23,6 +24,8 @@ from . import incidents, ingest, shipinfo, traffic
 log = logging.getLogger(__name__)
 
 CHUNK = 50
+# весь мир шлёт десятки сообщений в секунду: если 2 минуты тишины — соединение «зависло», переподключаемся
+STALL_S = 120
 MESSAGE_TYPES = ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport",
                  "ShipStaticData", "StaticDataReport",
                  # происшествия: текстовые сообщения безопасности и спасательная авиация
@@ -138,6 +141,18 @@ def handle(raw: str | bytes) -> None:
                 ingest.static_data(mmsi, **info)
 
 
+_bad_logged = 0.0
+
+
+def _log_bad_message() -> None:
+    """Ошибка разбора сообщения — в журнал не чаще раза в минуту (поток идёт десятками в секунду)."""
+    global _bad_logged
+    now = time.monotonic()
+    if now - _bad_logged > 60:
+        _bad_logged = now
+        log.exception("aisstream: не удалось обработать сообщение (следующие такие ошибки минуту не пишутся)")
+
+
 async def _connection(chunk: Optional[list[str]], stop: asyncio.Event) -> None:
     """chunk — MMSI для фильтра; None — весь мир без фильтра."""
     import websockets  # импорт здесь: в демо-режиме библиотека не нужна
@@ -156,13 +171,18 @@ async def _connection(chunk: Optional[list[str]], stop: asyncio.Event) -> None:
                 log.info("aisstream: подписка на %s", "все суда мира" if chunk is None else f"{len(chunk)} судов")
                 backoff = 5
                 try:
-                    async for raw in ws:
-                        if stop.is_set():
+                    while not stop.is_set():
+                        try:
+                            # без фильтра по MMSI тишина означает сбой; с фильтром суда могут молчать часами
+                            raw = await asyncio.wait_for(ws.recv(), timeout=STALL_S if chunk is None else None)
+                        except asyncio.TimeoutError:
+                            status["last_error"] = f"нет данных {STALL_S} с — переподключение"
+                            log.warning("aisstream: нет сообщений %d с, переподключаюсь", STALL_S)
                             break
                         try:
                             handle(raw)
                         except Exception:  # noqa: BLE001
-                            log.exception("aisstream: не удалось обработать сообщение")
+                            _log_bad_message()
                 finally:
                     status["connected"] -= 1
         except asyncio.CancelledError:

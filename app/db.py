@@ -2,7 +2,7 @@
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from . import config
@@ -184,6 +184,8 @@ def connect() -> sqlite3.Connection:
             _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False, isolation_level=None)
             _conn.row_factory = sqlite3.Row
             _conn.execute("PRAGMA journal_mode=WAL")
+            # в режиме WAL NORMAL безопасен (при сбое питания теряются лишь последние транзакции) и заметно быстрее FULL
+            _conn.execute("PRAGMA synchronous=NORMAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _migrate_fleet_owner(_conn)
             _conn.executescript(SCHEMA)
@@ -196,6 +198,9 @@ def connect() -> sqlite3.Connection:
             # уведомление может быть адресовано одному пользователю (сработало его правило)
             if "username" not in {r[1] for r in _conn.execute("PRAGMA table_info(notifications)")}:
                 _conn.execute("ALTER TABLE notifications ADD COLUMN username TEXT")
+            # индексы для выборки уведомлений пользователя (колонка username появляется только после миграции)
+            _conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_mmsi ON notifications(mmsi)")
+            _conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(username)")
         return _conn
 
 
@@ -256,6 +261,18 @@ def kv_set(key: str, value: Any) -> None:
         "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, json.dumps(value, ensure_ascii=False)),
     )
+
+
+NOTIFICATIONS_KEEP_DAYS = 90
+
+
+def cleanup_notifications() -> int:
+    """Уведомления старше 90 дней и их отметки «прочитано» — удаляем, иначе таблица растёт бесконечно."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NOTIFICATIONS_KEEP_DAYS)).replace(microsecond=0).isoformat()
+    n = execute("DELETE FROM notifications WHERE ts < ?", (cutoff,)).rowcount
+    if n:
+        execute("DELETE FROM notification_reads WHERE notification_id NOT IN (SELECT id FROM notifications)")
+    return n
 
 
 def notify(kind: str, severity: str, title: str, body: str = "",

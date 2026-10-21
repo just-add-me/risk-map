@@ -5,6 +5,12 @@
 	@blocked not remote_ip {$ALLOWED_IPS}
 	abort @blocked
 
+	# больше 30 МБ не принимаем: защита от огромных запросов (в том числе на страницу входа без пароля);
+	# самые большие законные — PDF циркуляра и файл флота, они на порядок меньше
+	request_body {
+		max_size 30MB
+	}
+
 	encode gzip
 	reverse_proxy app:8000
 	header {

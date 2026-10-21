@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Optional
 
+import numpy as np
+
 from .. import config
 from . import shipinfo
 
@@ -32,15 +34,29 @@ TRAIL_POINTS = 18
 # что значки налезают друг на друга. С CLUSTER_MAX_ZOOM — все суда по отдельности
 CLUSTER_PX = 36
 CLUSTER_MAX_ZOOM = 10
+# защита памяти: больше судов не держим (вытесняются давно не выходившие на связь)
+MAX_SHIPS = 150_000
+# одинаковые запросы карты (несколько вкладок, сдвиг + автообновление) отдаём из кэша
+QUERY_CACHE_S = 3.0
+
+_CATS = list(shipinfo.CATEGORIES)
+_CAT_I = {c: i for i, c in enumerate(_CATS)}
 
 
 def min_group(zoom: int) -> int:
     """Сколько судов в ячейке нужно для группы: на мелком масштабе — 2, на крупном — больше."""
     return 2 if zoom <= 4 else 3 if zoom <= 6 else 5
 
+
 _lock = threading.Lock()
 _ships: dict[str, dict] = {}
 _last_cleanup = 0.0
+_qcache: dict[tuple, tuple[float, dict]] = {}
+_stats: tuple[float, dict] = (0.0, {})
+# массивы координат всех судов для запросов карты: собираются не чаще раза в SNAP_S секунд
+SNAP_S = 2.0
+_snap_lock = threading.Lock()
+_snap: tuple = (0.0, [], None, None, None)
 
 
 def update_position(mmsi: str, lat: float, lon: float, sog: Optional[float], cog: Optional[float],
@@ -68,6 +84,8 @@ def update_static(mmsi: str, **fields) -> None:
     with _lock:
         s = _ships.setdefault(mmsi, {"mmsi": mmsi})
         s.update({k: v for k, v in fields.items() if v not in (None, "")})
+        if fields.get("ship_type"):
+            s["cat"] = shipinfo.category(fields["ship_type"])     # категорию считаем один раз, а не в каждом запросе
         s["static_ts"] = time.time()
 
 
@@ -79,6 +97,12 @@ def _maybe_cleanup(now: float) -> None:
     with _lock:
         for k in [k for k, s in _ships.items() if _expired(s, now)]:
             del _ships[k]
+        extra = len(_ships) - MAX_SHIPS
+        if extra > 0:
+            oldest = sorted(_ships, key=lambda k: max(_ships[k].get("ts", 0), _ships[k].get("static_ts", 0)))
+            for k in oldest[:extra]:
+                del _ships[k]
+            log.warning("Суда в памяти: достигнут предел %d, вытеснено %d", MAX_SHIPS, extra)
 
 
 def _expired(s: dict, now: float) -> bool:
@@ -112,6 +136,7 @@ def load() -> int:
             if _expired(s, now) or s["mmsi"] in _ships:
                 continue
             s["trail"] = [tuple(p) for p in s.get("trail", [])]
+            s["cat"] = shipinfo.category(s.get("ship_type"))
             if now - s.get("ts", 0) > POSITION_TTL:       # позиция устарела — оставляем только паспорт
                 for k in ("lat", "lon", "sog", "cog", "heading", "ts", "trail", "nav"):
                     s.pop(k, None)
@@ -160,54 +185,116 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
           limit: int = 5000, exclude: Optional[set[str]] = None) -> dict:
     """Суда в прямоугольнике карты; на мелком масштабе близкие суда объединяются в группы.
 
-    Сетка — ячейки ~CLUSTER_PX пикселей в проекции Меркатора (как на карте). Ячейка с одним
-    судном отдаётся как судно, с несколькими — как группа с числом и рамкой для приближения.
+    Сетка — ячейки ~CLUSTER_PX пикселей в проекции Меркатора (как на карте). Ячейка, где судов
+    меньше min_group(zoom), отдаётся судами, иначе — группой с числом и рамкой для приближения.
     cats — какие категории показывать (счётчики по категориям считаются по всем).
     """
+    key = (round(west, 2), round(south, 2), round(east, 2), round(north, 2), int(zoom),
+           tuple(sorted(cats)) if cats is not None else None, limit, tuple(sorted(exclude or ())))
     now = time.time()
-    wrap = west > east          # прямоугольник через линию перемены дат
-    counts = {k: 0 for k in shipinfo.CATEGORIES}
-    with _lock:
-        ships = [s for s in _ships.values() if s.get("ts") and now - s["ts"] <= POSITION_TTL]
-    picked = []
-    for s in ships:
-        lat, lon = s["lat"], s["lon"]
-        if not (south <= lat <= north and ((lon >= west or lon <= east) if wrap else west <= lon <= east)):
-            continue
-        cat = shipinfo.category(s.get("ship_type"))
-        counts[cat] += 1
-        if (cats is None or cat in cats) and not (exclude and s["mmsi"] in exclude):
-            picked.append((s, cat))
-    total = len(picked)
-    cell = None if zoom >= CLUSTER_MAX_ZOOM else CLUSTER_PX * 360.0 / (256 * 2 ** max(zoom, 0))
-    groups: dict[tuple[int, int], list] = {}
-    for s, cat in picked:
-        if cell is None:
-            key = (id(s), 0)
-        else:
-            key = (math.floor(s["lon"] / cell), math.floor(_merc_y(s["lat"]) / cell))
-        groups.setdefault(key, []).append((s, cat))
-    singles, clusters = [], []
+    hit = _qcache.get(key)
+    if hit and now - hit[0] < QUERY_CACHE_S:
+        return hit[1]
+    res = _query(west, south, east, north, zoom, cats, limit, exclude or set(), now)
+    if len(_qcache) > 64:
+        _qcache.clear()
+    _qcache[key] = (now, res)
+    return res
+
+
+def reset_caches() -> None:
+    """Сбросить кэши запросов карты (для тестов: данные меняются быстрее, чем живут кэши)."""
+    global _snap, _stats
+    _snap, _stats = (0.0, [], None, None, None), (0.0, {})
+    _qcache.clear()
+
+
+def _arrays(now: float):
+    """Живые суда и их координаты/категории массивами numpy; переиспользуются SNAP_S секунд."""
+    global _snap
+    with _snap_lock:
+        if now - _snap[0] < SNAP_S:
+            return _snap[1:]
+        with _lock:
+            live = [s for s in _ships.values() if s.get("ts") and now - s["ts"] <= POSITION_TTL]
+        n = len(live)
+        lat = np.fromiter((s["lat"] for s in live), float, n)
+        lon = np.fromiter((s["lon"] for s in live), float, n)
+        cat = np.fromiter((_CAT_I[s.get("cat", "other")] for s in live), np.int64, n)
+        _snap = (now, live, lat, lon, cat)
+        return _snap[1:]
+
+
+def _query(west, south, east, north, zoom, cats, limit, exclude, now) -> dict:
+    counts = {k: 0 for k in _CATS}
+    live, lat, lon, cat = _arrays(now)
+    n = len(live)
+    if not n:
+        return {"ships": [], "clusters": [], "counts": counts, "total": 0}
+    # всё дальше — векторами numpy: в 10–20 раз быстрее цикла по десяткам тысяч судов
+    inb = (lat >= south) & (lat <= north)
+    inb &= ((lon >= west) | (lon <= east)) if west > east else ((lon >= west) & (lon <= east))
+    for i, c in enumerate(np.bincount(cat[inb], minlength=len(_CATS))):
+        counts[_CATS[i]] = int(c)
+    sel = inb
+    if cats is not None:
+        sel = sel & np.isin(cat, [_CAT_I[c] for c in cats if c in _CAT_I])
+    if exclude:
+        sel = sel & ~np.fromiter((s["mmsi"] in exclude for s in live), bool, n)
+    idx = np.nonzero(sel)[0]
+    clusters: list[dict] = []
+    singles = idx
+    if zoom < CLUSTER_MAX_ZOOM and idx.size:
+        singles, clusters = _cluster(idx, lat, lon, cat, zoom)
+    if singles.size > limit:                     # свежие позиции важнее
+        ts = np.fromiter((live[i]["ts"] for i in singles), float, singles.size)
+        singles = singles[np.argsort(-ts, kind="stable")[:limit]]
+    rows = []
+    for i in singles:
+        s = live[i]
+        rows.append([s["mmsi"], s["lat"], s["lon"], s.get("cog"), s.get("sog"), _CATS[cat[i]],
+                     s.get("name") or "", s.get("length")])
+    return {"ships": rows, "clusters": clusters, "counts": counts, "total": int(idx.size)}
+
+
+def _cluster(idx, lat, lon, cat, zoom):
+    """Группировка выбранных судов по сетке; соседние группы сливаются, чтобы кружки не налезали."""
+    cell = CLUSTER_PX * 360.0 / (256 * 2 ** max(zoom, 0))
+    la, lo, ca = lat[idx], lon[idx], cat[idx]
+    my = np.degrees(np.log(np.tan(np.pi / 4 + np.radians(np.clip(la, -85, 85)) / 2)))
+    keys = np.floor(lo / cell).astype(np.int64) * 1_000_003 + np.floor(my / cell).astype(np.int64)
+    _, inv, cnt = np.unique(keys, return_inverse=True, return_counts=True)
+    g, k = cnt.size, len(_CATS)
+    # суммы, рамки и счётчики категорий по каждой ячейке
+    sum_lo, sum_my, sum_la = (np.bincount(inv, w, g) for w in (lo, my, la))
+    lo_min, lo_max, la_min, la_max = np.full(g, np.inf), np.full(g, -np.inf), np.full(g, np.inf), np.full(g, -np.inf)
+    np.minimum.at(lo_min, inv, lo)
+    np.maximum.at(lo_max, inv, lo)
+    np.minimum.at(la_min, inv, la)
+    np.maximum.at(la_max, inv, la)
+    by_cat = np.bincount(inv * k + ca, minlength=g * k).reshape(g, k)
     need = min_group(zoom)
-    if cell is not None:
-        groups = _merge_close(groups, cell, need)
-    for members in groups.values():
-        if len(members) < need:
-            for s, cat in members:
-                singles.append((s["ts"], [s["mmsi"], s["lat"], s["lon"], s.get("cog"), s.get("sog"), cat,
-                                          s.get("name") or "", s.get("length")]))
-            continue
-        lats = [m[0]["lat"] for m in members]
-        lons = [m[0]["lon"] for m in members]
-        by_cat: dict[str, int] = {}
-        for _, cat in members:
-            by_cat[cat] = by_cat.get(cat, 0) + 1
-        clusters.append({"lat": round(sum(lats) / len(lats), 4), "lon": round(sum(lons) / len(lons), 4),
-                         "n": len(members), "bbox": [min(lons), min(lats), max(lons), max(lats)], "cats": by_cat})
-    if len(singles) > limit:
-        singles.sort(key=lambda r: -r[0])      # свежие позиции важнее
-        singles = singles[:limit]
-    return {"ships": [r[1] for r in singles], "clusters": clusters, "counts": counts, "total": total}
+    big = np.nonzero(cnt >= need)[0]
+    merged: list[list] = []                       # [n, Σlon, Σlat, lon_min, lon_max, lat_min, lat_max, категории]
+    centers: list[tuple[float, float]] = []
+    for gi in big[np.argsort(-cnt[big], kind="stable")]:
+        x, y = sum_lo[gi] / cnt[gi], sum_my[gi] / cnt[gi]
+        for m, (cx, cy) in zip(merged, centers):
+            if abs(cx - x) < cell and abs(cy - y) < cell:
+                m[0] += cnt[gi]; m[1] += sum_lo[gi]; m[2] += sum_la[gi]           # noqa: E702
+                m[3] = min(m[3], lo_min[gi]); m[4] = max(m[4], lo_max[gi])     # noqa: E702
+                m[5] = min(m[5], la_min[gi]); m[6] = max(m[6], la_max[gi])     # noqa: E702
+                m[7] = m[7] + by_cat[gi]
+                break
+        else:
+            merged.append([cnt[gi], sum_lo[gi], sum_la[gi], lo_min[gi], lo_max[gi], la_min[gi], la_max[gi],
+                           by_cat[gi].copy()])
+            centers.append((x, y))
+    clusters = [{"lat": round(float(m[2] / m[0]), 4), "lon": round(float(m[1] / m[0]), 4), "n": int(m[0]),
+                 "bbox": [float(m[3]), float(m[5]), float(m[4]), float(m[6])],
+                 "cats": {_CATS[j]: int(c) for j, c in enumerate(m[7]) if c}} for m in merged]
+    singles = idx[cnt[inv] < need]
+    return singles, clusters
 
 
 def find_imo(imo: str) -> Optional[str]:
@@ -270,31 +357,13 @@ def near(lat: float, lon: float, nm: float) -> list[dict]:
     return out
 
 
-def _merc_y(lat: float) -> float:
-    return math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(lat, 85), -85)) / 2)))
-
-
-def _merge_close(groups: dict, cell: float, need: int) -> dict:
-    """Соседние группы, центры которых ближе ячейки, сливаются — иначе кружки налезают друг на друга."""
-    big = sorted((m for m in groups.values() if len(m) >= need), key=len, reverse=True)
-    rest = [m for m in groups.values() if len(m) < need]
-    merged: list[list] = []
-    centers: list[tuple[float, float]] = []
-    for members in big:
-        x = sum(m[0]["lon"] for m in members) / len(members)
-        y = sum(_merc_y(m[0]["lat"]) for m in members) / len(members)
-        for i, (cx, cy) in enumerate(centers):
-            if abs(cx - x) < cell and abs(cy - y) < cell:
-                merged[i].extend(members)
-                break
-        else:
-            merged.append(list(members))
-            centers.append((x, y))
-    return {i: m for i, m in enumerate(merged + rest)}
-
-
 def stats() -> dict:
+    """Счётчики для шапки; запрашиваются каждые 10 с каждым открытым окном — считаем не чаще раза в 10 с."""
+    global _stats
     now = time.time()
+    if now - _stats[0] < 10:
+        return _stats[1]
     with _lock:
         live = sum(1 for s in _ships.values() if s.get("ts") and now - s["ts"] <= POSITION_TTL)
-        return {"ships": live, "known": len(_ships)}
+        _stats = (now, {"ships": live, "known": len(_ships)})
+    return _stats[1]

@@ -239,11 +239,13 @@ def test_shipinfo_and_traffic():
                                                                 "Sog": 13.3, "Cog": 45, "TrueHeading": 511}}}))
     d = traffic.details(traffic.get("538010472"))
     assert d["category"] == "tanker" and d["length"] == 250 and d["draught"] == 12.4 and d["heading"] is None
+    traffic.reset_caches()
     r = traffic.query(27, 40, 42, 48, 12)
     assert r["total"] == 1 and r["counts"]["tanker"] == 1 and r["ships"][0][0] == "538010472"
     assert traffic.query(170, 40, -170, 48, 12)["total"] == 0        # прямоугольник через 180°
     # группировка: два судна рядом на мелком масштабе — одна группа, на крупном — два судна
     traffic.update_position("538010473", 42.48, 28.26, 10.0, 0.0, None, "NEIGHBOUR", "A")
+    traffic.reset_caches()
     far = traffic.query(27, 40, 42, 48, 4)
     assert far["ships"] == [] and far["clusters"][0]["n"] == 2
     assert len(traffic.query(27, 40, 42, 48, 8)["ships"]) == 2       # двух судов мало для группы
@@ -499,3 +501,29 @@ def test_screening_parsers_and_fleet_hit():
     assert db.query_one("SELECT severity FROM notifications WHERE mmsi='538099001'")["severity"] == "critical"
     assert screening.lookup("9273387")["sanctions"][0]["label"] == "Великобритания"
     ports._ports = None
+
+
+def test_supervisor_restarts_and_notifications_cleanup():
+    import asyncio
+    from app import main
+    calls = []
+
+    async def flaky(stop):
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("сбой")        # первые два запуска падают
+        stop.set()
+
+    async def run():
+        stop = asyncio.Event()
+        await asyncio.wait_for(main._supervise("тест", flaky, stop, first_delay=0.01), timeout=5)
+    asyncio.run(run())
+    assert len(calls) == 3
+    old = db.notify("system", "info", "старое")
+    db.execute("UPDATE notifications SET ts='2020-01-01T00:00:00+00:00' WHERE id=?", (old,))
+    db.execute("INSERT INTO notification_reads(username, notification_id) VALUES('admin', ?)", (old,))
+    fresh = db.notify("system", "info", "новое")
+    assert db.cleanup_notifications() >= 1
+    ids = {r["id"] for r in db.query("SELECT id FROM notifications")}
+    assert old not in ids and fresh in ids
+    assert not db.query("SELECT 1 FROM notification_reads WHERE notification_id=?", (old,))

@@ -7,6 +7,12 @@ services:
       - ./data:/data
     expose:
       - "8000"
+    # журналы ограничены: до 5 файлов по 10 МБ, иначе они растут бесконечно и занимают весь диск
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   caddy:
     image: caddy:2
@@ -24,6 +30,12 @@ services:
       - caddy_config:/config
     depends_on:
       - app
+    # журналы ограничены: до 5 файлов по 10 МБ, иначе они растут бесконечно и занимают весь диск
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   caddy_data:

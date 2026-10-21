@@ -800,7 +800,11 @@ async function hydrateCard(popup, onTrack) {
   const imo = el.dataset.imo;
   if (!imo) return;
   try {
-    const { photo } = await api(`/api/photo/${encodeURIComponent(imo)}`);
+    let { photo, pending } = await api(`/api/photo/${encodeURIComponent(imo)}`);
+    if (pending && el.isConnected) {          // очередь к Wikimedia — спросим ещё раз чуть позже
+      await new Promise((r) => setTimeout(r, 4000));
+      ({ photo } = await api(`/api/photo/${encodeURIComponent(imo)}`));
+    }
     if (!photo || !el.isConnected) return;
     const box = el.querySelector(".sc-photo");
     const img = new Image();
@@ -1483,12 +1487,10 @@ async function loadStatus() {
 
 async function refreshAll(forceZones = false) {
   try {
+    // статус нужен, чтобы понять, изменились ли зоны; остальное грузим параллельно, а не по очереди
     await loadStatus();
-    await loadZones(forceZones);
-    await loadFleets();
-    await loadTraffic();
-    await loadIncidents().catch(() => {});
-    await loadNotifications();
+    await Promise.all([loadZones(forceZones), loadFleets(), loadNotifications(), loadIncidents().catch(() => {})]);
+    await loadTraffic();                         // после флотов: суда флотов рисуются отдельно
     if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
 }
