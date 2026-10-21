@@ -55,10 +55,10 @@ a { color: var(--accent); }
 .map-wrap { flex: 1; position: relative; min-width: 0; }
 #map { position: absolute; inset: 0; background: #0a1418; }
 
-.tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; scrollbar-width: thin; }
 .tab {
-  flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: 12px 4px 10px;
-  color: var(--muted); cursor: pointer; font-weight: 500; white-space: nowrap;
+  flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 12px 4px 10px;
+  color: var(--muted); cursor: pointer; font-weight: 500; white-space: nowrap; padding-left: 10px; padding-right: 10px;
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -362,3 +362,23 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .inc-icon.urgent span { animation: inc-pulse 1.6s ease-out infinite; }
 @keyframes inc-pulse { 0% { box-shadow: 0 0 0 0 rgba(255,59,48,.7); } 100% { box-shadow: 0 0 0 14px rgba(255,59,48,0); } }
 @media (prefers-reduced-motion: reduce) { .inc-icon.urgent span { animation: none; } }
+
+/* ---------- правила ---------- */
+.rule-form { display: grid; gap: 10px; }
+.rule-form label { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.rule-form select, .rule-form input[type=text], .rule-form input:not([type]), .rule-form input[type=number] {
+  padding: 7px 9px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); }
+.rule-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rule-checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.rule-checks label { display: flex; gap: 5px; align-items: center; color: var(--text); }
+.rule-list { list-style: none; margin: 0; padding: 0; }
+.rule-item { display: flex; gap: 10px; padding: 10px 6px; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.rule-item.off { opacity: .5; }
+.rule-item .ri-main { flex: 1; min-width: 0; }
+.rule-item .ri-name { font-weight: 600; }
+.rule-item .ri-sev { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.rule-item .ri-actions { display: flex; gap: 6px; }
+.sub-h .check { display: inline-flex; margin-left: 10px; text-transform: none; letter-spacing: 0; }
+.draw-hint { border-color: var(--accent); }
+.draw-hint .row { gap: 8px; }
+.drawing #map { cursor: crosshair; }

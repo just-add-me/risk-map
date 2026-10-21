@@ -21,7 +21,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import access, alerts, config, db, fleet_import, users, zones
+from . import access, alerts, config, db, fleet_import, rules, users, zones
 from .ais import incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -49,13 +49,15 @@ def _user(request: Request) -> str:
 
 
 # уведомления, которые видит пользователь: общие (без судна) и по судам его флотов
-NOTIF_VISIBLE = f"(n.mmsi IS NULL OR n.mmsi IN ({access.VISIBLE_MMSI_SQL}))"
+# параметры NOTIF_VISIBLE: username ×3
+NOTIF_VISIBLE = (f"(CASE WHEN n.username IS NOT NULL THEN n.username = ? "
+                 f"ELSE (n.mmsi IS NULL OR n.mmsi IN ({access.VISIBLE_MMSI_SQL})) END)")
 NOTIF_UNREAD = "NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.username=? AND r.notification_id=n.id)"
 
 
 def _unread(user: str) -> int:
     row = db.query_one(f"SELECT COUNT(*) AS n FROM notifications n WHERE {NOTIF_VISIBLE} AND {NOTIF_UNREAD}",
-                       (user, user, user))
+                       (user, user, user, user))
     return row["n"] if row else 0
 
 
@@ -488,6 +490,114 @@ async def api_track(request: Request):
     return JSONResponse({"mmsi": mmsi, "points": rows})
 
 
+# --------------------------------------------------------------------------- API: правила и области
+def _rule_target_name(r: dict) -> str:
+    if r["target_type"] == "fleet":
+        f = db.query_one("SELECT name FROM fleets WHERE id=?", (int(r["target"]),))
+        return f"флот «{f['name']}»" if f else "удалённый флот"
+    if r["target_type"] == "vessel":
+        return alerts.vessel_label(r["target"])
+    return "все мои флоты"
+
+
+def _rule_body(body: dict, user: str) -> dict:
+    kind = str(body.get("kind", ""))
+    params = rules.validate(kind, body.get("params") or {}, user)
+    ttype = body.get("target_type") if body.get("target_type") in ("all", "fleet", "vessel") else "all"
+    target = str(body.get("target") or "")
+    if ttype == "fleet" and not access.level(int(target or 0), user):
+        raise ValueError("Флот не найден")
+    if ttype == "vessel" and target not in access.mmsis(user):
+        raise ValueError("Судно не найдено в ваших флотах")
+    name = str(body.get("name") or "").strip()[:100] or rules.KINDS[kind]
+    return {"kind": kind, "params": json.dumps(params, ensure_ascii=False), "target_type": ttype,
+            "target": target if ttype != "all" else None, "name": name,
+            "audience": "fleet" if body.get("audience") == "fleet" else "me",
+            "severity": body.get("severity") if body.get("severity") in ("critical", "warning", "info") else "warning"}
+
+
+@api
+async def api_rules(request: Request):
+    user = _user(request)
+    if request.method == "POST":
+        r = _rule_body(await request.json(), user)
+        cur = db.execute("INSERT INTO rules(owner, name, enabled, kind, target_type, target, params, audience, severity, "
+                         "created_at) VALUES(?,?,1,?,?,?,?,?,?,?)",
+                         (user, r["name"], r["kind"], r["target_type"], r["target"], r["params"], r["audience"],
+                          r["severity"], db.now_iso()))
+        return JSONResponse({"ok": True, "id": cur.lastrowid})
+    from .ais import incidents as inc
+    items = []
+    for row in db.query("SELECT * FROM rules WHERE owner=? ORDER BY id DESC", (user,)):
+        r = {**row, "params": json.loads(row["params"])}
+        items.append({**r, "description": rules.describe(r), "target_name": _rule_target_name(r)})
+    return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES,
+                         "incident_kinds": {k: v["label"] for k, v in inc.KINDS.items()}})
+
+
+@api
+async def api_rule(request: Request):
+    user = _user(request)
+    rid = int(request.path_params["rid"])
+    if not db.query_one("SELECT id FROM rules WHERE id=? AND owner=?", (rid, user)):
+        raise ValueError("Правило не найдено")
+    if request.method == "DELETE":
+        db.execute("DELETE FROM rules WHERE id=?", (rid,))
+        return JSONResponse({"ok": True})
+    body = await request.json()
+    if set(body) == {"enabled"}:
+        db.execute("UPDATE rules SET enabled=? WHERE id=?", (1 if body["enabled"] else 0, rid))
+        return JSONResponse({"ok": True})
+    r = _rule_body(body, user)
+    db.execute("UPDATE rules SET name=?, kind=?, target_type=?, target=?, params=?, audience=?, severity=? WHERE id=?",
+               (r["name"], r["kind"], r["target_type"], r["target"], r["params"], r["audience"], r["severity"], rid))
+    db.execute("DELETE FROM rule_state WHERE rule_id=?", (rid,))      # условие поменялось — наблюдаем заново
+    return JSONResponse({"ok": True})
+
+
+def _check_polygon(geom: dict) -> dict:
+    ring = (geom or {}).get("coordinates", [[]])[0] if (geom or {}).get("type") == "Polygon" else []
+    pts = [(float(x), float(y)) for x, y in ring]
+    if len(pts) < 4 or pts[0] != pts[-1]:
+        raise ValueError("Область — замкнутый многоугольник минимум из 3 точек")
+    if len(pts) > 500 or not all(-180 <= x <= 180 and -90 <= y <= 90 for x, y in pts):
+        raise ValueError("Некорректные координаты области")
+    return {"type": "Polygon", "coordinates": [[[round(x, 5), round(y, 5)] for x, y in pts]]}
+
+
+@api
+async def api_areas(request: Request):
+    user = _user(request)
+    if request.method == "POST":
+        body = await request.json()
+        name = str(body.get("name") or "").strip()[:80] or "Моя область"
+        geom = _check_polygon(body.get("geometry"))
+        cur = db.execute("INSERT INTO areas(owner, name, geometry, created_at) VALUES(?,?,?,?)",
+                         (user, name, json.dumps(geom), db.now_iso()))
+        rules.areas_changed()
+        return JSONResponse({"ok": True, "id": cur.lastrowid})
+    rows = db.query("SELECT id, name, geometry FROM areas WHERE owner=? ORDER BY name", (user,))
+    return JSONResponse({"items": [{**r, "geometry": json.loads(r["geometry"])} for r in rows]})
+
+
+@api
+async def api_area(request: Request):
+    user = _user(request)
+    aid = int(request.path_params["aid"])
+    if not db.query_one("SELECT id FROM areas WHERE id=? AND owner=?", (aid, user)):
+        raise ValueError("Область не найдена")
+    if request.method == "DELETE":
+        used = db.query("SELECT name FROM rules WHERE owner=? AND params LIKE ?", (user, f'%"area:{aid}"%'))
+        if used:
+            raise ValueError("Область используется в правилах: " + ", ".join(r["name"] for r in used))
+        db.execute("DELETE FROM areas WHERE id=?", (aid,))
+    else:
+        body = await request.json()
+        db.execute("UPDATE areas SET name=? WHERE id=?", (str(body.get("name") or "").strip()[:80] or "Моя область", aid))
+    rules.areas_changed()
+    return JSONResponse({"ok": True})
+
+
 # --------------------------------------------------------------------------- API: уведомления
 @api
 async def api_notifications(request: Request):
@@ -497,7 +607,7 @@ async def api_notifications(request: Request):
     user = _user(request)
     sql = (f"SELECT n.*, CASE WHEN {NOTIF_UNREAD} THEN 0 ELSE 1 END AS is_read FROM notifications n "
            f"WHERE n.id > ? AND {NOTIF_VISIBLE}" + (f" AND {NOTIF_UNREAD}" if only_unread else ""))
-    params = [user, after, user, user] + ([user] if only_unread else [])
+    params = [user, after, user, user, user] + ([user] if only_unread else [])
     rows = db.query(sql + " ORDER BY n.id DESC LIMIT ?", (*params, limit))
     for r in rows:
         r["zone_name"] = zones.zone_name(r["zone_id"]) if r["zone_id"] else None
@@ -510,7 +620,7 @@ async def api_notifications_read(request: Request):
     user = _user(request)
     if body.get("all"):
         db.execute(f"INSERT OR IGNORE INTO notification_reads(username, notification_id) "
-                   f"SELECT ?, n.id FROM notifications n WHERE {NOTIF_VISIBLE}", (user, user, user))
+                   f"SELECT ?, n.id FROM notifications n WHERE {NOTIF_VISIBLE}", (user, user, user, user))
     else:
         ids = [int(i) for i in body.get("ids", [])][:500]
         for i in ids:
@@ -625,6 +735,7 @@ async def _maintenance_loop(stop: asyncio.Event):
             ingest.cleanup_trails()
             alerts.check_stale()
             incidents.cleanup()
+            rules.periodic()
         except Exception:  # noqa: BLE001
             log.exception("Ошибка обслуживания")
         with contextlib.suppress(asyncio.TimeoutError):
@@ -670,6 +781,10 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/incidents", api_incidents),
+    Route("/api/rules", api_rules, methods=["GET", "POST"]),
+    Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),
+    Route("/api/areas", api_areas, methods=["GET", "POST"]),
+    Route("/api/areas/{aid:int}", api_area, methods=["PATCH", "DELETE"]),
     Route("/api/ports/{pid:int}", api_port),
     Route("/api/ships/check", api_ship_check),
     Route("/api/traffic", api_traffic),

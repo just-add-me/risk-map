@@ -86,7 +86,8 @@ def handle(raw: str | bytes) -> None:
             incidents.record(incidents.NAV_KIND[nav], mmsi, name=name or (traffic.get(mmsi) or {}).get("name"),
                              lat=lat, lon=lon, source=mtype, tracked=tracked)
         if tracked:
-            ingest.position(mmsi, lat, lon, sog=sog, cog=cog, heading=hdg, source="aisstream", ais_name=name)
+            ingest.position(mmsi, lat, lon, sog=sog, cog=cog, heading=hdg, source="aisstream", ais_name=name,
+                            nav=nav if nav != 15 else None)
     elif mtype == "ShipStaticData":
         imo = body.get("ImoNumber")
         length, beam = shipinfo.dimensions(body.get("Dimension"))

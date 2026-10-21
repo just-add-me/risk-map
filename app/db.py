@@ -114,6 +114,37 @@ CREATE TABLE IF NOT EXISTS incidents(
     count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_seen ON incidents(last_seen);
+-- конструктор отслеживания: правила пользователя, их состояние по судам, свои области на карте
+CREATE TABLE IF NOT EXISTS rules(
+    id INTEGER PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    kind TEXT NOT NULL,            -- zone_enter | zone_exit | zone_near | ais_lost | nav_status | speed | destination | port_arrival | port_departure | incident
+    target_type TEXT NOT NULL,     -- all | fleet | vessel
+    target TEXT,                   -- id флота или MMSI
+    params TEXT NOT NULL,          -- параметры условия (JSON)
+    audience TEXT NOT NULL DEFAULT 'me',   -- me | fleet (все, кто видит флот)
+    severity TEXT NOT NULL DEFAULT 'warning',
+    created_at TEXT NOT NULL,
+    last_fired TEXT,
+    fired_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS rule_state(
+    rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+    mmsi TEXT NOT NULL,
+    value TEXT,
+    since TEXT NOT NULL,
+    fired INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(rule_id, mmsi)
+);
+CREATE TABLE IF NOT EXISTS areas(
+    id INTEGER PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    geometry TEXT NOT NULL,        -- GeoJSON Polygon
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT
@@ -137,9 +168,13 @@ def connect() -> sqlite3.Connection:
             _conn.executescript(SCHEMA)
             # миграции: новые колонки в существующей базе
             cols = {r[1] for r in _conn.execute("PRAGMA table_info(ais_state)")}
-            for col, typ in (("length", "REAL"), ("beam", "REAL"), ("draught", "REAL"), ("eta", "TEXT")):
+            for col, typ in (("length", "REAL"), ("beam", "REAL"), ("draught", "REAL"), ("eta", "TEXT"),
+                             ("nav", "INTEGER")):
                 if col not in cols:
                     _conn.execute(f"ALTER TABLE ais_state ADD COLUMN {col} {typ}")
+            # уведомление может быть адресовано одному пользователю (сработало его правило)
+            if "username" not in {r[1] for r in _conn.execute("PRAGMA table_info(notifications)")}:
+                _conn.execute("ALTER TABLE notifications ADD COLUMN username TEXT")
         return _conn
 
 
@@ -203,9 +238,10 @@ def kv_set(key: str, value: Any) -> None:
 
 
 def notify(kind: str, severity: str, title: str, body: str = "",
-           mmsi: Optional[str] = None, zone_id: Optional[str] = None) -> int:
+           mmsi: Optional[str] = None, zone_id: Optional[str] = None, username: Optional[str] = None) -> int:
+    """username — адресат; без него уведомление видят все, кому доступно судно (или все, если судна нет)."""
     cur = execute(
-        "INSERT INTO notifications(ts, kind, severity, title, body, mmsi, zone_id) VALUES(?,?,?,?,?,?,?)",
-        (now_iso(), kind, severity, title, body, mmsi, zone_id),
+        "INSERT INTO notifications(ts, kind, severity, title, body, mmsi, zone_id, username) VALUES(?,?,?,?,?,?,?,?)",
+        (now_iso(), kind, severity, title, body, mmsi, zone_id, username),
     )
     return int(cur.lastrowid or 0)

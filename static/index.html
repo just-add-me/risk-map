@@ -36,6 +36,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="fleet">Флот</button>
       <button class="tab" data-tab="zones">Зоны</button>
+      <button class="tab" data-tab="rules">Правила</button>
       <button class="tab" data-tab="alerts">Уведомления <span class="tab-count" id="tab-alert-count" hidden></span></button>
       <button class="tab" data-tab="incidents">Происшествия</button>
       <button class="tab" data-tab="circulars">Циркуляры</button>
@@ -122,6 +123,44 @@
         <button class="text-btn" id="btn-read-all">Прочитать все</button>
       </div>
       <ul class="notif-list" id="notif-list"></ul>
+    </section>
+
+    <!-- ПРАВИЛА (конструктор отслеживания) -->
+    <section class="panel" id="panel-rules">
+      <div class="fleet-actions">
+        <button class="btn" type="button" id="btn-rule-new">+ Новое правило</button>
+        <button class="btn ghost" type="button" id="btn-area-draw">✎ Нарисовать область</button>
+      </div>
+      <div class="card draw-hint" id="draw-hint" hidden>
+        <b>Рисование области</b>
+        <p class="small">Кликайте по карте, чтобы поставить углы области (минимум 3).
+          <span id="draw-count">Точек: 0</span></p>
+        <div class="row"><button class="btn" type="button" id="btn-draw-done" disabled>Готово</button>
+          <button class="btn ghost" type="button" id="btn-draw-undo">Убрать точку</button>
+          <button class="text-btn" type="button" id="btn-draw-cancel">Отмена</button></div>
+      </div>
+      <form class="card rule-form" id="rule-form" hidden>
+        <label>Условие<select name="kind" id="rule-kind"></select></label>
+        <label>Что отслеживать<select name="target" id="rule-target"></select></label>
+        <div id="rule-params"></div>
+        <label>Название<input name="name" maxlength="100" placeholder="по умолчанию — по условию"></label>
+        <div class="rule-row">
+          <label>Важность<select name="severity">
+            <option value="critical">критично</option><option value="warning" selected>предупреждение</option>
+            <option value="info">информация</option></select></label>
+          <label>Кому сообщать<select name="audience">
+            <option value="me">только мне</option><option value="fleet">всем, кто видит флот</option></select></label>
+        </div>
+        <p class="muted small">Правило срабатывает, когда условие начинает выполняться. Если оно уже выполнялось
+          в момент создания правила, уведомления не будет — до следующей смены.</p>
+        <div class="row"><button class="btn" type="submit" id="btn-rule-save">Сохранить</button>
+          <button class="text-btn" type="button" id="btn-rule-cancel">Отмена</button></div>
+      </form>
+      <h3 class="sub-h">Мои правила</h3>
+      <ul class="rule-list" id="rule-list"></ul>
+      <h3 class="sub-h">Мои области
+        <label class="check small"><input type="checkbox" id="areas-show" checked> на карте</label></h3>
+      <ul class="rule-list" id="area-list"></ul>
     </section>
 
     <!-- ПРОИСШЕСТВИЯ -->

@@ -250,6 +250,7 @@ function renderZoneLayer() {
     .sort((a, b) => order[layerOf(a.properties)] - order[layerOf(b.properties)]);
   zonesLayer.addData({ ...state.zonesFC, features: feats });
   zonesLayer.bringToBack();
+  if (document.body.classList.contains("drawing")) setMapInteractive(false);
 }
 
 function renderZoneFilters() {
@@ -439,6 +440,7 @@ function renderPorts() {
       .addTo(portsLayer);
   });
   updatePortsVisibility();
+  if (document.body.classList.contains("drawing")) setMapInteractive(false);
 }
 
 // Порт растёт с масштабом: на обзорной карте небольшой квадрат, при приближении — с якорем внутри
@@ -798,6 +800,7 @@ function renderTraffic() {
       .on("click", (e) => openTrafficShip(mmsi, e.latlng))
       .addTo(trafficLayer);
   }
+  if (document.body.classList.contains("drawing")) setMapInteractive(false);
 }
 
 // Значки судов растут с масштабом: на обзорной карте мелкие, при приближении — крупнее
@@ -865,6 +868,249 @@ async function openTrafficShip(mmsi, latlng) {
     };
   } catch (e) { popup.setContent(esc(e.message)); }
 }
+
+/* ------------------------------------------------------------------ правила (конструктор отслеживания) */
+const SEV_COLORS = { critical: "var(--red)", warning: "var(--amber)", info: "var(--accent)" };
+const areasLayer = L.layerGroup().addTo(map);
+state.rules = { items: [], meta: null, areas: [], editId: null };
+
+async function loadRules() {
+  const [r, a] = await Promise.all([api("/api/rules"), api("/api/areas")]);
+  state.rules.items = r.items;
+  state.rules.meta = r;
+  state.rules.areas = a.items;
+  renderRules();
+  renderAreas();
+}
+
+function renderRules() {
+  const { items } = state.rules;
+  $("#rule-list").innerHTML = items.map((r) => `
+    <li class="rule-item ${r.enabled ? "" : "off"}" data-id="${r.id}">
+      <input type="checkbox" class="ri-toggle" ${r.enabled ? "checked" : ""} title="Включено">
+      <div class="ri-main">
+        <div class="ri-name"><span class="ri-sev" style="background:${SEV_COLORS[r.severity]}"></span>${esc(r.name)}</div>
+        <div class="small">${esc(r.description)}</div>
+        <div class="muted small">${esc(r.target_name)} · ${r.audience === "fleet" ? "всем, кто видит флот" : "только мне"}
+          · ${r.fired_count ? `сработало ${r.fired_count} раз, последний ${ago(r.last_fired)}` : "ещё не срабатывало"}</div>
+      </div>
+      <div class="ri-actions"><button class="text-btn ri-edit" type="button">Изменить</button>
+        <button class="text-btn danger ri-del" type="button" title="Удалить">✕</button></div>
+    </li>`).join("") || `<li class="empty muted">Правил пока нет. Нажмите «+ Новое правило».</li>`;
+  $$("#rule-list .rule-item").forEach((el) => {
+    const r = items.find((x) => x.id === +el.dataset.id);
+    el.querySelector(".ri-toggle").onchange = async (e) => {
+      await api(`/api/rules/${r.id}`, { method: "PATCH", json: { enabled: e.target.checked } });
+      await loadRules();
+    };
+    el.querySelector(".ri-edit").onclick = () => openRuleForm(r);
+    el.querySelector(".ri-del").onclick = async () => {
+      if (!confirm(`Удалить правило «${r.name}»?`)) return;
+      await api(`/api/rules/${r.id}`, { method: "DELETE" });
+      await loadRules();
+    };
+  });
+}
+
+// --- форма правила: список целей и параметры зависят от выбранного условия
+function ruleTargets(selected) {
+  const opts = [`<option value="all">Все мои флоты</option>`];
+  const own = state.fleets;
+  if (own.length) opts.push(`<optgroup label="Флот">${own.map((f) => `<option value="fleet:${f.id}">${esc(f.name)}${f.access === "owner" ? "" : ` (от ${esc(f.owner)})`}</option>`).join("")}</optgroup>`);
+  const vs = allVessels().filter((v) => !v.mmsi.startsWith("IMO:"));
+  if (vs.length) opts.push(`<optgroup label="Судно">${vs.map((v) => `<option value="vessel:${esc(v.mmsi)}">${esc(v.name || v.mmsi)}</option>`).join("")}</optgroup>`);
+  $("#rule-target").innerHTML = opts.join("");
+  if (selected) $("#rule-target").value = selected;
+}
+
+function scopeOptions(selected) {
+  const zonesList = (state.zonesFC?.features || []).map((f) => f.properties);
+  const byLayer = (l) => zonesList.filter((z) => (z.layer || "jwc") === l)
+    .map((z) => `<option value="zone:${esc(z.id)}">${esc(z.name)}</option>`).join("");
+  return `<optgroup label="Целым слоем">
+      <option value="layer:any">Любая зона</option><option value="layer:jwc">Любая зона JWC</option>
+      <option value="layer:ibf">Любая зона IBF/ITF</option><option value="layer:inl">Любой район INL</option></optgroup>
+    ${state.rules.areas.length ? `<optgroup label="Мои области">${state.rules.areas.map((a) => `<option value="area:${a.id}">${esc(a.name)}</option>`).join("")}</optgroup>` : ""}
+    <optgroup label="Зона JWC">${byLayer("jwc")}</optgroup>
+    <optgroup label="Зона IBF/ITF">${byLayer("ibf")}</optgroup>
+    <optgroup label="Район INL">${byLayer("inl")}</optgroup>`.replace(`value="${selected}"`, `value="${selected}" selected`);
+}
+
+function renderRuleParams(kind, p = {}) {
+  const meta = state.rules.meta;
+  const num = (name, label, val, step = "any") =>
+    `<label>${label}<input type="number" name="${name}" value="${val}" step="${step}" min="0" required></label>`;
+  let html = "";
+  if (kind.startsWith("zone_")) {
+    html = `<label>Какие зоны<select name="scope">${scopeOptions(p.scope || "layer:any")}</select></label>`
+      + (kind === "zone_near" ? num("distance_nm", "Ближе, чем (мор. миль)", p.distance_nm ?? 30) : "")
+      + (state.rules.areas.length ? "" : `<p class="muted small">Свою область можно нарисовать кнопкой «✎ Нарисовать область».</p>`);
+  } else if (kind === "ais_lost") {
+    html = num("hours", "Нет сигнала дольше (часов)", p.hours ?? 6);
+  } else if (kind === "nav_status") {
+    const on = new Set(p.statuses || [1, 5]);
+    html = `<div><div class="muted small">Сообщить, когда статус станет:</div><div class="rule-checks">${
+      Object.entries(meta.nav).map(([code, name]) => `<label><input type="checkbox" name="statuses" value="${code}" ${on.has(+code) ? "checked" : ""}> ${esc(name)}</label>`).join("")}</div></div>`;
+  } else if (kind === "speed") {
+    html = `<div class="rule-row"><label>Скорость<select name="op"><option value="below">ниже</option>
+        <option value="above" ${p.op === "above" ? "selected" : ""}>выше</option></select></label>
+      ${num("knots", "Узлов", p.knots ?? 1)}</div>${num("minutes", "Дольше (минут, 0 — сразу)", p.minutes ?? 30, 1)}`;
+  } else if (kind === "destination") {
+    html = `<label class="check"><input type="checkbox" name="eta" ${p.eta ? "checked" : ""}> сообщать и при смене ETA</label>`;
+  } else if (kind.startsWith("port_")) {
+    const name = p.port_id != null && state.ports?.[p.port_id] ? state.ports[p.port_id].name : "";
+    html = `<label>Порт<input name="port" list="rule-ports" value="${esc(name)}" placeholder="любой порт — оставьте пустым"></label>
+      <datalist id="rule-ports">${(state.ports || []).map((pt) => `<option value="${esc(pt.name)}">${esc(pt.country)}</option>`).join("")}</datalist>
+      <p class="muted small">«В порту» — ближе 3 миль к порту и почти без хода; «вышло» — дальше 5 миль.</p>`;
+  } else if (kind === "incident") {
+    const on = new Set(p.kinds || ["distress", "sart", "mob", "epirb", "aground"]);
+    html = num("radius_nm", "В радиусе (мор. миль)", p.radius_nm ?? 50)
+      + `<div><div class="muted small">Какие происшествия:</div><div class="rule-checks">${
+        Object.entries(meta.incident_kinds).map(([k, label]) => `<label><input type="checkbox" name="kinds" value="${k}" ${on.has(k) ? "checked" : ""}> ${esc(label)}</label>`).join("")}</div></div>`;
+  }
+  $("#rule-params").innerHTML = html;
+}
+
+async function openRuleForm(r = null) {
+  if (!state.rules.meta) await loadRules();
+  const meta = state.rules.meta;
+  const form = $("#rule-form");
+  state.rules.editId = r ? r.id : null;
+  $("#rule-kind").innerHTML = Object.entries(meta.kinds).map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join("");
+  $("#rule-kind").value = r ? r.kind : "zone_enter";
+  ruleTargets(r ? (r.target_type === "all" ? "all" : `${r.target_type}:${r.target}`) : "all");
+  renderRuleParams($("#rule-kind").value, r ? r.params : {});
+  form.elements.name.value = r ? r.name : "";
+  form.severity.value = r ? r.severity : "warning";
+  form.audience.value = r ? r.audience : "me";
+  $("#btn-rule-save").textContent = r ? "Сохранить изменения" : "Создать правило";
+  form.hidden = false;
+  form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+$("#rule-kind").onchange = (e) => renderRuleParams(e.target.value);
+$("#btn-rule-new").onclick = () => openRuleForm();
+$("#btn-rule-cancel").onclick = () => { $("#rule-form").hidden = true; };
+
+$("#rule-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const kind = form.kind.value;
+  const params = {};
+  const fd = new FormData(form);
+  for (const k of ["scope", "distance_nm", "hours", "op", "knots", "minutes", "radius_nm"]) if (fd.has(k)) params[k] = fd.get(k);
+  if (kind === "nav_status") params.statuses = fd.getAll("statuses").map(Number);
+  if (kind === "incident") params.kinds = fd.getAll("kinds");
+  if (kind === "destination") params.eta = fd.has("eta");
+  if (kind.startsWith("port_")) {
+    const name = (fd.get("port") || "").trim();
+    const port = name ? (state.ports || []).find((p) => p.name.toLowerCase() === name.toLowerCase()) : null;
+    if (name && !port) { toast("Порт не найден", "Выберите порт из подсказки или оставьте поле пустым", "warning"); return; }
+    params.port_id = port ? port.id : "any";
+  }
+  // у <form> уже есть свойства name и target, поэтому эти поля берём через elements
+  const tval = form.elements.target.value;
+  const [ttype, target] = tval.includes(":") ? tval.split(/:(.*)/s) : ["all", ""];
+  const body = { kind, params, target_type: ttype, target, name: form.elements.name.value, severity: form.severity.value,
+                 audience: form.audience.value };
+  try {
+    const id = state.rules.editId;
+    await api(id ? `/api/rules/${id}` : "/api/rules", { method: id ? "PATCH" : "POST", json: body });
+    toast(id ? "Правило изменено" : "Правило создано", "Уведомления будут приходить на вкладку «Уведомления»");
+    form.hidden = true;
+    await loadRules();
+  } catch (err) { toast("Не удалось сохранить", err.message, "critical"); }
+};
+
+// --- мои области: список и показ на карте
+function renderAreas() {
+  const areas = state.rules.areas;
+  areasLayer.clearLayers();
+  if ($("#areas-show").checked) {
+    areas.forEach((a) => L.polygon(a.geometry.coordinates[0].map(([x, y]) => [y, x]), {
+      renderer: mapCanvas, interactive: false, color: "#ffffff", weight: 1.5, dashArray: "6 5", fillOpacity: 0.06,
+    }).addTo(areasLayer));
+  }
+  $("#area-list").innerHTML = areas.map((a) => `
+    <li class="rule-item" data-id="${a.id}"><div class="ri-main"><div class="ri-name">${esc(a.name)}</div>
+      <div class="muted small">${a.geometry.coordinates[0].length - 1} точек</div></div>
+      <div class="ri-actions"><button class="text-btn ar-show" type="button">Показать</button>
+        <button class="text-btn ar-rename" type="button">Переименовать</button>
+        <button class="text-btn danger ar-del" type="button" title="Удалить">✕</button></div></li>`).join("")
+    || `<li class="empty muted">Областей нет. Нарисуйте свою — её можно использовать в правилах «вход/выход/подход к зоне».</li>`;
+  $$("#area-list .rule-item").forEach((el) => {
+    const a = areas.find((x) => x.id === +el.dataset.id);
+    const ll = a.geometry.coordinates[0].map(([x, y]) => [y, x]);
+    el.querySelector(".ar-show").onclick = () => map.fitBounds(ll, { padding: [40, 40] });
+    el.querySelector(".ar-rename").onclick = async () => {
+      const name = prompt("Новое название области:", a.name);
+      if (!name) return;
+      await api(`/api/areas/${a.id}`, { method: "PATCH", json: { name } });
+      await loadRules();
+    };
+    el.querySelector(".ar-del").onclick = async () => {
+      if (!confirm(`Удалить область «${a.name}»?`)) return;
+      try { await api(`/api/areas/${a.id}`, { method: "DELETE" }); await loadRules(); }
+      catch (e) { toast("Нельзя удалить", e.message, "warning"); }
+    };
+  });
+}
+$("#areas-show").onchange = renderAreas;
+
+// --- рисование области: клики по карте ставят углы многоугольника
+const draw = { on: false, pts: [], layer: L.layerGroup().addTo(map) };
+
+function setMapInteractive(on) {
+  // во время рисования клики по зонам, портам и судам не должны открывать карточки
+  [zonesLayer, portsLayer, trafficLayer].forEach((g) => g.eachLayer((l) => { if (l.options) l.options.interactive = on; }));
+}
+
+function redrawSketch() {
+  draw.layer.clearLayers();
+  const ll = draw.pts;
+  if (ll.length > 1) L.polyline(ll.length > 2 ? [...ll, ll[0]] : ll, { color: "#4fc3d9", weight: 2, dashArray: "5 4", interactive: false }).addTo(draw.layer);
+  ll.forEach((p) => L.circleMarker(p, { radius: 4, color: "#fff", weight: 1.5, fillColor: "#4fc3d9", fillOpacity: 1, interactive: false }).addTo(draw.layer));
+  $("#draw-count").textContent = `Точек: ${ll.length}`;
+  $("#btn-draw-done").disabled = ll.length < 3;
+}
+
+function startDraw() {
+  draw.on = true; draw.pts = [];
+  setMapInteractive(false);
+  document.body.classList.add("drawing");
+  $("#draw-hint").hidden = false;
+  redrawSketch();
+}
+
+function stopDraw() {
+  draw.on = false; draw.pts = [];
+  draw.layer.clearLayers();
+  setMapInteractive(true);
+  document.body.classList.remove("drawing");
+  $("#draw-hint").hidden = true;
+}
+
+map.on("click", (e) => {
+  if (!draw.on) return;
+  const { lat, lng } = e.latlng.wrap();
+  draw.pts.push([lat, lng]);
+  redrawSketch();
+});
+$("#btn-area-draw").onclick = () => (draw.on ? stopDraw() : startDraw());
+$("#btn-draw-undo").onclick = () => { draw.pts.pop(); redrawSketch(); };
+$("#btn-draw-cancel").onclick = stopDraw;
+document.addEventListener("keydown", (e) => { if (draw.on && e.key === "Escape") stopDraw(); });
+$("#btn-draw-done").onclick = async () => {
+  const name = prompt("Название области:", "Моя область");
+  if (name === null) return;
+  const ring = draw.pts.map(([lat, lng]) => [lng, lat]);
+  ring.push(ring[0]);
+  try {
+    await api("/api/areas", { json: { name, geometry: { type: "Polygon", coordinates: [ring] } } });
+    toast("Область сохранена", "Её можно выбрать в правилах «вход / выход / подход к зоне»");
+    stopDraw();
+    await loadRules();
+  } catch (err) { toast("Не удалось сохранить", err.message, "critical"); }
+};
 
 /* ------------------------------------------------------------------ происшествия */
 const INC_STYLE = {
@@ -1146,6 +1392,7 @@ async function refreshAll(forceZones = false) {
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
+  if (name === "rules") loadRules().catch((e) => toast("Ошибка", e.message, "critical"));
   if (name === "circulars") {
     loadCirculars().catch((e) => toast("Ошибка", e.message, "critical"));
     loadIbf().catch((e) => toast("Ошибка", e.message, "critical"));

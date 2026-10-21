@@ -55,7 +55,7 @@ def backfill_from_traffic(mmsi: str) -> None:
                 beam=s.get("beam"), draught=s.get("draught"), eta=s.get("eta"))
     if s.get("lat") is not None:
         position(mmsi, s["lat"], s["lon"], sog=s.get("sog"), cog=s.get("cog"), heading=s.get("heading"),
-                 source="aisstream", ais_name=s.get("name"))
+                 source="aisstream", ais_name=s.get("name"), nav=s.get("nav"))
 
 
 def _dist_nm(lat1, lon1, lat2, lon2) -> float:
@@ -65,7 +65,7 @@ def _dist_nm(lat1, lon1, lat2, lon2) -> float:
 
 def position(mmsi: str, lat: float, lon: float, sog: Optional[float] = None, cog: Optional[float] = None,
              heading: Optional[float] = None, ts: Optional[str] = None, source: str = "",
-             ais_name: Optional[str] = None) -> None:
+             ais_name: Optional[str] = None, nav: Optional[int] = None) -> None:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
         return
     if lat == 91 or lon == 181:   # «нет данных» в AIS
@@ -75,11 +75,12 @@ def position(mmsi: str, lat: float, lon: float, sog: Optional[float] = None, cog
     first = prev is None or prev.get("lat") is None
 
     db.execute(
-        "INSERT INTO ais_state(mmsi, lat, lon, sog, cog, heading, ts, source, ais_name, stale_notified) "
-        "VALUES(?,?,?,?,?,?,?,?,?,0) ON CONFLICT(mmsi) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, "
+        "INSERT INTO ais_state(mmsi, lat, lon, sog, cog, heading, ts, source, ais_name, nav, stale_notified) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(mmsi) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, "
         "sog=excluded.sog, cog=excluded.cog, heading=excluded.heading, ts=excluded.ts, source=excluded.source, "
-        "ais_name=COALESCE(excluded.ais_name, ais_state.ais_name), stale_notified=0",
-        (mmsi, lat, lon, sog, cog, heading, ts, source, ais_name),
+        "ais_name=COALESCE(excluded.ais_name, ais_state.ais_name), nav=COALESCE(excluded.nav, ais_state.nav), "
+        "stale_notified=0",
+        (mmsi, lat, lon, sog, cog, heading, ts, source, ais_name, nav),
     )
 
     store = first
@@ -98,6 +99,11 @@ def position(mmsi: str, lat: float, lon: float, sog: Optional[float] = None, cog
                    (mmsi, ts, lat, lon, sog, cog))
 
     alerts.process(mmsi, lon, lat, sog, initial=first)
+    from .. import rules            # правила пользователей (конструктор отслеживания)
+    try:
+        rules.on_position(mmsi, lat, lon, sog, nav)
+    except Exception:  # noqa: BLE001
+        log.exception("Ошибка проверки правил для %s", mmsi)
 
 
 def static_data(mmsi: str, name: Optional[str] = None, imo: Optional[str] = None,
@@ -114,6 +120,13 @@ def static_data(mmsi: str, name: Optional[str] = None, imo: Optional[str] = None
         "draught=COALESCE(excluded.draught, draught), eta=COALESCE(excluded.eta, eta)",
         (mmsi, name, imo, callsign, ship_type, destination, length, beam, draught, eta),
     )
+    if destination is not None or eta is not None:
+        from .. import rules
+        row = db.query_one("SELECT destination, eta FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
+        try:
+            rules.on_static(mmsi, row.get("destination"), row.get("eta"))
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка проверки правил для %s", mmsi)
 
 
 def cleanup_trails() -> None:

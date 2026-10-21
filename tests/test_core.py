@@ -391,3 +391,69 @@ def test_incidents():
     note = db.query_one("SELECT severity, title FROM notifications WHERE kind='incident' AND mmsi='273000555'")
     assert note["severity"] == "warning" and "мели" in note["title"]
     aisstream._tracked = None
+
+
+def test_rules_engine():
+    from app import rules, users
+    from app.ais import ingest, incidents
+    from app.layers import ports
+    ports._ports = [{"name": "Testport", "lat": 44.0, "lon": 30.0, "country": "Testland"}]
+    users.add("olga", "pw")
+    users.add("pavel", "pw")
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Правила', 'olga', ?)", (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO fleet_shares(fleet_id, username, can_edit) VALUES(?, 'pavel', 0)", (fid,))
+    m = "273777001"
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(?, ?, 'RULE SHIP', ?)", (fid, m, db.now_iso()))
+    area = db.execute("INSERT INTO areas(owner, name, geometry, created_at) VALUES('olga', 'Квадрат', ?, ?)",
+                      (json.dumps({"type": "Polygon", "coordinates": [[[31, 44], [32, 44], [32, 45], [31, 45], [31, 44]]]}),
+                       db.now_iso())).lastrowid
+    rules.areas_changed()
+
+    def add(kind, params, audience="me", target_type="fleet", target=str(fid)):
+        p = rules.validate(kind, params, "olga")
+        return db.execute("INSERT INTO rules(owner, name, kind, target_type, target, params, audience, severity, created_at) "
+                          "VALUES('olga', ?, ?, ?, ?, ?, ?, 'warning', ?)",
+                          (rules.KINDS[kind], kind, target_type, target, json.dumps(p), audience, db.now_iso())).lastrowid
+    add("zone_enter", {"scope": f"area:{area}"}, audience="fleet")
+    add("zone_exit", {"scope": f"area:{area}"})
+    add("nav_status", {"statuses": [1]})
+    add("speed", {"op": "below", "knots": 2, "minutes": 0})
+    add("port_arrival", {"port_id": "any"})
+    add("port_departure", {"port_id": "0"})
+    add("destination", {"eta": False})
+    add("incident", {"radius_nm": 30, "kinds": ["distress"]}, target_type="vessel", target=m)
+    mine = lambda u: [n["title"].split(": ", 1)[1] for n in db.query(  # noqa: E731
+        "SELECT title FROM notifications WHERE kind='rule' AND username=? ORDER BY id", (u,))]
+
+    ingest.position(m, 44.5, 30.5, sog=10, nav=0)          # первое наблюдение — тишина
+    assert mine("olga") == []
+    ingest.position(m, 44.5, 31.5, sog=10, nav=0)          # вошло в свою область
+    assert mine("olga") == ["Вход в зону"] and mine("pavel") == ["Вход в зону"]   # audience=fleet
+    ingest.position(m, 44.5, 32.5, sog=10, nav=0)          # вышло; «выход» только владельцу
+    assert mine("olga")[-1] == "Выход из зоны" and mine("pavel") == ["Вход в зону"]
+    ingest.position(m, 44.01, 30.01, sog=0.5, nav=1)       # у порта, якорь, медленно
+    assert {"Смена статуса", "Скорость", "Заход в порт"} <= set(mine("olga"))
+    ingest.position(m, 44.5, 30.5, sog=12, nav=0)          # ушло дальше 5 миль от порта
+    assert mine("olga")[-1] == "Выход из порта"
+    ingest.static_data(m, destination="ODESSA")
+    ingest.static_data(m, destination="CONSTANTA")
+    assert mine("olga")[-1] == "Смена назначения или ETA"
+    incidents.record("distress", "273999999", name="SOS SHIP", lat=44.6, lon=30.6, text="MAYDAY")
+    assert mine("olga")[-1] == "Происшествие рядом"
+    # «нет сигнала»: позиция 3 часа назад
+    rid = add("ais_lost", {"hours": 2})
+    db.execute("UPDATE ais_state SET ts=? WHERE mmsi=?", ("2020-01-01T00:00:00+00:00", m))
+    rules.periodic()
+    rules.periodic()                                         # повтор — без дубля
+    assert mine("olga").count("Нет сигнала AIS") == 1
+    # выключенные правила не срабатывают
+    before = len(mine("olga"))
+    db.execute("UPDATE rules SET enabled=0 WHERE id <> ?", (rid,))
+    ingest.position(m, 44.5, 31.5, sog=10, nav=0)
+    assert len(mine("olga")) == before
+    try:
+        rules.validate("zone_near", {"scope": "layer:jwc", "distance_nm": "abc"}, "olga")
+        raise AssertionError("должна быть ошибка")
+    except ValueError:
+        pass
+    ports._ports = None

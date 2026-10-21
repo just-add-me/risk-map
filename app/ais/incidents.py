@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
@@ -19,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .. import db
+
+log = logging.getLogger(__name__)
 
 KINDS = {
     "distress": {"label": "Сигнал бедствия", "severity": "critical"},
@@ -92,6 +95,12 @@ def record(kind: str, mmsi: str, *, name: Optional[str] = None, lat: Optional[fl
             (db.now_iso(), db.now_iso(), kind, mmsi, name, lat, lon, text, int(test), source, extra))
         iid = int(cur.lastrowid or 0)
         _recent[key] = (iid, now)
+    from .. import rules            # правило «происшествие рядом с судном»
+    try:
+        rules.on_incident({"id": iid, "kind": kind, "mmsi": mmsi, "name": name, "lat": lat, "lon": lon,
+                           "text": text, "test": test})
+    except Exception:  # noqa: BLE001
+        log.exception("Ошибка проверки правил для происшествия %s", iid)
     if tracked and not test and KINDS[kind]["severity"] != "info":
         title = f"{name or 'MMSI ' + mmsi}: {KINDS[kind]['label'].lower()}"
         db.notify("incident", KINDS[kind]["severity"], title, text or "Сообщение получено по AIS.", mmsi)
