@@ -73,9 +73,24 @@
           </div>
         </details>
         <ul class="vessel-list" id="vessel-list"></ul>
-        <div class="fleet-foot">
+        <details class="card" id="fleet-share" hidden>
+          <summary>Доступ к флоту</summary>
+          <div id="share-list"></div>
+          <div class="share-add">
+            <select id="share-user" aria-label="Пользователь"></select>
+            <label class="check"><input type="checkbox" id="share-edit"> может менять суда</label>
+            <button class="btn" type="button" id="btn-share-add">Открыть доступ</button>
+          </div>
+          <p class="muted small">Пользователь увидит флот у себя, его суда на карте и уведомления по ним.
+            Без галочки — только просмотр.</p>
+        </details>
+        <div class="fleet-foot" id="fleet-foot-owner">
           <button class="text-btn danger" id="btn-fleet-delete">Удалить флот</button>
           <button class="text-btn" id="btn-fleet-rename">Переименовать</button>
+        </div>
+        <div class="fleet-foot" id="fleet-foot-guest" hidden>
+          <span class="muted small" id="fleet-owner-note"></span>
+          <button class="text-btn danger" id="btn-fleet-leave">Убрать из моего списка</button>
         </div>
       </div>
     </section>

@@ -72,10 +72,24 @@ def set_password(username: str, password: str | None = None) -> str:
     return password
 
 
-def delete(username: str) -> None:
+def delete(username: str) -> int:
+    """Удаляет пользователя. Его флоты не теряются — переходят администратору. Вернёт число таких флотов."""
     if not exists(username):
         raise ValueError(f"Пользователя {username} нет")
+    moved = 0
+    for f in db.query("SELECT id, name FROM fleets WHERE owner=?", (username,)):
+        name = f["name"]
+        if db.query_one("SELECT 1 AS x FROM fleets WHERE owner=? AND name=?", (config.ADMIN_USER, name)):
+            name = f"{name} ({username})"
+        db.execute("UPDATE fleets SET owner=?, name=? WHERE id=?", (config.ADMIN_USER, name, f["id"]))
+        moved += 1
+    db.execute("DELETE FROM fleet_shares WHERE username=?", (username,))
+    # если флот раньше был открыт администратору, а теперь он его владелец — доступ «гостем» не нужен
+    db.execute("DELETE FROM fleet_shares WHERE username=? AND fleet_id IN (SELECT id FROM fleets WHERE owner=?)",
+               (config.ADMIN_USER, config.ADMIN_USER))
+    db.execute("DELETE FROM notification_reads WHERE username=?", (username,))
     db.execute("DELETE FROM users WHERE username=?", (username,))
+    return moved
 
 
 def main(argv: list[str]) -> int:
@@ -92,8 +106,8 @@ def main(argv: list[str]) -> int:
         elif cmd == "passwd" and args:
             print(f"Новый пароль для {args[0]}: {set_password(args[0])}")
         elif cmd == "delete" and args:
-            delete(args[0])
-            print(f"Пользователь {args[0]} удалён")
+            moved = delete(args[0])
+            print(f"Пользователь {args[0]} удалён" + (f"; его флотов передано администратору: {moved}" if moved else ""))
         else:
             print(__doc__)
             return 2

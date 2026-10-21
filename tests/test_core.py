@@ -98,7 +98,7 @@ def test_zone_index():
 def test_alert_flow():
     db.connect()
     zones.set_active(FAKE_ZONES)
-    db.execute("INSERT INTO fleets(name, created_at) VALUES('Test', ?)", (db.now_iso(),))
+    db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Test', 'admin', ?)", (db.now_iso(),))
     db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(1, '273000001', 'TEST ONE', ?)",
                (db.now_iso(),))
     kinds = lambda: [n["kind"] for n in db.query("SELECT kind FROM notifications ORDER BY id")]  # noqa: E731
@@ -303,3 +303,44 @@ def test_users():
         raise AssertionError("должна быть ошибка")
     except ValueError:
         pass
+
+
+def test_fleet_access_and_migration():
+    import sqlite3
+    from app import access, config, users
+    # владелец, «гость» на просмотр, «гость» с правом редактирования, посторонний
+    for u in ("anna", "boris", "vera"):
+        users.add(u, "pw-" + u)
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Танкеры', 'anna', ?)",
+                     (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, created_at) VALUES(?, '538000001', ?)", (fid, db.now_iso()))
+    db.execute("INSERT INTO fleet_shares(fleet_id, username, can_edit) VALUES(?, 'boris', 0)", (fid,))
+    db.execute("INSERT INTO fleet_shares(fleet_id, username, can_edit) VALUES(?, 'vera', 1)", (fid,))
+    assert access.level(fid, "anna") == "owner" and access.level(fid, "boris") == "view"
+    assert access.level(fid, "vera") == "edit" and access.level(fid, config.ADMIN_USER) is None
+    access.require(fid, "vera", "edit")
+    for user, need in (("boris", "edit"), ("vera", "owner"), (config.ADMIN_USER, "view")):
+        try:
+            access.require(fid, user, need)
+            raise AssertionError(f"{user} не должен иметь {need}")
+        except ValueError:
+            pass
+    assert "538000001" in access.mmsis("boris") and "538000001" not in access.mmsis(config.ADMIN_USER)
+    # удаление владельца: флот переходит администратору
+    assert users.delete("anna") == 1 and access.level(fid, config.ADMIN_USER) == "owner"
+    # миграция старой базы: флоты без владельца → администратору, суда не теряются
+    path = config.DATA_DIR / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript("PRAGMA foreign_keys=ON; CREATE TABLE fleets(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, "
+                      "created_at TEXT NOT NULL); CREATE TABLE vessels(id INTEGER PRIMARY KEY, fleet_id INTEGER NOT NULL "
+                      "REFERENCES fleets(id) ON DELETE CASCADE, mmsi TEXT NOT NULL, imo TEXT, name TEXT, created_at TEXT "
+                      "NOT NULL); CREATE TABLE notifications(id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, severity TEXT, "
+                      "title TEXT, body TEXT, mmsi TEXT, zone_id TEXT, is_read INTEGER DEFAULT 0);"
+                      "INSERT INTO fleets VALUES(1, 'Старый', 'x'); INSERT INTO vessels VALUES(1, 1, '273000001', NULL, NULL, 'x');"
+                      "INSERT INTO notifications(id, is_read) VALUES(5, 1);")
+    old.isolation_level = None
+    db._migrate_fleet_owner(old)
+    assert old.execute("SELECT owner FROM fleets").fetchone()[0] == config.ADMIN_USER
+    assert old.execute("SELECT COUNT(*) FROM vessels").fetchone()[0] == 1
+    assert old.execute("SELECT notification_id FROM notification_reads").fetchone()[0] == 5
+    old.close()

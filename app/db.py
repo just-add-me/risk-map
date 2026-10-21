@@ -13,8 +13,23 @@ _conn: Optional[sqlite3.Connection] = None
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fleets(
     id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
+    name TEXT NOT NULL,
+    owner TEXT NOT NULL,            -- имя пользователя-владельца
+    created_at TEXT NOT NULL,
+    UNIQUE(owner, name)
+);
+-- кому владелец открыл флот: только просмотр (can_edit=0) или с правом менять состав судов
+CREATE TABLE IF NOT EXISTS fleet_shares(
+    fleet_id INTEGER NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
+    username TEXT NOT NULL,
+    can_edit INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(fleet_id, username)
+);
+-- у каждого пользователя свои отметки «прочитано»
+CREATE TABLE IF NOT EXISTS notification_reads(
+    username TEXT NOT NULL,
+    notification_id INTEGER NOT NULL,
+    PRIMARY KEY(username, notification_id)
 );
 CREATE TABLE IF NOT EXISTS vessels(
     id INTEGER PRIMARY KEY,
@@ -102,6 +117,7 @@ def connect() -> sqlite3.Connection:
             _conn.row_factory = sqlite3.Row
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
+            _migrate_fleet_owner(_conn)
             _conn.executescript(SCHEMA)
             # миграции: новые колонки в существующей базе
             cols = {r[1] for r in _conn.execute("PRAGMA table_info(ais_state)")}
@@ -109,6 +125,38 @@ def connect() -> sqlite3.Connection:
                 if col not in cols:
                     _conn.execute(f"ALTER TABLE ais_state ADD COLUMN {col} {typ}")
         return _conn
+
+
+def _migrate_fleet_owner(conn: sqlite3.Connection) -> None:
+    """Старая база: флоты без владельца и с глобально уникальным названием.
+
+    Перестраиваем таблицу (так SQLite меняет ограничения), все флоты отдаём администратору,
+    его прочитанные уведомления переносим в личные отметки. Перед этим — копия базы.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(fleets)")}
+    if not cols or "owner" in cols:
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    backup = sqlite3.connect(config.DATA_DIR / f"app.db.pre-owners-{stamp}")
+    conn.backup(backup)
+    backup.close()
+    conn.execute("PRAGMA foreign_keys=OFF")       # иначе DROP TABLE удалит суда каскадом
+    conn.execute("BEGIN")
+    conn.execute("CREATE TABLE fleets_new(id INTEGER PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL, "
+                 "created_at TEXT NOT NULL, UNIQUE(owner, name))")
+    conn.execute("INSERT INTO fleets_new(id, name, owner, created_at) SELECT id, name, ?, created_at FROM fleets",
+                 (config.ADMIN_USER,))
+    conn.execute("DROP TABLE fleets")
+    conn.execute("ALTER TABLE fleets_new RENAME TO fleets")
+    conn.execute("CREATE TABLE IF NOT EXISTS notification_reads(username TEXT NOT NULL, "
+                 "notification_id INTEGER NOT NULL, PRIMARY KEY(username, notification_id))")
+    conn.execute("INSERT OR IGNORE INTO notification_reads(username, notification_id) "
+                 "SELECT ?, id FROM notifications WHERE is_read=1", (config.ADMIN_USER,))
+    conn.execute("COMMIT")
+    conn.execute("PRAGMA foreign_keys=ON")
+    bad = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if bad:
+        raise RuntimeError(f"Миграция флотов: нарушены связи {bad[:5]}")
 
 
 def execute(sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:

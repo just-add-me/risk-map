@@ -21,7 +21,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import alerts, config, db, fleet_import, users, zones
+from . import access, alerts, config, db, fleet_import, users, zones
 from .ais import ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -42,6 +42,21 @@ def _secret_key() -> str:
 
 # --------------------------------------------------------------------------- auth
 _failed: dict[str, list[float]] = defaultdict(list)
+
+
+def _user(request: Request) -> str:
+    return request.session.get("user") or ""
+
+
+# уведомления, которые видит пользователь: общие (без судна) и по судам его флотов
+NOTIF_VISIBLE = f"(n.mmsi IS NULL OR n.mmsi IN ({access.VISIBLE_MMSI_SQL}))"
+NOTIF_UNREAD = "NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.username=? AND r.notification_id=n.id)"
+
+
+def _unread(user: str) -> int:
+    row = db.query_one(f"SELECT COUNT(*) AS n FROM notifications n WHERE {NOTIF_VISIBLE} AND {NOTIF_UNREAD}",
+                       (user, user, user))
+    return row["n"] if row else 0
 
 
 def _authed(request: Request) -> bool:
@@ -107,7 +122,7 @@ async def index(request: Request):
 async def api_status(request: Request):
     from .ais import aisstream
     active = db.query_one("SELECT ref, issued, activated_at, source_url FROM circulars WHERE status='active'")
-    unread = db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE is_read=0")
+    unread = _unread(_user(request))
     return JSONResponse({
         "ais": {"mode": config.AIS_MODE, "traffic": traffic.stats(), **({k: v for k, v in aisstream.status.items()}
                                             if config.AIS_MODE == "aisstream" else {})},
@@ -117,7 +132,7 @@ async def api_status(request: Request):
                      "interval_hours": config.CIRCULAR_CHECK_HOURS},
         "zones": {"ref": zones.active_ref(), "count": len(zones.index().zones), "version": zones.version()},
         "ibf": {k: v for k, v in ibf.status().items() if k != "log"},
-        "unread": unread["n"] if unread else 0,
+        "unread": unread,
         "warn_distance_nm": config.WARN_DISTANCE_NM,
         "user": request.session.get("user"),
     })
@@ -147,7 +162,7 @@ async def api_traffic(request: Request):
     except ValueError:
         return JSONResponse({"error": "bbox: запад,юг,восток,север"}, status_code=400)
     cats = set(q["cats"].split(",")) if "cats" in q else None
-    fleet = set(ingest.tracked_mmsis())          # суда флотов рисуются отдельно, в группы не входят
+    fleet = access.mmsis(_user(request))         # суда своих флотов рисуются отдельно, в группы не входят
     res = await asyncio.to_thread(traffic.query, w, s_, e, n, zoom, cats, limit, fleet)
     return JSONResponse({**res, "categories": shipinfo.CATEGORIES,
                          "enabled": config.AIS_MODE == "aisstream" and config.AIS_TRAFFIC},
@@ -161,9 +176,11 @@ async def api_ship_search(request: Request):
     if len(q) < 2:
         return JSONResponse({"items": []})
     like = f"%{q.upper()}%"
+    user = _user(request)
     fleet = db.query("SELECT DISTINCT v.mmsi FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi "
-                     "WHERE v.mmsi LIKE ? OR v.imo LIKE ? OR UPPER(v.name) LIKE ? OR UPPER(a.ais_name) LIKE ? LIMIT 5",
-                     (f"{q}%", f"{q}%", like, like))
+                     f"WHERE v.mmsi IN ({access.VISIBLE_MMSI_SQL}) AND (v.mmsi LIKE ? OR v.imo LIKE ? "
+                     "OR UPPER(v.name) LIKE ? OR UPPER(a.ais_name) LIKE ?) LIMIT 5",
+                     (user, user, f"{q}%", f"{q}%", like, like))
     fleet_mmsi = {r["mmsi"] for r in fleet}
     items = await asyncio.to_thread(traffic.search, q, 12)
     for it in items:
@@ -191,8 +208,10 @@ async def api_traffic_ship(request: Request):
         found = idx.evaluate(d["lon"], d["lat"], config.WARN_DISTANCE_NM)
         d["zones"] = [{"id": zid, "name": zones.zone_name(zid), **r} for zid, r in found.items()
                       if zones.in_effect(zid)]
+    user = _user(request)
     d["fleets"] = [r["name"] for r in db.query(
-        "SELECT f.name FROM vessels v JOIN fleets f ON f.id=v.fleet_id WHERE v.mmsi=?", (mmsi,))]
+        f"SELECT f.name FROM ({access.VISIBLE_FLEETS_SQL}) f JOIN vessels v ON v.fleet_id=f.id WHERE v.mmsi=?",
+        (user, user, user, mmsi))]
     return JSONResponse(d)
 
 
@@ -254,28 +273,33 @@ def _vessel_dict(v: dict) -> dict:
 
 @api
 async def api_fleets(request: Request):
-    fleets = db.query("SELECT * FROM fleets ORDER BY name")
+    user = _user(request)
+    fleets = access.fleets(user)
     for f in fleets:
         f["vessels"] = [_vessel_dict(v) for v in db.query(
             "SELECT * FROM vessels WHERE fleet_id=? ORDER BY COALESCE(name, mmsi)", (f["id"],))]
-    return JSONResponse({"fleets": fleets})
+        if f["access"] == "owner":
+            f["shares"] = access.shares(f["id"])
+    return JSONResponse({"fleets": fleets, "user": user})
 
 
 @api
 async def api_fleet_create(request: Request):
     body = await request.json()
+    user = _user(request)
     name = str(body.get("name", "")).strip()[:80]
     if not name:
         raise ValueError("Укажите название флота")
-    if db.query_one("SELECT id FROM fleets WHERE name=?", (name,)):
-        raise ValueError("Флот с таким названием уже есть")
-    cur = db.execute("INSERT INTO fleets(name, created_at) VALUES(?,?)", (name, db.now_iso()))
+    if db.query_one("SELECT id FROM fleets WHERE name=? AND owner=?", (name, user)):
+        raise ValueError("У вас уже есть флот с таким названием")
+    cur = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES(?,?,?)", (name, user, db.now_iso()))
     return JSONResponse({"id": cur.lastrowid, "name": name})
 
 
 @api
 async def api_fleet_update(request: Request):
     fid = int(request.path_params["fid"])
+    access.require(fid, _user(request), "owner")
     if request.method == "DELETE":
         db.execute("DELETE FROM fleets WHERE id=?", (fid,))
         ingest.cleanup_trails()
@@ -288,7 +312,38 @@ async def api_fleet_update(request: Request):
     return JSONResponse({"ok": True})
 
 
+@api
+async def api_fleet_share(request: Request):
+    """Владелец открывает или закрывает флот для другого пользователя; получатель может отказаться сам."""
+    fid = int(request.path_params["fid"])
+    user = _user(request)
+    body = await request.json()
+    target = str(body.get("username", "")).strip()
+    if body.get("remove"):
+        if target != user:
+            access.require(fid, user, "owner")
+        db.execute("DELETE FROM fleet_shares WHERE fleet_id=? AND username=?", (fid, target))
+        return JSONResponse({"ok": True})
+    access.require(fid, user, "owner")
+    if not access.is_user(target):
+        raise ValueError("Такого пользователя нет")
+    if target == user:
+        raise ValueError("Это ваш флот")
+    db.execute("INSERT INTO fleet_shares(fleet_id, username, can_edit) VALUES(?,?,?) "
+               "ON CONFLICT(fleet_id, username) DO UPDATE SET can_edit=excluded.can_edit",
+               (fid, target, 1 if body.get("can_edit") else 0))
+    return JSONResponse({"ok": True})
+
+
+@api
+async def api_users(request: Request):
+    """Список пользователей — чтобы выбрать, с кем поделиться флотом."""
+    me = _user(request)
+    return JSONResponse({"users": [u for u in access.all_usernames() if u != me], "me": me})
+
+
 def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
+    """Права проверяет вызывающий (access.require(..., "edit"))."""
     if not db.query_one("SELECT id FROM fleets WHERE id=?", (fid,)):
         raise ValueError("Флот не найден")
     if not mmsi:
@@ -349,6 +404,7 @@ async def api_ship_check(request: Request):
 @api
 async def api_vessel_add(request: Request):
     fid = int(request.path_params["fid"])
+    access.require(fid, _user(request), "edit")
     body = await request.json()
     mmsi = fleet_import.clean_mmsi(body.get("mmsi"))
     imo = fleet_import.clean_imo(body.get("imo"))
@@ -365,6 +421,7 @@ async def api_vessel_add(request: Request):
 @api
 async def api_vessel_upload(request: Request):
     fid = int(request.path_params["fid"])
+    access.require(fid, _user(request), "edit")
     form = await request.form()
     up = form.get("file")
     if up is None or isinstance(up, str):
@@ -392,6 +449,10 @@ async def api_vessel_upload(request: Request):
 @api
 async def api_vessel_update(request: Request):
     vid = int(request.path_params["vid"])
+    row = db.query_one("SELECT fleet_id FROM vessels WHERE id=?", (vid,))
+    if not row:
+        raise ValueError("Судно не найдено")
+    access.require(row["fleet_id"], _user(request), "edit")
     if request.method == "DELETE":
         db.execute("DELETE FROM vessels WHERE id=?", (vid,))
         ingest.cleanup_trails()
@@ -416,23 +477,27 @@ async def api_notifications(request: Request):
     after = int(request.query_params.get("after_id", 0) or 0)
     limit = min(int(request.query_params.get("limit", 200) or 200), 500)
     only_unread = request.query_params.get("unread") == "1"
-    sql = "SELECT * FROM notifications WHERE id > ?" + (" AND is_read=0" if only_unread else "")
-    rows = db.query(sql + " ORDER BY id DESC LIMIT ?", (after, limit))
-    unread = db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE is_read=0")
+    user = _user(request)
+    sql = (f"SELECT n.*, CASE WHEN {NOTIF_UNREAD} THEN 0 ELSE 1 END AS is_read FROM notifications n "
+           f"WHERE n.id > ? AND {NOTIF_VISIBLE}" + (f" AND {NOTIF_UNREAD}" if only_unread else ""))
+    params = [user, after, user, user] + ([user] if only_unread else [])
+    rows = db.query(sql + " ORDER BY n.id DESC LIMIT ?", (*params, limit))
     for r in rows:
         r["zone_name"] = zones.zone_name(r["zone_id"]) if r["zone_id"] else None
-    return JSONResponse({"items": rows, "unread": unread["n"] if unread else 0})
+    return JSONResponse({"items": rows, "unread": _unread(user)})
 
 
 @api
 async def api_notifications_read(request: Request):
     body = await request.json()
+    user = _user(request)
     if body.get("all"):
-        db.execute("UPDATE notifications SET is_read=1 WHERE is_read=0")
+        db.execute(f"INSERT OR IGNORE INTO notification_reads(username, notification_id) "
+                   f"SELECT ?, n.id FROM notifications n WHERE {NOTIF_VISIBLE}", (user, user, user))
     else:
         ids = [int(i) for i in body.get("ids", [])][:500]
-        if ids:
-            db.execute(f"UPDATE notifications SET is_read=1 WHERE id IN ({','.join('?' * len(ids))})", ids)
+        for i in ids:
+            db.execute("INSERT OR IGNORE INTO notification_reads(username, notification_id) VALUES(?,?)", (user, i))
     return JSONResponse({"ok": True})
 
 
@@ -599,6 +664,8 @@ routes = [
     Route("/api/fleets/create", api_fleet_create, methods=["POST"]),
     Route("/api/fleets/{fid:int}", api_fleet_update, methods=["PATCH", "DELETE"]),
     Route("/api/fleets/{fid:int}/vessels", api_vessel_add, methods=["POST"]),
+    Route("/api/fleets/{fid:int}/share", api_fleet_share, methods=["POST"]),
+    Route("/api/users", api_users),
     Route("/api/fleets/{fid:int}/upload", api_vessel_upload, methods=["POST"]),
     Route("/api/vessels/{vid:int}", api_vessel_update, methods=["PATCH", "DELETE"]),
     Route("/api/track/{mmsi}", api_track),

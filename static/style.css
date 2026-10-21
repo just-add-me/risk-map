@@ -327,3 +327,12 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 12.5px; }
 .pc-ship:hover { background: var(--bg-3); }
 .pc-ship .sc-flag { width: 20px; height: 13px; }
+
+/* ---------- доступ к флоту ---------- */
+#fleet-share summary { cursor: pointer; font-weight: 600; }
+.share-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.share-row b { flex: 1; }
+.share-row select, .share-add select { padding: 4px 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.share-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.share-add select { flex: 1; min-width: 120px; }
+#fleet-foot-guest { justify-content: space-between; align-items: center; }

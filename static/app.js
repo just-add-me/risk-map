@@ -474,12 +474,39 @@ function focusPort(idx) {
 async function loadFleets() {
   const data = await api("/api/fleets");
   state.fleets = data.fleets;
+  state.me = data.user;
   if (!state.fleets.find((f) => f.id === state.fleetId)) {
     const saved = +localStorageGet("fleetId");
     state.fleetId = (state.fleets.find((f) => f.id === saved) || state.fleets[0] || {}).id ?? null;
   }
   renderFleet();
   renderVessels();
+}
+
+// Доступ к флоту: список тех, кому открыт, и добавление нового пользователя
+async function renderShares(f) {
+  $("#share-list").innerHTML = (f.shares || []).map((sh) => `
+    <div class="share-row"><b>${esc(sh.username)}</b>
+      <select data-share-user="${esc(sh.username)}">
+        <option value="0" ${sh.can_edit ? "" : "selected"}>только просмотр</option>
+        <option value="1" ${sh.can_edit ? "selected" : ""}>может менять суда</option></select>
+      <button class="text-btn danger" data-share-remove="${esc(sh.username)}" title="Закрыть доступ">✕</button></div>`).join("")
+    || `<p class="muted small">Флот пока видите только вы.</p>`;
+  $$("[data-share-user]").forEach((el) => el.onchange = () =>
+    shareFleet(f.id, { username: el.dataset.shareUser, can_edit: el.value === "1" }));
+  $$("[data-share-remove]").forEach((b) => b.onclick = () => {
+    if (confirm(`Закрыть пользователю ${b.dataset.shareRemove} доступ к флоту «${f.name}»?`)) shareFleet(f.id, { username: b.dataset.shareRemove, remove: true });
+  });
+  if (!state.users) state.users = (await api("/api/users")).users;
+  const taken = new Set((f.shares || []).map((sh) => sh.username));
+  const free = state.users.filter((u) => !taken.has(u));
+  $("#share-user").innerHTML = free.map((u) => `<option>${esc(u)}</option>`).join("") || `<option value="">все уже имеют доступ</option>`;
+  $("#btn-share-add").disabled = !free.length;
+}
+
+async function shareFleet(fid, body) {
+  try { await api(`/api/fleets/${fid}/share`, { json: body }); await loadFleets(); }
+  catch (e) { toast("Не удалось изменить доступ", e.message, "critical"); }
 }
 
 function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -494,7 +521,8 @@ function allVessels() {
 
 function renderFleet() {
   const sel = $("#fleet-select");
-  sel.innerHTML = state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)} (${f.vessels.length})</option>`).join("");
+  sel.innerHTML = state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)} (${f.vessels.length})${
+    f.access === "owner" ? "" : ` · от ${esc(f.owner)}${f.access === "view" ? ", просмотр" : ""}`}</option>`).join("");
   sel.value = state.fleetId ?? "";
   const empty = !state.fleets.length;
   $("#fleet-empty").hidden = !empty;
@@ -502,13 +530,20 @@ function renderFleet() {
   sel.hidden = empty;
   const f = currentFleet();
   if (!f) return;
+  const owner = f.access === "owner", canEdit = f.access !== "view";
+  $("#add-vessel").hidden = !canEdit;
+  $("#fleet-share").hidden = !owner;
+  $("#fleet-foot-owner").hidden = !owner;
+  $("#fleet-foot-guest").hidden = owner;
+  $("#fleet-owner-note").textContent = owner ? "" : `Флот пользователя ${f.owner} · ${canEdit ? "можно менять суда" : "только просмотр"}`;
+  if (owner) renderShares(f);
   const c = { inside: 0, near: 0, safe: 0 };
   f.vessels.forEach((v) => { if (v.position) c[v.status.level]++; });
   $("#fleet-summary").innerHTML = `
     <div class="stat inside"><b>${c.inside}</b><span>в зоне</span></div>
     <div class="stat near"><b>${c.near}</b><span>приближаются</span></div>
     <div class="stat safe"><b>${c.safe}</b><span>вне зон</span></div>`;
-  if (!f.vessels.length) $("#add-vessel").open = true;
+  if (!f.vessels.length && canEdit) $("#add-vessel").open = true;
   const list = $("#vessel-list");
   list.innerHTML = f.vessels.map((v) => {
     const lvl = v.position ? v.status.level : "none";
@@ -524,7 +559,7 @@ function renderFleet() {
         ${v.ship_type ? `<div class="vessel-meta"><i class="dot" style="background:${TRAFFIC_COLORS[v.category]}"></i> ${esc(v.type_name)}${v.length ? ` · ${Math.round(v.length)} м` : ""}${v.flag ? ` · ${esc(v.flag)}` : ""}</div>` : ""}
         ${zones ? `<div class="vessel-zones">${zones}</div>` : ""}
       </div>
-      <button class="text-btn danger vessel-del" data-id="${v.id}" title="Удалить из флота">✕</button>
+      ${canEdit ? `<button class="text-btn danger vessel-del" data-id="${v.id}" title="Удалить из флота">✕</button>` : ""}
     </li>`;
   }).join("") || `<li class="empty muted">Во флоте пока нет судов</li>`;
   $$(".vessel", list).forEach((el) => el.onclick = (e) => {
@@ -807,7 +842,7 @@ async function openTrafficShip(mmsi, latlng) {
     const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
     const zs = s.zones || [];
     const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
-      : state.fleets.length ? `<select class="sc-fleet">${state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
+      : state.fleets.some((f) => f.access !== "view") ? `<select class="sc-fleet">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
         <button class="btn" type="button" data-add-fleet>Во флот</button>` : "";
     popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
       { actions, ageS: s.age_s }));
@@ -1049,6 +1084,20 @@ $("#btn-fleet-rename").onclick = async () => {
   const name = prompt("Новое название флота:", f.name);
   if (!name) return;
   await api(`/api/fleets/${f.id}`, { method: "PATCH", json: { name } }).catch((e) => toast("Ошибка", e.message, "critical"));
+  await loadFleets();
+};
+$("#btn-share-add").onclick = async () => {
+  const f = currentFleet(); const u = $("#share-user").value;
+  if (!f || !u) return;
+  await shareFleet(f.id, { username: u, can_edit: $("#share-edit").checked });
+  $("#share-edit").checked = false;
+  toast("Доступ открыт", `${u} увидит флот «${f.name}»`);
+};
+$("#btn-fleet-leave").onclick = async () => {
+  const f = currentFleet(); if (!f) return;
+  if (!confirm(`Убрать флот «${f.name}» из вашего списка? Владелец сможет открыть доступ снова.`)) return;
+  await shareFleet(f.id, { username: state.me, remove: true });
+  state.fleetId = null;
   await loadFleets();
 };
 $("#btn-fleet-delete").onclick = async () => {
