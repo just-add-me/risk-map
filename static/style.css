@@ -55,10 +55,10 @@ a { color: var(--accent); }
 .map-wrap { flex: 1; position: relative; min-width: 0; }
 #map { position: absolute; inset: 0; background: #0a1418; }
 
-.tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; scrollbar-width: thin; }
+.tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); flex: none; }
 .tab {
   flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 12px 4px 10px;
-  color: var(--muted); cursor: pointer; font-weight: 500; white-space: nowrap; padding-left: 10px; padding-right: 10px;
+  color: var(--muted); cursor: pointer; font-weight: 500; white-space: nowrap; padding: 10px 10px 8px;
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
