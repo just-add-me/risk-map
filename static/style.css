@@ -142,7 +142,7 @@ details.card[open] > summary::before { content: "− "; }
 }
 .z-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .chip {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; font: 12px var(--font); cursor: pointer;
   background: var(--bg); border: 1px solid var(--line); border-radius: 999px; color: var(--muted);
 }
 .chip.on { background: var(--bg-3); border-color: #3c6577; color: var(--text); }

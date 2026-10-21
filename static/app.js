@@ -112,7 +112,7 @@ function zonePopup(p) {
 
 function bindZone(f, layer) {
   layer.bindTooltip(esc(f.properties.name), { sticky: true, direction: "top", opacity: 0.95 });
-  layer.bindPopup(() => zonePopup(f.properties));
+  layer.bindPopup(() => zonePopup(f.properties), { minWidth: 240, maxWidth: 340 });
   layer.on("popupopen", () => selectZone(f.properties.id));
   layer.on("popupclose", () => { if (state.selectedZone === f.properties.id) selectZone(null); });
 }
