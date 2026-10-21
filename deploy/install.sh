@@ -12,6 +12,11 @@ fi
 echo "==> Файрвол (SSH, HTTP, HTTPS)"
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 22/tcp >/dev/null
+  # открываем все порты, на которых сейчас слушает sshd (например 2222), чтобы не потерять доступ
+  for p in $(ss -tlnpH 2>/dev/null | awk '/sshd/ {n=split($4,a,":"); print a[n]}' | sort -u); do
+    ufw allow "${p}/tcp" >/dev/null
+    echo "    SSH-порт ${p} открыт"
+  done
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
   ufw --force enable >/dev/null
