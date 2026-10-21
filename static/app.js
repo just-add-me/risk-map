@@ -288,17 +288,85 @@ function renderZoneFilters() {
   });
 }
 
+// Легенда — это и фильтр: каждый пункт скрывает или показывает свой вид объектов.
+// Состояние общее с вкладками «Зоны», «Флот» и «События», поэтому всё остаётся согласованным.
+state.showFleet = true;
+state.fleetLevels = new Set(["safe", "near", "inside"]);
+const SHIP_ICON = (c) => `<svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 4 4 0 2-4 4z" fill="${c}"/></svg>`;
+const YACHT_ICON = (c) => `<svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 3 0 0 5-3 0z" fill="${c}"/></svg>`;
+
 function renderLegend() {
-  $("#legend-shapes").innerHTML = `
-    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 4 4 0 2-4 4z" fill="#6fa8dc"/></svg>Судно (стрелка — курс)</div>
-    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 3 0 0 5-3 0z" fill="#5fe0c8"/></svg>Яхта</div>
-    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-4" y="-4" width="8" height="8" fill="#8fa6b0"/></svg>Порт (красный — в зоне JWC)</div>
-    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 4 5 0 3-4 5z" fill="#ff5a4e" stroke="#fff"/></svg>Судно вашего флота</div>`;
-  $("#legend-zones").innerHTML = Object.entries(LAYERS).map(([layer, info]) => `
-    <div class="lg-title" title="${esc(info.hint)}">${esc(info.label)}</div>
-    ${Object.values(ZONE_TYPES).filter((d) => d.layer === layer)
-      .map((d) => `<div class="lg"><i class="sw" style="${swatchStyle(d)}"></i>${esc(d.label)}</div>`).join("")}`).join("");
+  const box = $("#legend-items");
+  if (!box) return;
+  const zf = state.zoneFilter, t = state.traffic;
+  const row = (key, icon, label, on, extra = "") =>
+    `<button type="button" class="lg lg-btn${on ? "" : " off"}${extra}" data-key="${key}" aria-pressed="${on}">${icon}<span>${esc(label)}</span></button>`;
+  const head = (key, label, on, hint = "") =>
+    `<button type="button" class="lg-title lg-btn${on ? "" : " off"}" data-key="${key}" aria-pressed="${on}" title="${esc(hint)}">${esc(label)}</button>`;
+  let html = Object.entries(LAYERS).map(([layer, info]) => {
+    const types = Object.entries(ZONE_TYPES).filter(([, d]) => d.layer === layer);
+    return head(`layer:${layer}`, info.label, types.some(([k]) => zf.types.has(k)), info.hint)
+      + types.map(([k, d]) => row(`zt:${k}`, `<i class="sw" style="${swatchStyle(d)}"></i>`, d.label, zf.types.has(k))).join("");
+  }).join("");
+  html += `<div class="lg"><i class="sw z-changed"></i><span>Изменена в последней версии</span></div>`;
+  const cats = (t.data && t.data.categories) || {};
+  html += head("traffic", "Все суда (AIS)", t.on);
+  html += Object.keys(TRAFFIC_COLORS).map((c) => row(`cat:${c}`, (c === "yacht" ? YACHT_ICON : SHIP_ICON)(TRAFFIC_COLORS[c]),
+    cats[c] || { cargo: "Грузовые", tanker: "Танкеры", passenger: "Пассажирские", yacht: "Яхты и прогулочные",
+                 fishing: "Рыболовные", service: "Буксиры и служебные", other: "Прочие" }[c], t.on && t.cats.has(c))).join("");
+  html += head("fleet", "Суда флота", state.showFleet);
+  html += [["safe", "Вне зон"], ["near", "Приближается"], ["inside", "В зоне"]].map(([lvl, label]) =>
+    row(`lvl:${lvl}`, `<i class="dot s-${lvl}"></i>`, label, state.showFleet && state.fleetLevels.has(lvl))).join("");
+  html += `<div class="lg-title">Прочее</div>`
+    + row("ports", `<svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-5" y="-5" width="10" height="10" rx="3" fill="#8fa6b0"/></svg>`,
+      "Порты (красный — в зоне JWC)", state.showPorts)
+    + row("incidents", `<span class="inc-dot" style="background:#ff3b30">!</span>`, "Происшествия", $("#inc-show").checked)
+    + row("areas", `<i class="sw" style="border:1.5px dashed #fff;background:transparent"></i>`, "Мои области", $("#areas-show").checked);
+  box.innerHTML = html;
 }
+
+$("#legend-items").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-key]");
+  if (!b) return;
+  const [kind, val] = b.dataset.key.split(":");
+  const zf = state.zoneFilter, t = state.traffic;
+  if (kind === "layer") {
+    const types = Object.entries(ZONE_TYPES).filter(([, d]) => d.layer === val).map(([k]) => k);
+    const on = types.some((k) => zf.types.has(k));
+    types.forEach((k) => (on ? zf.types.delete(k) : zf.types.add(k)));
+    applyZoneFilter();
+  } else if (kind === "zt") {
+    if (zf.types.has(val)) zf.types.delete(val); else zf.types.add(val);
+    applyZoneFilter();
+  } else if (kind === "traffic" || kind === "cat") {
+    if (kind === "cat") {
+      if (!t.on) { t.cats = new Set([val]); t.on = true; }                 // включаем слой сразу с этой категорией
+      else if (t.cats.has(val)) t.cats.delete(val); else t.cats.add(val);
+    } else t.on = !t.on;
+    localStorageSet("showTraffic", t.on ? "1" : "0");
+    $("#traffic-toggle").checked = t.on;
+    await loadTraffic().catch(() => {});
+  } else if (kind === "fleet") {
+    state.showFleet = !state.showFleet;
+    renderVessels();
+  } else if (kind === "lvl") {
+    state.showFleet = true;
+    if (state.fleetLevels.has(val)) state.fleetLevels.delete(val); else state.fleetLevels.add(val);
+    renderVessels();
+  } else if (kind === "ports") {
+    state.showPorts = !state.showPorts;
+    localStorageSet("showPorts", state.showPorts ? "1" : "0");
+    updatePortsVisibility();
+    renderZoneFilters();
+  } else if (kind === "incidents") {
+    $("#inc-show").checked = !$("#inc-show").checked;
+    renderIncidents();
+  } else if (kind === "areas") {
+    $("#areas-show").checked = !$("#areas-show").checked;
+    renderAreas();
+  }
+  renderLegend();
+});
 
 function swatchStyle(d) {
   return `background:${d.color}55;border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
@@ -307,6 +375,7 @@ function swatchStyle(d) {
 function applyZoneFilter() {
   renderZoneLayer();
   renderZonesPanel();
+  renderLegend();
 }
 
 function renderZonesPanel() {
@@ -585,7 +654,7 @@ function renderFleet() {
 function renderVessels() {
   const live = new Set();
   for (const v of allVessels()) {
-    if (!v.position) continue;
+    if (!v.position || !state.showFleet || !state.fleetLevels.has(v.status.level)) continue;
     live.add(v.mmsi);
     const ll = [v.position.lat, v.position.lon];
     const sel = v.mmsi === state.selectedMmsi;
@@ -842,6 +911,7 @@ function clusterTooltip(c) {
 
 function renderTrafficCats() {
   const t = state.traffic;
+  renderLegend();
   const d = t.data;
   $("#traffic-meta").textContent = !t.on ? "Слой выключен"
     : !d ? "Загружаю…"
@@ -1070,7 +1140,7 @@ function renderAreas() {
     };
   });
 }
-$("#areas-show").onchange = renderAreas;
+$("#areas-show").onchange = () => { renderAreas(); renderLegend(); };
 
 // --- рисование области: клики по карте ставят углы многоугольника
 const draw = { on: false, pts: [], layer: L.layerGroup().addTo(map) };
@@ -1226,7 +1296,7 @@ $("#btn-screen-refresh").onclick = async (e) => {
   b.disabled = false; b.textContent = "Обновить списки сейчас";
   await loadIncidents(true); await loadFleets();
 };
-$("#inc-show").onchange = renderIncidents;
+$("#inc-show").onchange = () => { renderIncidents(); renderLegend(); };
 $("#inc-tests").onchange = renderIncidents;
 $("#inc-days").onchange = () => loadIncidents(true).catch(() => {});
 
@@ -1601,6 +1671,7 @@ if (window.innerWidth < 820 || localStorageGet("legendCollapsed") !== "0") $("#l
 renderLegend();
 (async () => {
   await refreshAll(true);
+  loadRules().catch(() => {});
   const vs = allVessels().filter((v) => v.position);
   if (vs.length) map.fitBounds(L.latLngBounds(vs.map((v) => [v.position.lat, v.position.lon])).pad(0.5), { maxZoom: 6 });
   setInterval(() => refreshAll(false), 10000);
