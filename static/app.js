@@ -1300,8 +1300,7 @@ function setUnread(n) {
   state.unread = n;
   $("#bell-count").hidden = !n;
   $("#bell-count").textContent = n > 99 ? "99+" : n;
-  $("#tab-alert-count").hidden = !n;
-  $("#tab-alert-count").textContent = n;
+  for (const id of ["#tab-alert-count", "#seg-alert-count"]) { $(id).hidden = !n; $(id).textContent = n; }
   document.title = n ? `(${n}) WarRisk Monitor` : "WarRisk Monitor";
 }
 
@@ -1325,7 +1324,7 @@ async function openNotification(n) {
     renderNotifications();
   }
   if (n.mmsi) { switchTab("fleet"); selectVessel(n.mmsi, true); }
-  else if (n.kind === "circular") switchTab("circulars");
+  else if (n.kind === "circular") openCirculars();
 }
 
 /* ------------------------------------------------------------------ циркуляры */
@@ -1420,7 +1419,7 @@ async function refreshAll(forceZones = false) {
     await loadTraffic();
     await loadIncidents().catch(() => {});
     await loadNotifications();
-    if ($("#panel-circulars").classList.contains("active")) { await loadCirculars(); await loadIbf(); }
+    if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
 }
 
@@ -1429,13 +1428,30 @@ function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
   if (name === "rules") loadRules().catch((e) => toast("Ошибка", e.message, "critical"));
-  if (name === "circulars") {
-    loadCirculars().catch((e) => toast("Ошибка", e.message, "critical"));
-    loadIbf().catch((e) => toast("Ошибка", e.message, "critical"));
-  }
 }
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
-$("#btn-bell").onclick = () => switchTab("alerts");
+
+// «События»: переключатель между уведомлениями и происшествиями
+function showSeg(name) {
+  $$(".seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.seg === name));
+  $$(".seg-body").forEach((el) => { el.hidden = el.id !== `seg-${name}`; });
+  if (name === "incidents") loadIncidents(true).catch(() => {});
+}
+$$(".seg-btn").forEach((b) => b.onclick = () => showSeg(b.dataset.seg));
+$("#btn-bell").onclick = () => { switchTab("events"); showSeg("alerts"); };
+
+// Источники зон (циркуляры JWC, IBF, INL) — окно поверх карты, открывается из шапки
+function openCirculars() {
+  $("#circ-modal").hidden = false;
+  $("#circ-close").focus();
+  loadCirculars().catch((e) => toast("Ошибка", e.message, "critical"));
+  loadIbf().catch((e) => toast("Ошибка", e.message, "critical"));
+}
+function closeCirculars() { $("#circ-modal").hidden = true; $("#chip-circular").focus(); }
+$("#chip-circular").onclick = openCirculars;
+$("#circ-close").onclick = closeCirculars;
+$("#circ-modal").onclick = (e) => { if (e.target.id === "circ-modal") closeCirculars(); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#circ-modal").hidden) closeCirculars(); });
 $("#legend-toggle").onclick = () => {
   const collapsed = $("#legend").classList.toggle("collapsed");
   localStorageSet("legendCollapsed", collapsed ? "1" : "0");

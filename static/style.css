@@ -389,3 +389,20 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-alert.det { background: rgba(251,146,60,.1); border: 1px solid rgba(251,146,60,.5); }
 .sc-alert b { display: block; margin-bottom: 2px; }
 #screen-card { margin-top: 10px; }
+
+/* ---------- «События»: переключатель ---------- */
+.seg { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.seg-btn { flex: 1; padding: 7px 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; font-weight: 500; }
+.seg-btn.on { background: var(--bg-3); color: var(--text); }
+
+/* ---------- окно «Источники зон» ---------- */
+.chip-btn { cursor: pointer; background: none; }
+.chip-btn:hover { color: var(--text); border-color: var(--accent); }
+.chip-btn::after { content: " ▾"; }
+.modal { position: fixed; inset: 0; z-index: 3000; background: rgba(5, 12, 16, .6); display: flex;
+  align-items: flex-start; justify-content: center; padding: 64px 16px 16px; }
+.modal-box { width: min(560px, 100%); max-height: calc(100vh - 80px); display: flex; flex-direction: column;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 48px rgba(0,0,0,.5); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.modal-head h2 { margin: 0; font-size: 16px; }
+.modal-body { padding: 14px 16px; overflow-y: auto; }
