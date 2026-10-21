@@ -70,7 +70,7 @@ def handle(raw: str | bytes) -> None:
         if cog is not None and cog >= 360:
             cog = None
         traffic.update_position(mmsi, lat, lon, sog, cog, hdg, name,
-                                "A" if mtype == "PositionReport" else "B")
+                                "A" if mtype == "PositionReport" else "B", body.get("NavigationalStatus"))
         if tracked:
             ingest.position(mmsi, lat, lon, sog=sog, cog=cog, heading=hdg, source="aisstream", ais_name=name)
     elif mtype == "ShipStaticData":

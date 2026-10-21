@@ -14,6 +14,9 @@ from . import shipinfo
 
 POSITION_TTL = 2 * 3600
 STATIC_TTL = 24 * 3600
+# короткий трек в памяти: точка не чаще раза в 10 минут, до 3 часов
+TRAIL_STEP = 600
+TRAIL_POINTS = 18
 
 _lock = threading.Lock()
 _ships: dict[str, dict] = {}
@@ -21,14 +24,21 @@ _last_cleanup = 0.0
 
 
 def update_position(mmsi: str, lat: float, lon: float, sog: Optional[float], cog: Optional[float],
-                    heading: Optional[float], name: Optional[str], ais_class: str) -> None:
+                    heading: Optional[float], name: Optional[str], ais_class: str,
+                    nav: Optional[int] = None) -> None:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
         return
     now = time.time()
     with _lock:
         s = _ships.setdefault(mmsi, {"mmsi": mmsi})
+        trail = s.setdefault("trail", [])
+        if not trail or now - trail[-1][2] >= TRAIL_STEP:
+            trail.append((round(lat, 4), round(lon, 4), now))
+            del trail[:-TRAIL_POINTS]
         s.update(lat=round(lat, 5), lon=round(lon, 5), sog=sog, cog=cog, heading=heading, ts=now,
                  cls=ais_class)
+        if nav is not None and nav != 15:
+            s["nav"] = nav
         if name and not s.get("name"):
             s["name"] = name
     _maybe_cleanup(now)
@@ -58,11 +68,21 @@ def get(mmsi: str) -> Optional[dict]:
         return dict(s) if s else None
 
 
+def trail(mmsi: str) -> list[dict]:
+    with _lock:
+        s = _ships.get(mmsi) or {}
+        pts = list(s.get("trail", []))
+        if s.get("lat") is not None:
+            pts.append((s["lat"], s["lon"], s["ts"]))
+    return [{"lat": a, "lon": b, "age_s": int(time.time() - t)} for a, b, t in pts]
+
+
 def details(s: dict) -> dict:
     """Карточка судна для интерфейса: всё, что удалось расшифровать."""
     return {
         "mmsi": s["mmsi"], "name": s.get("name"), "imo": s.get("imo"), "callsign": s.get("callsign"),
-        "flag": shipinfo.flag(s["mmsi"]), "ship_type": s.get("ship_type"),
+        "flag": shipinfo.flag(s["mmsi"]), "flag_iso": shipinfo.flag_iso(s["mmsi"]),
+        "nav_status": shipinfo.nav_status(s.get("nav")), "ship_type": s.get("ship_type"),
         "type_name": shipinfo.type_name(s.get("ship_type")), "category": shipinfo.category(s.get("ship_type")),
         "length": s.get("length"), "beam": s.get("beam"), "draught": s.get("draught"),
         "destination": s.get("destination"), "eta": s.get("eta"), "ais_class": s.get("cls"),

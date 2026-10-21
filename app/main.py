@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import alerts, config, db, fleet_import, zones
-from .ais import ingest, shipinfo, traffic
+from .ais import ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
 
@@ -163,6 +163,17 @@ async def api_traffic_ship(request: Request):
     return JSONResponse(d)
 
 
+@api
+async def api_traffic_track(request: Request):
+    return JSONResponse({"points": traffic.trail(request.path_params["mmsi"])})
+
+
+@api
+async def api_ship_photo(request: Request):
+    photo = await asyncio.to_thread(photos.get, request.path_params["imo"])
+    return JSONResponse({"photo": photo}, headers={"Cache-Control": "private, max-age=3600"})
+
+
 # --------------------------------------------------------------------------- API: флот
 def _vessel_dict(v: dict) -> dict:
     st = db.query_one("SELECT * FROM ais_state WHERE mmsi=?", (v["mmsi"],)) or {}
@@ -175,6 +186,8 @@ def _vessel_dict(v: dict) -> dict:
         "destination": st.get("destination"), "callsign": st.get("callsign"),
         "ship_type": st.get("ship_type"), "type_name": shipinfo.type_name(st.get("ship_type")),
         "category": shipinfo.category(st.get("ship_type")), "flag": shipinfo.flag(v["mmsi"]),
+        "flag_iso": shipinfo.flag_iso(v["mmsi"]),
+        "nav_status": shipinfo.nav_status((traffic.get(v["mmsi"]) or {}).get("nav")),
         "length": st.get("length"), "beam": st.get("beam"), "draught": st.get("draught"), "eta": st.get("eta"),
         "status": alerts.vessel_status(v["mmsi"]),
     }
@@ -463,6 +476,8 @@ routes = [
     Route("/api/ports", api_ports),
     Route("/api/traffic", api_traffic),
     Route("/api/traffic/{mmsi}", api_traffic_ship),
+    Route("/api/traffic/{mmsi}/track", api_traffic_track),
+    Route("/api/photo/{imo}", api_ship_photo),
     Route("/api/ibf", api_ibf),
     Route("/api/ibf/check", api_ibf_check, methods=["POST"]),
     Route("/api/fleets", api_fleets),

@@ -223,6 +223,7 @@ def test_shipinfo_and_traffic():
     assert shipinfo.type_name(81) == "Танкер, опасный груз X"
     assert shipinfo.flag("273123456") == "Россия" and shipinfo.flag("538010472") == "Маршалловы о-ва"
     assert shipinfo.flag("992731234") is None
+    assert shipinfo.flag_iso("538010472") == "mh" and shipinfo.nav_status(1) == "На якоре"
     assert shipinfo.dimensions({"A": 150, "B": 33, "C": 16, "D": 16}) == (183, 32)
     assert shipinfo.eta_text({"Month": 10, "Day": 23, "Hour": 6, "Minute": 30}) == "23.10 06:30 UTC"
     # поток aisstream: чужое судно — только в общий слой, без записи в базу
@@ -242,4 +243,5 @@ def test_shipinfo_and_traffic():
     assert total == 1 and counts["tanker"] == 1 and rows[0][0] == "538010472"
     assert traffic.in_bbox(170, 40, -170, 48, 100)[2] == 0          # прямоугольник через 180°
     assert db.query_one("SELECT * FROM ais_state WHERE mmsi='538010472'") is None
+    assert len(traffic.trail("538010472")) == 2         # точка трека + текущая позиция
     aisstream._tracked = None

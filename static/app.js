@@ -59,6 +59,28 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
 }).addTo(map);
 
 const zonesLayer = L.geoJSON(null, { style: zoneStyle, onEachFeature: bindZone }).addTo(map);
+// Фигуры на canvas: стрелка — судно (по курсу), ромб — яхта, квадрат — порт
+L.Canvas.include({
+  _updateShape(layer) {
+    if (!this._drawing || layer._empty()) return;
+    const p = layer._point, ctx = this._ctx, r = Math.max(layer._radius, 1), o = layer.options;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    if (o.rotation) ctx.rotate((o.rotation * Math.PI) / 180);
+    ctx.beginPath();
+    if (o.shape === "ship") {
+      ctx.moveTo(0, -r * 1.8); ctx.lineTo(r * 1.05, r * 1.2); ctx.lineTo(0, r * 0.55); ctx.lineTo(-r * 1.05, r * 1.2);
+    } else if (o.shape === "yacht") {
+      ctx.moveTo(0, -r * 1.6); ctx.lineTo(r * 0.75, 0); ctx.lineTo(0, r * 1.3); ctx.lineTo(-r * 0.75, 0);
+    } else {
+      ctx.rect(-r, -r, r * 2, r * 2);
+    }
+    ctx.closePath();
+    this._fillStroke(ctx, layer);
+    ctx.restore();
+  },
+});
+const ShapeMarker = L.CircleMarker.extend({ _updatePath() { this._renderer._updateShape(this); } });
 const portsRenderer = L.canvas({ padding: 0.5 });
 const portsLayer = L.layerGroup();
 const vesselsLayer = L.layerGroup().addTo(map);
@@ -250,6 +272,11 @@ function renderZoneFilters() {
 }
 
 function renderLegend() {
+  $("#legend-shapes").innerHTML = `
+    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 4 4 0 2-4 4z" fill="#6fa8dc"/></svg>Судно (стрелка — курс)</div>
+    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 3 0 0 5-3 0z" fill="#5fe0c8"/></svg>Яхта</div>
+    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-4" y="-4" width="8" height="8" fill="#8fa6b0"/></svg>Порт (красный — в зоне JWC)</div>
+    <div class="lg"><svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0-6 4 5 0 3-4 5z" fill="#ff5a4e" stroke="#fff"/></svg>Судно вашего флота</div>`;
   $("#legend-zones").innerHTML = Object.entries(LAYERS).map(([layer, info]) => `
     <div class="lg-title" title="${esc(info.hint)}">${esc(info.label)}</div>
     ${Object.values(ZONE_TYPES).filter((d) => d.layer === layer)
@@ -354,8 +381,8 @@ function renderPorts() {
   portsLayer.clearLayers();
   state.portMarkers = (state.ports || []).map((p) => {
     const inZone = p.zones.length > 0;
-    return L.circleMarker([p.lat, p.lon], {
-      renderer: portsRenderer, radius: inZone ? 4 : 3, weight: 1, color: "#0b1a22",
+    return new ShapeMarker([p.lat, p.lon], {
+      shape: "port", renderer: portsRenderer, radius: inZone ? 3.5 : 2.6, weight: 1, color: "#0b1a22",
       fillColor: portColor(p), fillOpacity: 0.95,
     }).bindTooltip(esc(p.name), { direction: "top", offset: [0, -4] })
       .bindPopup(() => portPopup(p), { minWidth: 220, maxWidth: 340 })
@@ -471,46 +498,23 @@ function renderVessels() {
     }
     const label = esc(v.name || v.ais_name || v.mmsi);
     if (m.getTooltip()) m.setTooltipContent(label); else m.bindTooltip(label, { direction: "top", offset: [0, -8] });
-    if (m.getPopup()) m.setPopupContent(vesselPopup(v)); else m.bindPopup(vesselPopup(v));
+    if (m.getPopup()) { if (!m.isPopupOpen()) m.setPopupContent(vesselPopup(v)); }
+    else {
+      m.bindPopup(vesselPopup(v), { minWidth: 300, maxWidth: 320, className: "sc-popup" });
+      m.on("popupopen", (e) => hydrateCard(e.popup, () => selectVessel(v.mmsi, false)));
+    }
   }
   for (const [mmsi, m] of markers) if (!live.has(mmsi)) { vesselsLayer.removeLayer(m); markers.delete(mmsi); }
 }
 
 function vesselPopup(v) {
   const p = v.position;
-  const st = v.status;
-  const lines = [
-    ...st.inside.map((z) => `<div style="color:var(--red)">● В зоне: ${esc(z.name)} <span class="muted">с ${fmtTime(z.since)}</span></div>`),
-    ...st.near.map((z) => `<div style="color:var(--amber)">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`),
-  ].join("") || `<div style="color:var(--green)">Вне зон риска</div>`;
-  return `<h4>${esc(v.name || v.ais_name || "Судно")}</h4>
-    <div class="muted small">${esc(v.type_name || "")}${v.flag ? ` · флаг: ${esc(v.flag)}` : ""}</div>${lines}
-    <dl class="kv" style="margin-top:8px">
-      <dt>MMSI</dt><dd>${esc(v.mmsi)}</dd>
-      ${v.imo ? `<dt>IMO</dt><dd>${esc(v.imo)}</dd>` : ""}
-      ${v.callsign ? `<dt>Позывной</dt><dd>${esc(v.callsign)}</dd>` : ""}
-      ${shipSizeRows(v)}
-      <dt>Позиция</dt><dd>${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</dd>
-      <dt>Скорость</dt><dd>${p.sog != null ? p.sog.toFixed(1) + " уз" : "—"}</dd>
-      <dt>Курс</dt><dd>${p.cog != null ? Math.round(p.cog) + "°" : "—"}</dd>
-      ${v.destination ? `<dt>Назначение</dt><dd>${esc(v.destination)}</dd>` : ""}
-      ${v.eta ? `<dt>ETA</dt><dd>${esc(v.eta)}</dd>` : ""}
-      <dt>Обновлено</dt><dd>${ago(p.ts)}${p.source === "demo" ? " (демо)" : ""}</dd>
-    </dl>${shipLinks(v)}`;
-}
-
-function shipSizeRows(v) {
-  return `${v.length ? `<dt>Размеры</dt><dd>${Math.round(v.length)} × ${v.beam ? Math.round(v.beam) : "?"} м</dd>` : ""}
-    ${v.draught ? `<dt>Осадка</dt><dd>${v.draught.toFixed(1)} м</dd>` : ""}`;
-}
-
-// Тоннажа, года постройки и цены в AIS нет — даём ссылки на открытые карточки судна
-function shipLinks(v) {
-  const vf = v.imo ? v.imo : v.mmsi;
-  return `<div class="ship-links small">Тоннаж, год постройки, владелец:
-    <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${encodeURIComponent(v.mmsi)}" target="_blank" rel="noopener">MarineTraffic</a> ·
-    <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(vf)}" target="_blank" rel="noopener">VesselFinder</a>
-    ${v.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(v.imo)}">Equasis</a>` : ""}</div>`;
+  const ageS = p ? Math.round((Date.now() - new Date(p.ts)) / 1000) : null;
+  const d = { ...v, sog: p?.sog, cog: p?.cog };
+  const fleets = state.fleets.filter((f) => f.vessels.some((x) => x.mmsi === v.mmsi)).map((f) => f.name);
+  return shipCard(d, zoneLines(v.status.inside, v.status.near), {
+    ageS, actions: `<span class="sc-tag">Флот: ${esc(fleets.join(", "))}</span>`,
+  });
 }
 
 async function selectVessel(mmsi, fly) {
@@ -528,6 +532,116 @@ async function selectVessel(mmsi, fly) {
     const pts = t.points.map((p) => [p.lat, p.lon]);
     if (pts.length > 1) L.polyline(pts, { color: "#4fc3d9", weight: 2, opacity: 0.8, dashArray: "2 6" }).addTo(trackLayer);
   } catch { /* трек необязателен */ }
+}
+
+/* ------------------------------------------------------------------ карточка судна */
+// Рисунок-заглушка, если фото нет: силуэт по типу судна, цвет — цвет категории на карте
+function shipSilhouette(cat) {
+  const c = TRAFFIC_COLORS[cat] || TRAFFIC_COLORS.other;
+  const hull = {
+    yacht: "M40 92 L250 92 L272 76 L60 76 Z",
+    fishing: "M80 92 L220 92 L236 72 L70 72 Z",
+    service: "M90 92 L210 92 L226 70 L84 70 Z",
+  }[cat] || "M22 94 L262 94 L282 70 L14 70 Z";
+  const top = {
+    cargo: `<rect x="40" y="46" width="22" height="24" fill="#4a6b85"/><rect x="64" y="40" width="22" height="30" fill="#8a5a44"/>
+      <rect x="88" y="46" width="22" height="24" fill="#3f6f5a"/><rect x="112" y="40" width="22" height="30" fill="#4a6b85"/>
+      <rect x="136" y="46" width="22" height="24" fill="#8a7a44"/><rect x="160" y="40" width="22" height="30" fill="#6b4a85"/>
+      <rect x="196" y="30" width="34" height="40" fill="#d8dee2"/><rect x="200" y="36" width="26" height="5" fill="#1d2b33"/>`,
+    tanker: `<rect x="40" y="62" width="150" height="8" fill="#5b6b73"/><path d="M50 62 V54 M80 62 V54 M110 62 V54 M140 62 V54 M170 62 V54" stroke="#9aa8b0" stroke-width="3"/>
+      <rect x="206" y="34" width="38" height="36" fill="#d8dee2"/><rect x="210" y="40" width="30" height="5" fill="#1d2b33"/><rect x="232" y="22" width="9" height="14" fill="${c}"/>`,
+    passenger: `<rect x="40" y="56" width="220" height="14" fill="#e8edf0"/><rect x="56" y="42" width="180" height="14" fill="#dfe5e8"/>
+      <rect x="76" y="30" width="130" height="12" fill="#d3dade"/><path d="M46 63 H252 M62 49 H230" stroke="#2a3a44" stroke-width="4" stroke-dasharray="8 5"/>`,
+    yacht: `<path d="M86 76 L104 60 L226 60 L240 76 Z" fill="#eef2f4"/><path d="M118 60 L132 48 L206 48 L214 60 Z" fill="#e2e8eb"/>
+      <path d="M110 66 H226" stroke="#1d2b33" stroke-width="5"/><path d="M138 54 H204" stroke="#1d2b33" stroke-width="4"/>`,
+    fishing: `<rect x="176" y="46" width="34" height="26" fill="#d8dee2"/><rect x="180" y="52" width="26" height="5" fill="#1d2b33"/>
+      <path d="M120 72 V30 L90 64 M120 34 L150 64" stroke="#9aa8b0" stroke-width="3" fill="none"/>`,
+    service: `<rect x="120" y="44" width="46" height="26" fill="#d8dee2"/><rect x="126" y="34" width="34" height="12" fill="#e5eaed"/>
+      <rect x="130" y="38" width="26" height="5" fill="#1d2b33"/><rect x="172" y="50" width="10" height="20" fill="${c}"/>`,
+  }[cat] || `<rect x="190" y="40" width="40" height="30" fill="#d8dee2"/><rect x="194" y="46" width="32" height="5" fill="#1d2b33"/>`;
+  return `<svg viewBox="0 0 300 120" class="sc-sil" aria-hidden="true">
+    <rect width="300" height="120" fill="url(#sc-sky)"/>
+    <defs><linearGradient id="sc-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b3442"/><stop offset="1" stop-color="#10232d"/></linearGradient></defs>
+    ${top}<path d="${hull}" fill="${c}"/><path d="M0 98 Q75 92 150 98 T300 98 V120 H0 Z" fill="#0b1a22" opacity=".9"/></svg>`;
+}
+
+const flagImg = (iso, title) => (iso
+  ? `<img class="sc-flag" src="https://flagcdn.com/w40/${esc(iso)}.png" alt="" title="${esc(title || "")}" loading="lazy">` : "");
+
+const fmtAge = (s) => (s == null ? "—" : s < 60 ? "только что" : s < 3600 ? `${Math.round(s / 60)} мин назад`
+  : s < 172800 ? `${Math.round(s / 3600)} ч назад` : `${Math.round(s / 86400)} сут назад`);
+
+/**
+ * d — данные судна (общий слой или флот), zonesHtml — строки про зоны,
+ * opts.actions — HTML кнопки «Во флот» / пометки, opts.ageS — давность позиции в секундах.
+ */
+function shipCard(d, zonesHtml, opts = {}) {
+  const sogCog = `${d.sog != null ? d.sog.toFixed(1) + " уз" : "—"} / ${d.cog != null ? Math.round(d.cog) + "°" : "—"}`;
+  const size = d.length ? `${Math.round(d.length)} × ${d.beam ? Math.round(d.beam) : "?"} м` : "—";
+  const mt = `https://www.marinetraffic.com/en/ais/details/ships/mmsi:${encodeURIComponent(d.mmsi)}`;
+  return `<div class="sc" data-imo="${esc(d.imo || "")}" data-mmsi="${esc(d.mmsi)}" data-cat="${esc(d.category || "other")}">
+    <div class="sc-head">${flagImg(d.flag_iso, d.flag)}
+      <div><div class="sc-name">${esc(d.name || "Без названия")}</div>
+      <div class="sc-type"><i class="dot" style="background:${TRAFFIC_COLORS[d.category] || TRAFFIC_COLORS.other}"></i> ${esc(d.type_name || "Тип не передан")}</div></div></div>
+    <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
+    <div class="sc-actions">${opts.actions || ""}
+      <button class="btn ghost sc-track" type="button">Трек</button>
+      <a class="btn" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div>
+    <div class="sc-route"><div><span class="muted small">Пункт назначения</span><b>${esc(d.destination || "не указан")}</b></div>
+      <div class="sc-eta"><span class="muted small">ETA</span><b>${esc(d.eta || "—")}</b></div></div>
+    <div class="sc-zones">${zonesHtml}</div>
+    <div class="sc-grid">
+      <div><span>Статус</span><b>${esc(d.nav_status || "—")}</b></div>
+      <div><span>Скорость / курс</span><b>${sogCog}</b></div>
+      <div><span>Осадка</span><b>${d.draught ? d.draught.toFixed(1) + " м" : "—"}</b></div>
+      <div><span>Размеры</span><b>${size}</b></div>
+      <div><span>Флаг</span><b>${esc(d.flag || "—")}</b></div>
+      <div><span>IMO / MMSI</span><b>${esc(d.imo || "—")}<br>${esc(d.mmsi)}</b></div>
+    </div>
+    <div class="sc-foot">Получено: <b>${fmtAge(opts.ageS)}</b>${d.ais_class ? ` · AIS класс ${esc(d.ais_class)}` : ""}${d.callsign ? ` · позывной ${esc(d.callsign)}` : ""}</div>
+    <div class="sc-links">Тоннаж, год постройки, владелец:
+      <a href="${mt}" target="_blank" rel="noopener">MarineTraffic</a> ·
+      <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(d.imo || d.mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
+      ${d.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(d.imo)}">Equasis</a>` : ""}</div>
+  </div>`;
+}
+
+// После открытия карточки: фото с Wikimedia Commons (если есть) и кнопка трека
+async function hydrateCard(popup, onTrack) {
+  const el = popup.getElement()?.querySelector(".sc");
+  if (!el) return;
+  el.querySelector(".sc-track").onclick = onTrack;
+  const imo = el.dataset.imo;
+  if (!imo) return;
+  try {
+    const { photo } = await api(`/api/photo/${encodeURIComponent(imo)}`);
+    if (!photo || !el.isConnected) return;
+    const box = el.querySelector(".sc-photo");
+    const img = new Image();
+    img.alt = "";
+    img.onload = () => {
+      box.querySelector(".sc-sil")?.remove();
+      box.prepend(img);
+      box.querySelector(".sc-credit").innerHTML = `<a href="${esc(photo.page)}" target="_blank" rel="noopener">© ${esc(photo.author || "Wikimedia Commons")}${photo.license ? `, ${esc(photo.license)}` : ""}</a>`;
+      popup.update();
+    };
+    img.src = photo.url;
+  } catch { /* фото необязательно */ }
+}
+
+function zoneLines(inside, near) {
+  return [
+    ...inside.map((z) => `<div class="zin">● В зоне: ${esc(z.name)}${z.since ? ` <span class="muted">с ${fmtTime(z.since)}</span>` : ""}</div>`),
+    ...near.map((z) => `<div class="znr">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`),
+  ].join("") || `<div class="zok">Вне зон риска</div>`;
+}
+
+function drawTrack(points, color = "#4fc3d9") {
+  trackLayer.clearLayers();
+  const pts = points.map((p) => [p.lat, p.lon]);
+  if (pts.length < 2) { toast("Трек пока короткий", "Точки копятся раз в 10 минут, пока судно передаёт AIS."); return; }
+  L.polyline(pts, { color, weight: 2, opacity: 0.9, dashArray: "2 6" }).addTo(trackLayer);
+  pts.slice(0, -1).forEach((ll) => L.circleMarker(ll, { radius: 2, weight: 0, fillColor: color, fillOpacity: 0.9 }).addTo(trackLayer));
 }
 
 /* ------------------------------------------------------------------ все суда (AIS) */
@@ -568,11 +682,12 @@ function renderTraffic() {
   renderTrafficCats();
   if (!t.on || !t.data) return;
   const fleet = new Set(allVessels().map((v) => v.mmsi));
-  for (const [mmsi, lat, lon, , , cat, name, len] of t.data.ships) {
+  for (const [mmsi, lat, lon, cog, sog, cat, name, len] of t.data.ships) {
     if (!t.cats.has(cat) || fleet.has(mmsi)) continue;
-    L.circleMarker([lat, lon], {
-      renderer: trafficRenderer, radius: len > 200 ? 4.5 : len > 100 ? 3.5 : 2.5,
-      weight: 0.5, color: "#0b1a22", fillColor: TRAFFIC_COLORS[cat], fillOpacity: 0.9,
+    new ShapeMarker([lat, lon], {
+      shape: cat === "yacht" ? "yacht" : "ship", rotation: cog ?? 0,
+      renderer: trafficRenderer, radius: len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8,
+      weight: 0.6, color: "#0b1a22", fillColor: TRAFFIC_COLORS[cat], fillOpacity: sog != null && sog < 0.5 ? 0.55 : 0.95,
     }).bindTooltip(esc(name || `MMSI ${mmsi}`), { direction: "top", offset: [0, -4] })
       .on("click", (e) => openTrafficShip(mmsi, e.latlng))
       .addTo(trafficLayer);
@@ -599,13 +714,20 @@ function renderTrafficCats() {
 }
 
 async function openTrafficShip(mmsi, latlng) {
-  const popup = L.popup({ minWidth: 260, maxWidth: 340 }).setLatLng(latlng).setContent("Загружаю…").openOn(map);
+  const popup = L.popup({ minWidth: 300, maxWidth: 320, className: "sc-popup" }).setLatLng(latlng)
+    .setContent("Загружаю…").openOn(map);
   try {
     const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
-    popup.setContent(trafficPopup(s));
+    const zs = s.zones || [];
+    const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
+      : state.fleets.length ? `<select class="sc-fleet">${state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
+        <button class="btn" type="button" data-add-fleet>Во флот</button>` : "";
+    popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
+      { actions, ageS: s.age_s }));
+    hydrateCard(popup, async () => drawTrack((await api(`/api/traffic/${encodeURIComponent(mmsi)}/track`)).points, "#f6b26b"));
     const btn = popup.getElement()?.querySelector("[data-add-fleet]");
     if (btn) btn.onclick = async () => {
-      const fid = +popup.getElement().querySelector("select").value;
+      const fid = +popup.getElement().querySelector(".sc-fleet").value;
       try {
         await api(`/api/fleets/${fid}/vessels`, { json: { mmsi: s.mmsi, imo: s.imo || "", name: s.name || "" } });
         toast("Судно добавлено во флот", s.name || s.mmsi);
@@ -615,31 +737,6 @@ async function openTrafficShip(mmsi, latlng) {
       } catch (e) { toast("Не удалось добавить", e.message, "critical"); }
     };
   } catch (e) { popup.setContent(esc(e.message)); }
-}
-
-function trafficPopup(s) {
-  const zones = (s.zones || []).map((z) => z.status === "inside"
-    ? `<div style="color:var(--red)">● В зоне: ${esc(z.name)}</div>`
-    : `<div style="color:var(--amber)">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`).join("")
-    || `<div style="color:var(--green)">Вне зон риска</div>`;
-  const fleetSel = s.fleets.length ? `<div class="small muted">Уже во флоте: ${s.fleets.map(esc).join(", ")}</div>`
-    : state.fleets.length ? `<div class="row" style="margin-top:8px">
-        <select>${state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
-        <button class="btn" data-add-fleet>Во флот</button></div>` : "";
-  return `<h4>${esc(s.name || "Без названия")}</h4>
-    <div class="muted small"><i class="dot" style="background:${TRAFFIC_COLORS[s.category]}"></i> ${esc(s.type_name)}${s.flag ? ` · флаг: ${esc(s.flag)}` : ""}</div>
-    ${zones}
-    <dl class="kv" style="margin-top:8px">
-      <dt>MMSI</dt><dd>${esc(s.mmsi)}</dd>
-      ${s.imo ? `<dt>IMO</dt><dd>${esc(s.imo)}</dd>` : ""}
-      ${s.callsign ? `<dt>Позывной</dt><dd>${esc(s.callsign)}</dd>` : ""}
-      ${shipSizeRows(s)}
-      <dt>Скорость</dt><dd>${s.sog != null ? s.sog.toFixed(1) + " уз" : "—"}</dd>
-      <dt>Курс</dt><dd>${s.cog != null ? Math.round(s.cog) + "°" : "—"}</dd>
-      ${s.destination ? `<dt>Назначение</dt><dd>${esc(s.destination)}</dd>` : ""}
-      ${s.eta ? `<dt>ETA</dt><dd>${esc(s.eta)}</dd>` : ""}
-      <dt>Обновлено</dt><dd>${s.age_s != null ? (s.age_s < 60 ? "только что" : `${Math.round(s.age_s / 60)} мин назад`) : "—"}${s.ais_class === "B" ? " · AIS класс B" : ""}</dd>
-    </dl>${shipLinks(s)}${fleetSel}`;
 }
 
 let trafficTimer = null;

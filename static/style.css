@@ -260,3 +260,34 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .traffic-card .zf-layer-head { margin-top: 0; font-weight: 600; }
 .ship-links { margin-top: 8px; color: var(--muted); }
 .vessel-meta .dot { width: 8px; height: 8px; vertical-align: middle; }
+
+/* ---------- карточка судна ---------- */
+.sc-popup .leaflet-popup-content { margin: 0; width: 310px !important; }
+.sc-popup .leaflet-popup-content-wrapper { padding: 0; overflow: hidden; }
+.sc { font-size: 13px; }
+.sc-head { display: flex; gap: 10px; align-items: center; padding: 10px 28px 8px 12px; }
+.sc-flag { width: 30px; height: 20px; object-fit: cover; border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.15); flex: none; }
+.sc-name { font-size: 16px; font-weight: 600; line-height: 1.2; }
+.sc-type { font-size: 12px; color: var(--muted); }
+.sc-type .dot { width: 8px; height: 8px; vertical-align: middle; }
+.sc-photo { position: relative; height: 150px; background: #10232d; }
+.sc-photo img, .sc-photo .sc-sil { width: 100%; height: 150px; object-fit: cover; display: block; }
+.sc-credit { position: absolute; left: 8px; bottom: 6px; font-size: 10.5px; text-shadow: 0 1px 2px #000; }
+.sc-credit a { color: #fff; text-decoration: none; }
+.sc-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.sc-actions .btn { padding: 5px 10px; font-size: 12.5px; text-decoration: none; }
+.sc-actions select { flex: 1; min-width: 0; padding: 5px; font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.sc-tag { flex: 1; font-size: 12px; color: var(--muted); }
+.sc-route { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px 4px; }
+.sc-route b { display: block; font-size: 16px; font-family: var(--mono); }
+.sc-eta { text-align: right; }
+.sc-zones { padding: 4px 12px 8px; font-size: 12.5px; }
+.sc-zones .zin { color: var(--red); } .sc-zones .znr { color: var(--amber); } .sc-zones .zok { color: var(--green); }
+.sc-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
+.sc-grid div { padding: 7px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.sc-grid div:nth-child(3n) { border-right: 0; }
+.sc-grid span { display: block; font-size: 11px; color: var(--muted); }
+.sc-grid b { font-size: 12.5px; font-weight: 600; }
+.sc-foot { padding: 8px 12px 2px; font-size: 12px; color: var(--muted); }
+.sc-foot b { color: var(--text); font-weight: 600; }
+.sc-links { padding: 2px 12px 10px; font-size: 11.5px; color: var(--muted); }
