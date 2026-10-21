@@ -74,12 +74,15 @@ def handle(raw: str | bytes) -> None:
         if cog is not None and cog >= 360:
             cog = None
         nav = body.get("NavigationalStatus")
+        prev_nav = traffic.nav_of(mmsi)
         traffic.update_position(mmsi, lat, lon, sog, cog, hdg, name,
                                 "A" if mtype == "PositionReport" else "B", nav)
         if mmsi[:3] in incidents.DEVICE_PREFIX:          # аварийный маяк: SART, MOB, EPIRB
             incidents.record(incidents.DEVICE_PREFIX[mmsi[:3]], mmsi, name=name, lat=lat, lon=lon,
                              test=nav == 15, source=mtype)
-        elif nav in incidents.NAV_KIND:                   # судно само сообщает «на мели» и т. п.
+        # «на мели» / «не управляется» — только если судно сменило статус при нас: у барж и понтонов
+        # этот статус часто выставлен постоянно, это не происшествие. «Маяк включён» (14) — всегда.
+        elif nav in incidents.NAV_KIND and (nav == 14 or (prev_nav is not None and prev_nav != nav)):
             incidents.record(incidents.NAV_KIND[nav], mmsi, name=name or (traffic.get(mmsi) or {}).get("name"),
                              lat=lat, lon=lon, source=mtype, tracked=tracked)
         if tracked:

@@ -121,6 +121,12 @@ def load() -> int:
     return n
 
 
+def nav_of(mmsi: str) -> Optional[int]:
+    """Последний известный навигационный статус (дёшево, без копирования записи)."""
+    with _lock:
+        return (_ships.get(mmsi) or {}).get("nav")
+
+
 def get(mmsi: str) -> Optional[dict]:
     with _lock:
         s = _ships.get(mmsi)

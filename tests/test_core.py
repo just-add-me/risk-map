@@ -372,8 +372,12 @@ def test_incidents():
     # аварийный маяк (MMSI 970…), статус «на мели» у судна флота, текстовое сообщение, повтор
     aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 970123456, "ShipName": "SART"},
                                  "Message": {"PositionReport": {"Latitude": 43.1, "Longitude": 29.5, "NavigationalStatus": 14}}}))
-    aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 273000555, "ShipName": "STUCK"},
-                                 "Message": {"PositionReport": {"Latitude": 44.0, "Longitude": 33.0, "NavigationalStatus": 6}}}))
+    # понтон с постоянным статусом «на мели» — не происшествие; судно, сменившее статус, — происшествие
+    aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 211000001, "ShipName": "PONTON"},
+                                 "Message": {"PositionReport": {"Latitude": 50.0, "Longitude": 8.6, "NavigationalStatus": 6}}}))
+    for nav in (0, 6):
+        aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 273000555, "ShipName": "STUCK"},
+                                     "Message": {"PositionReport": {"Latitude": 44.0, "Longitude": 33.0, "NavigationalStatus": nav}}}))
     for _ in range(3):
         aisstream.handle(json.dumps({"MessageType": "SafetyBroadcastMessage",
                                      "MetaData": {"MMSI": 2734567, "latitude": 44.6, "longitude": 33.5},
@@ -381,6 +385,7 @@ def test_incidents():
     items = {i["kind"]: i for i in incidents.recent(1)}
     assert items["sart"]["lat"] == 43.1 and not items["sart"]["test"]
     assert items["aground"]["name"] == "STUCK"
+    assert not any(i["mmsi"] == "211000001" for i in incidents.recent(1))
     assert items["safety"]["text"] == "NAVIGATIONAL WARNING MINE DANGER" and items["safety"]["lat"] == 44.6
     assert len([i for i in incidents.recent(1) if i["kind"] == "safety"]) == 1      # повторы не плодят записи
     note = db.query_one("SELECT severity, title FROM notifications WHERE kind='incident' AND mmsi='273000555'")
