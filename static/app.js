@@ -799,6 +799,9 @@ async function runShipSearch(q) {
     box.hidden = true;
     if (s.lat == null) { toast("Позиции нет", "Судно сейчас не передаёт AIS или вне зоны покрытия."); return; }
     map.flyTo([s.lat, s.lon], Math.max(map.getZoom(), 11), { duration: 0.8 });
+    trackLayer.clearLayers();
+    L.circleMarker([s.lat, s.lon], { radius: 14, weight: 2.5, color: "#ffffff", fill: false, dashArray: "4 3" })
+      .addTo(trackLayer);
     setTimeout(() => {
       if (s.in_fleet) selectVessel(s.mmsi, false);
       else openTrafficShip(s.mmsi, L.latLng(s.lat, s.lon));
