@@ -33,19 +33,23 @@ NAME_TO_A3: dict[str, list[str]] = {
 }
 
 
-def ensure_downloaded() -> Path:
-    if COUNTRIES_FILE.exists() and COUNTRIES_FILE.stat().st_size > 1_000_000:
-        return COUNTRIES_FILE
-    log.info("Скачиваю границы стран: %s", config.NE_COUNTRIES_URL)
-    tmp = COUNTRIES_FILE.with_suffix(".part")
-    with requests.get(config.NE_COUNTRIES_URL, stream=True, timeout=120,
-                      headers={"User-Agent": config.HTTP_USER_AGENT}) as r:
+def download_once(url: str, path: Path, min_size: int) -> Path:
+    """Скачивает файл Natural Earth, если его ещё нет (или он оборван)."""
+    if path.exists() and path.stat().st_size > min_size:
+        return path
+    log.info("Скачиваю %s", url)
+    tmp = path.with_suffix(".part")
+    with requests.get(url, stream=True, timeout=120, headers={"User-Agent": config.HTTP_USER_AGENT}) as r:
         r.raise_for_status()
         with open(tmp, "wb") as f:
             for chunk in r.iter_content(1 << 20):
                 f.write(chunk)
-    tmp.replace(COUNTRIES_FILE)
-    return COUNTRIES_FILE
+    tmp.replace(path)
+    return path
+
+
+def ensure_downloaded() -> Path:
+    return download_once(config.NE_COUNTRIES_URL, COUNTRIES_FILE, 1_000_000)
 
 
 def load_features() -> list[dict]:

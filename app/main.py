@@ -24,6 +24,7 @@ from starlette.staticfiles import StaticFiles
 from . import alerts, config, db, fleet_import, zones
 from .ais import ingest
 from .circular import pipeline
+from .layers import ibf, inl, ports
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -110,7 +111,8 @@ async def api_status(request: Request):
                                                  "last_check": db.kv_get("circular_last_check"),
                                                  "last_seen": db.kv_get("circular_last_seen")},
                      "interval_hours": config.CIRCULAR_CHECK_HOURS},
-        "zones": {"ref": zones.active_ref(), "count": len(zones.index().zones)},
+        "zones": {"ref": zones.active_ref(), "count": len(zones.index().zones), "version": zones.version()},
+        "ibf": {k: v for k, v in ibf.status().items() if k != "log"},
         "unread": unread["n"] if unread else 0,
         "warn_distance_nm": config.WARN_DISTANCE_NM,
         "user": config.ADMIN_USER,
@@ -122,6 +124,12 @@ async def api_zones(request: Request):
     fc = zones.raw() or {"type": "FeatureCollection", "features": [], "properties": {}}
     return Response(json.dumps(fc, ensure_ascii=False, separators=(",", ":")),
                     media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@api
+async def api_ports(request: Request):
+    data = await asyncio.to_thread(ports.with_zones)
+    return JSONResponse({"ports": data}, headers={"Cache-Control": "no-store"})
 
 
 # --------------------------------------------------------------------------- API: флот
@@ -291,6 +299,18 @@ async def api_circulars(request: Request):
 
 
 @api
+async def api_ibf(request: Request):
+    return JSONResponse({**ibf.status(), "spec": db.kv_get("ibf_spec"),
+                         "inl": {"version": inl.VERSION, "log": db.kv_get("inl_log")}})
+
+
+@api
+async def api_ibf_check(request: Request):
+    res = await ibf.check_now(manual=True)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 502)
+
+
+@api
 async def api_circular_check(request: Request):
     res = await pipeline.check_now(manual=True)
     return JSONResponse(res, status_code=200 if res.get("ok") else 502)
@@ -333,12 +353,20 @@ async def health(request: Request):
 # --------------------------------------------------------------------------- фоновые задачи
 async def _circular_loop(stop: asyncio.Event):
     await pipeline.bootstrap()
+    try:
+        await asyncio.to_thread(inl.ensure_built)
+    except Exception:  # noqa: BLE001
+        log.exception("Не удалось построить слой INL")
     await asyncio.sleep(20)
     while not stop.is_set():
         try:
             await pipeline.check_now()
         except Exception:  # noqa: BLE001
             log.exception("Ошибка проверки циркуляров")
+        try:
+            await ibf.check_now()
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка проверки списка IBF")
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=config.CIRCULAR_CHECK_HOURS * 3600)
 
@@ -384,6 +412,9 @@ routes = [
     Route("/health", health),
     Route("/api/status", api_status),
     Route("/api/zones", api_zones),
+    Route("/api/ports", api_ports),
+    Route("/api/ibf", api_ibf),
+    Route("/api/ibf/check", api_ibf_check, methods=["POST"]),
     Route("/api/fleets", api_fleets),
     Route("/api/fleets/create", api_fleet_create, methods=["POST"]),
     Route("/api/fleets/{fid:int}", api_fleet_update, methods=["PATCH", "DELETE"]),

@@ -170,3 +170,47 @@ if __name__ == "__main__":
                 print(f"✗ {name}: {exc!r}")
     print(json.dumps({"failed": failed}))
     sys.exit(1 if failed else 0)
+
+
+# --------------------------------------------------------------------------- IBF / INL
+from app.layers import ibf  # noqa: E402
+
+IBF_FIXTURE = (ROOT / "tests" / "fixtures" / "IBF-2026-10-01.txt").read_text(encoding="utf-8")
+
+
+def test_ibf_parse():
+    spec = ibf.parse(IBF_FIXTURE)
+    assert spec["list_date"] == "2026-10-01" and spec["list_until"] == "2026-10-22"
+    ds = {d["number"]: d for d in spec["designations"]}
+    assert len(ds) == 10
+    assert [ds[n]["category"] for n in range(1, 11)] == \
+        ["woa", "woa", "woa", "woa", "woa", "hra", "woa", "erz", "erz", "erz2"]
+    assert all(d["template"] for d in ds.values())
+    assert ds[7]["valid_from"] == "2026-03-06" and ds[7]["valid_to"] == "2026-10-22"
+    assert ds[9]["valid_from"] == "2026-03-13"            # в PDF «1 3th of M arch» — рваный текст
+    assert ds[6]["title"] == "IBF High Risk Area – Black Sea"
+    # отпечатки границ совпадают с теми, по которым сделаны шаблоны
+    assert all(d["fingerprint"] in ibf.KNOWN_FINGERPRINTS[d["template"]] for d in ds.values())
+
+
+def test_ibf_diff_and_links():
+    spec = ibf.parse(IBF_FIXTURE)
+    prev = json.loads(json.dumps(spec))
+    prev["designations"] = prev["designations"][:-1]
+    prev["designations"][6]["valid_to"] = "2026-10-01"
+    lines = ibf.diff(prev, spec)
+    assert any(ln.startswith("Добавлена") for ln in lines)
+    assert any(ln.startswith("Срок продлён до 2026-10-22") for ln in lines)
+    html = ('<a href="/up/IBF-List-of-designated-risk-Areas-as-of-2nd-of-March-2026.pdf">old</a>'
+            '<a href="https://x.org/IBF-List-of-designated-risk-Areas-as-of-1st-of-October-2026.pdf">new</a>'
+            '<a href="/up/DMW_ADVISORY_60_2026_.pdf">other</a>')
+    assert ibf.find_latest_pdf(html, "https://imec.org.uk/p").endswith("1st-of-October-2026.pdf")
+
+
+def test_inl_season():
+    from datetime import datetime
+    winter = {"season": {"from": "12-10", "to": "05-25"}}
+    assert zones.in_season(winter, datetime(2026, 1, 15))
+    assert zones.in_season(winter, datetime(2026, 12, 10))
+    assert not zones.in_season(winter, datetime(2026, 7, 1))
+    assert zones.in_season({}, datetime(2026, 7, 1))

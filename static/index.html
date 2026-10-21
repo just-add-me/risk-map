@@ -100,6 +100,15 @@
         <input type="file" id="circ-file" accept=".pdf,.docx,.txt" hidden>
       </div>
       <ul class="circ-list" id="circ-list"></ul>
+      <h3 class="sub-h">Зоны IBF/ITF (экипаж)</h3>
+      <div class="card" id="ibf-status"></div>
+      <div class="row">
+        <button class="btn" id="btn-ibf-check">Проверить список IBF сейчас</button>
+      </div>
+      <h3 class="sub-h">Навигационные ограничения INL (IWL)</h3>
+      <div class="card muted small">Редакция INL 01/11/03 (бывш. Institute Warranty Limits). Меняется крайне редко,
+        поэтому встроена в программу; сезонные районы включаются и выключаются по датам автоматически.
+        Районы, заданные в тексте названием моря, нарисованы приблизительно (≈).</div>
     </section>
   </aside>
 
@@ -108,12 +117,11 @@
     <div class="legend" id="legend">
       <button class="legend-toggle" id="legend-toggle">Легенда ▾</button>
       <div class="legend-body">
-        <div class="lg-title">Зоны JWC (Hull War, Piracy, Terrorism)</div>
-        <div class="lg"><i class="sw z-country"></i>Страна: порты и 12 миль</div>
-        <div class="lg"><i class="sw z-sea"></i>Морской район</div>
-        <div class="lg"><i class="sw z-conditional"></i>Условная (offshore)</div>
-        <div class="lg"><i class="sw z-changed"></i>Изменена в циркуляре</div>
-        <div class="lg-title">Суда</div>
+        <div id="legend-zones"></div>
+        <div class="lg"><i class="sw z-changed"></i>Изменена в последней версии</div>
+        <div class="lg-title">Порты и суда</div>
+        <div class="lg"><i class="dot" style="background:#ff5a4e"></i>Порт в зоне JWC</div>
+        <div class="lg"><i class="dot" style="background:#8fa6b0"></i>Порт вне зон</div>
         <div class="lg"><i class="dot s-safe"></i>Судно вне зон</div>
         <div class="lg"><i class="dot s-near"></i>Приближается</div>
         <div class="lg"><i class="dot s-inside"></i>В зоне</div>

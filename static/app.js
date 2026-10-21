@@ -8,7 +8,8 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const state = {
   fleets: [], fleetId: null, zonesRef: null, zonesFC: null, lastNotifId: null,
   selectedMmsi: null, notifications: [], unread: 0, firstNotifLoad: true,
-  selectedZone: null, zoneFilter: { q: "", types: new Set(["country", "sea", "conditional"]), changedOnly: false },
+  selectedZone: null, zonesVersion: null, zoneById: null, ports: null, portMarkers: [],
+  zoneFilter: { q: "", types: null, changedOnly: false },
 };
 
 /* ------------------------------------------------------------------ API */
@@ -58,30 +59,62 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
 }).addTo(map);
 
 const zonesLayer = L.geoJSON(null, { style: zoneStyle, onEachFeature: bindZone }).addTo(map);
+const portsRenderer = L.canvas({ padding: 0.5 });
+const portsLayer = L.layerGroup();
 const vesselsLayer = L.layerGroup().addTo(map);
 const trackLayer = L.layerGroup().addTo(map);
 const markers = new Map();
 
-// Типы зон JWC: цвет заливки зависит от типа, изменённые в циркуляре — жёлтый пунктир по контуру
+// Три слоя зон и типы внутри них. Цвет заливки — по типу; изменённые в последней версии — жёлтый пунктир
+const LAYERS = {
+  jwc: { label: "JWC — военные риски судна", hint: "Hull War, Piracy, Terrorism: доп. премия страховщику корпуса" },
+  ibf: { label: "IBF/ITF — экипаж", hint: "Бонусы и права экипажа по коллективному договору IBF" },
+  inl: { label: "INL (IWL) — навигационные ограничения", hint: "Лёд и полярные воды: заход только с согласия страховщика" },
+};
 const ZONE_TYPES = {
-  country: { label: "Страна (порты и 12 миль)", color: "#ff5a4e" },
-  sea: { label: "Морской район", color: "#ff9440" },
-  conditional: { label: "Условная (offshore)", color: "#b48cff" },
+  country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e" },
+  sea: { layer: "jwc", label: "Морской район", color: "#ff9440" },
+  conditional: { layer: "jwc", label: "Условная (offshore)", color: "#b48cff", dash: "4 4" },
+  woa: { layer: "ibf", label: "WOA — военные действия", color: "#e8368f" },
+  hra: { layer: "ibf", label: "HRA — высокий риск", color: "#f783ac" },
+  erz: { layer: "ibf", label: "ERZ — расширенный риск", color: "#20c997" },
+  erz2: { layer: "ibf", label: "ERZ-2 — порты", color: "#c0eb75" },
+  inl_perm: { layer: "inl", label: "Круглый год", color: "#4dabf7" },
+  inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4" },
 };
 const CHANGED_COLOR = "#ffe066";
+state.zoneFilter.types = new Set(Object.keys(ZONE_TYPES));
+state.showPorts = localStorageGet("showPorts") !== "0";
+const PORT_COLORS = { jwc: "#ff5a4e", ibf: "#e8368f", inl: "#4dabf7", none: "#8fa6b0" };
 
+const layerOf = (p) => p.layer || "jwc";
 function zoneType(p) {
+  const layer = layerOf(p);
+  if (layer === "ibf") return ZONE_TYPES[p.category] ? p.category : "woa";
+  if (layer === "inl") return p.season ? "inl_season" : "inl_perm";
   if (p.severity === "conditional") return "conditional";
   return p.kind === "defined" ? "sea" : "country";
 }
 const isChanged = (p) => p.change === "amended" || p.change === "added";
 
+// Сезон INL: {"from": "12-10", "to": "05-25"} — как на сервере (zones.in_season)
+function inSeason(p) {
+  if (!p.season) return true;
+  const now = new Date();
+  const md = `${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+  const { from, to } = p.season;
+  return from <= to ? from <= md && md <= to : md >= from || md <= to;
+}
+const fmtDate = (iso) => (iso ? iso.split("-").reverse().join(".") : "—");
+const today = () => new Date().toISOString().slice(0, 10);
+
 function zoneStyle(f) {
   const p = f.properties;
-  const t = zoneType(p);
-  const { color } = ZONE_TYPES[t];
-  const s = { color, weight: 1, fillColor: color, fillOpacity: t === "conditional" ? 0.1 : 0.2 };
-  if (t === "conditional") s.dashArray = "4 4";
+  const t = ZONE_TYPES[zoneType(p)];
+  const layer = layerOf(p);
+  const s = { color: t.color, weight: 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.18, inl: 0.1 }[layer] };
+  if (t.dash) s.dashArray = t.dash;
+  if (layer === "inl" && !inSeason(p)) s.fillOpacity = 0.03;
   if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
   if (state.selectedZone === p.id) Object.assign(s, { color: "#ffffff", weight: 2.5, dashArray: null, fillOpacity: 0.45 });
   return s;
@@ -96,23 +129,39 @@ function selectZone(id) {
 }
 
 function zonePopup(p) {
+  const layer = layerOf(p);
+  const t = ZONE_TYPES[zoneType(p)];
   const tags = [
+    `<span class="tag" style="color:${t.color};border-color:${t.color}">${esc(t.label)}</span>`,
     p.change && p.change !== "unchanged" ? `<span class="tag amended">${p.change === "added" ? "добавлена" : "изменена"}</span>` : "",
     p.severity === "conditional" ? `<span class="tag cond">условная</span>` : "",
     p.approximate ? `<span class="tag">≈ приблизительно</span>` : "",
     p.needs_review ? `<span class="tag review">проверить</span>` : "",
   ].join(" ");
-  return `<h4>${esc(p.name)}</h4><div>${tags}</div>
-    ${p.region ? `<div class="muted small">${esc(p.region)}</div>` : ""}
+  let extra = "";
+  if (layer === "ibf") {
+    const expired = p.valid_to && p.valid_to < today();
+    extra = `<p class="small">${p.valid_to ? `Действует до <b>${fmtDate(p.valid_to)}</b>` : "Срок не указан"}
+        ${expired ? `<span style="color:var(--amber)"> — срок истёк, ждём новый список</span>` : ""}
+        <span class="muted"> · список IBF от ${fmtDate(p.list_date)}</span></p>
+      <p class="small">${esc(p.benefits)}</p>`;
+  } else if (layer === "inl") {
+    extra = p.season
+      ? `<p class="small">Сезон: ${esc(p.season.text)} · ${inSeason(p) ? `<b style="color:var(--amber)">сейчас действует</b>` : "сейчас не действует"}</p>`
+      : `<p class="small">Действует круглый год.</p>`;
+  }
+  return `<h4>${esc(p.name)}</h4><div class="tags">${tags}</div>
+    <div class="muted small">${esc(LAYERS[layer].hint)}${layer === "jwc" && p.region ? ` · ${esc(p.region)}` : ""}</div>
+    ${extra}
     ${p.qualifier ? `<p>${esc(p.qualifier)}</p>` : ""}
     ${p.note ? `<p class="muted small">${esc(p.note)}</p>` : ""}
     ${p.needs_review ? `<p class="small" style="color:var(--red)">${esc(p.review_reason)}</p>` : ""}
-    ${p.text && p.kind === "defined" ? `<div class="zt">${esc(p.text)}</div>` : ""}`;
+    ${p.text && (p.kind === "defined" || layer === "ibf") ? `<div class="zt">${esc(p.text)}</div>` : ""}`;
 }
 
 function bindZone(f, layer) {
   layer.bindTooltip(esc(f.properties.name), { sticky: true, direction: "top", opacity: 0.95 });
-  layer.bindPopup(() => zonePopup(f.properties), { minWidth: 240, maxWidth: 340 });
+  layer.bindPopup(() => zonePopup(f.properties), { minWidth: 260, maxWidth: 360 });
   layer.on("popupopen", () => selectZone(f.properties.id));
   layer.on("popupclose", () => { if (state.selectedZone === f.properties.id) selectZone(null); });
 }
@@ -136,12 +185,14 @@ map.on("mousemove", (e) => {
 /* ------------------------------------------------------------------ зоны */
 async function loadZones(force = false) {
   const st = state.status;
-  if (!force && st && st.zones.ref === state.zonesRef && state.zonesFC) return;
+  if (!force && st && st.zones.version === state.zonesVersion && state.zonesFC) return;
   const fc = await api("/api/zones");
   state.zonesFC = fc;
-  state.zonesRef = (fc.properties || {}).ref || null;
+  state.zonesVersion = st ? st.zones.version : null;
+  state.zoneById = new Map(fc.features.map((f) => [f.properties.id, f.properties]));
   renderZoneLayer();
   renderZonesPanel();
+  await loadPorts();
 }
 
 function zoneVisible(p) {
@@ -149,34 +200,64 @@ function zoneVisible(p) {
   if (!zf.types.has(zoneType(p))) return false;
   if (zf.changedOnly && !isChanged(p)) return false;
   const q = zf.q.trim().toLowerCase();
-  return !q || `${p.name} ${p.region || ""}`.toLowerCase().includes(q);
+  return !q || `${p.name} ${p.region || ""} ${p.title || ""}`.toLowerCase().includes(q);
 }
 
 function renderZoneLayer() {
   zonesLayer.clearLayers();
   if (!state.zonesFC) return;
-  zonesLayer.addData({ ...state.zonesFC, features: state.zonesFC.features.filter((f) => zoneVisible(f.properties)) });
+  // INL рисуем первым (снизу): его районы огромные и не должны перекрывать клики по JWC и IBF
+  const order = { inl: 0, jwc: 1, ibf: 2 };
+  const feats = state.zonesFC.features.filter((f) => zoneVisible(f.properties))
+    .sort((a, b) => order[layerOf(a.properties)] - order[layerOf(b.properties)]);
+  zonesLayer.addData({ ...state.zonesFC, features: feats });
   zonesLayer.bringToBack();
 }
 
 function renderZoneFilters() {
   const fc = state.zonesFC;
-  const counts = { country: 0, sea: 0, conditional: 0 };
+  const counts = Object.fromEntries(Object.keys(ZONE_TYPES).map((t) => [t, 0]));
   let changed = 0;
   (fc ? fc.features : []).forEach((f) => { counts[zoneType(f.properties)]++; if (isChanged(f.properties)) changed++; });
   const zf = state.zoneFilter;
-  $("#z-types").innerHTML = Object.entries(ZONE_TYPES).map(([t, d]) => `
-    <button class="chip ${zf.types.has(t) ? "on" : ""}" data-t="${t}" aria-pressed="${zf.types.has(t)}">
-      <i class="sw z-${t}"></i>${esc(d.label)} <span class="muted">${counts[t]}</span></button>`).join("") + `
-    <button class="chip ${zf.changedOnly ? "on" : ""}" data-t="changed" aria-pressed="${zf.changedOnly}">
-      <i class="sw z-changed"></i>Только изменённые <span class="muted">${changed}</span></button>`;
-  $$("#z-types .chip").forEach((b) => b.onclick = () => {
+  const chip = (t, d) => `<button class="fchip ${zf.types.has(t) ? "on" : ""}" data-t="${t}" aria-pressed="${zf.types.has(t)}">
+      <i class="sw" style="${swatchStyle(d)}"></i>${esc(d.label)} <span class="muted">${counts[t]}</span></button>`;
+  $("#z-types").innerHTML = Object.entries(LAYERS).map(([layer, info]) => {
+    const types = Object.entries(ZONE_TYPES).filter(([, d]) => d.layer === layer);
+    const on = types.some(([t]) => zf.types.has(t));
+    return `<div class="zf-layer">
+      <label class="zf-layer-head" title="${esc(info.hint)}">
+        <input type="checkbox" data-layer="${layer}" ${on ? "checked" : ""}> ${esc(info.label)}</label>
+      <div class="z-types-row">${types.map(([t, d]) => chip(t, d)).join("")}</div></div>`;
+  }).join("") + `<div class="z-types-row">
+    <button class="fchip ${zf.changedOnly ? "on" : ""}" data-t="changed" aria-pressed="${zf.changedOnly}">
+      <i class="sw z-changed"></i>Только изменённые <span class="muted">${changed}</span></button>
+    <button class="fchip ${state.showPorts ? "on" : ""}" data-t="ports" aria-pressed="${state.showPorts}">
+      <i class="dot" style="background:${PORT_COLORS.none}"></i>Порты <span class="muted">${(state.ports || []).length}</span></button></div>`;
+  $$("#z-types .fchip").forEach((b) => b.onclick = () => {
     const t = b.dataset.t;
     if (t === "changed") zf.changedOnly = !zf.changedOnly;
+    else if (t === "ports") { state.showPorts = !state.showPorts; localStorageSet("showPorts", state.showPorts ? "1" : "0"); updatePortsVisibility(); }
     else if (zf.types.has(t)) zf.types.delete(t);
     else zf.types.add(t);
     applyZoneFilter();
   });
+  $$("#z-types [data-layer]").forEach((cb) => cb.onchange = () => {
+    Object.entries(ZONE_TYPES).filter(([, d]) => d.layer === cb.dataset.layer)
+      .forEach(([t]) => (cb.checked ? zf.types.add(t) : zf.types.delete(t)));
+    applyZoneFilter();
+  });
+}
+
+function renderLegend() {
+  $("#legend-zones").innerHTML = Object.entries(LAYERS).map(([layer, info]) => `
+    <div class="lg-title" title="${esc(info.hint)}">${esc(info.label)}</div>
+    ${Object.values(ZONE_TYPES).filter((d) => d.layer === layer)
+      .map((d) => `<div class="lg"><i class="sw" style="${swatchStyle(d)}"></i>${esc(d.label)}</div>`).join("")}`).join("");
+}
+
+function swatchStyle(d) {
+  return `background:${d.color}55;border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
 }
 
 function applyZoneFilter() {
@@ -201,24 +282,38 @@ function renderZonesPanel() {
     shown++;
     (groups[f.properties.region || "Прочее"] ||= []).push([f, i]);
   });
-  $("#zones-meta").innerHTML = `<b>${esc(p.ref || "")}</b> · ${esc(p.issued || "")} · ${shown === fc.features.length ? `${shown} зон` : `${shown} из ${fc.features.length} зон`}`;
-  if (!shown) {
+  const ibfMeta = (p.layers || {}).ibf || {};
+  $("#zones-meta").innerHTML = `<b>${esc(p.ref || "")}</b> · ${esc(p.issued || "")}
+    ${ibfMeta.list_date ? ` · IBF от ${fmtDate(ibfMeta.list_date)}` : ""} ·
+    ${shown === fc.features.length ? `${shown} зон` : `${shown} из ${fc.features.length} зон`}`;
+  const portHits = portSearch(state.zoneFilter.q);
+  const portsHtml = portHits.length ? `<div class="region">Порты</div>${portHits.map((pt) => `
+    <div class="zone-item port-item" data-port="${pt.idx}">
+      <i class="dot" style="background:${portColor(pt)}"></i>
+      <span class="zname">${esc(pt.name)} <span class="muted small">${esc(pt.country)}</span></span>
+      ${pt.zones.length ? `<span class="tag">${pt.zones.length} зон</span>` : ""}
+    </div>`).join("")}` : "";
+  if (!shown && !portHits.length) {
     box.innerHTML = `<div class="empty"><p class="muted">Под фильтр не попала ни одна зона.</p></div>`;
     return;
   }
-  box.innerHTML = Object.entries(groups).map(([region, items]) => `
+  box.innerHTML = portsHtml + Object.entries(groups).map(([region, items]) => `
     <div class="region">${esc(region)}</div>
     ${items.map(([f, i]) => {
       const z = f.properties;
+      const t = ZONE_TYPES[zoneType(z)];
       return `<div class="zone-item ${state.selectedZone === z.id ? "selected" : ""}" data-i="${i}">
-        <i class="sw z-${zoneType(z)} ${isChanged(z) ? "is-changed" : ""}"></i>
+        <i class="sw ${isChanged(z) ? "is-changed" : ""}" style="${swatchStyle(t)}"></i>
         <span class="zname">${esc(z.name)}</span>
         ${z.change && z.change !== "unchanged" ? `<span class="tag amended">${z.change === "added" ? "new" : "изм."}</span>` : ""}
+        ${z.season && !inSeason(z) ? `<span class="tag" title="Сезон: ${esc(z.season.text)}">вне сезона</span>` : ""}
+        ${z.valid_to && z.valid_to < today() ? `<span class="tag review" title="Срок истёк ${fmtDate(z.valid_to)}">срок</span>` : ""}
         ${z.approximate ? `<span class="tag" title="Контур приблизительный">≈</span>` : ""}
         ${z.needs_review ? `<span class="tag review" title="${esc(z.review_reason)}">!</span>` : ""}
       </div>`;
     }).join("")}`).join("");
-  $$(".zone-item", box).forEach((el) => el.onclick = () => focusZone(+el.dataset.i));
+  $$(".zone-item[data-i]", box).forEach((el) => el.onclick = () => focusZone(+el.dataset.i));
+  $$(".port-item", box).forEach((el) => el.onclick = () => focusPort(+el.dataset.port));
 }
 
 function focusZone(i) {
@@ -226,6 +321,67 @@ function focusZone(i) {
   const layer = L.geoJSON(f);
   map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 7 });
   zonesLayer.eachLayer((l) => { if (l.feature.properties.id === f.properties.id) l.openPopup(layer.getBounds().getCenter()); });
+}
+
+/* ------------------------------------------------------------------ порты */
+async function loadPorts() {
+  const data = await api("/api/ports");
+  state.ports = data.ports.map((p, idx) => ({ ...p, idx }));
+  renderPorts();
+  renderZoneFilters();
+}
+
+function portLayers(p) {
+  return new Set(p.zones.map((id) => layerOf(state.zoneById?.get(id) || {})));
+}
+function portColor(p) {
+  const ls = portLayers(p);
+  return PORT_COLORS[["jwc", "ibf", "inl"].find((l) => ls.has(l)) || "none"];
+}
+
+function portPopup(p) {
+  const zs = p.zones.map((id) => state.zoneById?.get(id)).filter(Boolean);
+  const list = zs.map((z) => {
+    const t = ZONE_TYPES[zoneType(z)];
+    const off = z.season && !inSeason(z) ? ` <span class="muted">(вне сезона)</span>` : "";
+    return `<div class="small"><i class="sw" style="${swatchStyle(t)}"></i> ${esc(z.name)}${off}</div>`;
+  }).join("") || `<div class="small" style="color:var(--green)">Вне зон риска</div>`;
+  return `<h4>${esc(p.name)}</h4><div class="muted small">${esc(p.country || "")} · ${p.lat.toFixed(3)}°, ${p.lon.toFixed(3)}°</div>
+    <div style="margin-top:6px;display:grid;gap:3px">${list}</div>`;
+}
+
+function renderPorts() {
+  portsLayer.clearLayers();
+  state.portMarkers = (state.ports || []).map((p) => {
+    const inZone = p.zones.length > 0;
+    return L.circleMarker([p.lat, p.lon], {
+      renderer: portsRenderer, radius: inZone ? 4 : 3, weight: 1, color: "#0b1a22",
+      fillColor: portColor(p), fillOpacity: 0.95,
+    }).bindTooltip(esc(p.name), { direction: "top", offset: [0, -4] })
+      .bindPopup(() => portPopup(p), { minWidth: 220, maxWidth: 340 })
+      .addTo(portsLayer);
+  });
+  updatePortsVisibility();
+}
+
+function updatePortsVisibility() {
+  const show = state.showPorts && map.getZoom() >= 3;
+  if (show && !map.hasLayer(portsLayer)) portsLayer.addTo(map);
+  if (!show && map.hasLayer(portsLayer)) map.removeLayer(portsLayer);
+}
+map.on("zoomend", updatePortsVisibility);
+
+function portSearch(q) {
+  q = q.trim().toLowerCase();
+  if (q.length < 2 || !state.ports) return [];
+  return state.ports.filter((p) => p.name.toLowerCase().includes(q) || p.country.toLowerCase() === q).slice(0, 8);
+}
+
+function focusPort(idx) {
+  const p = state.ports[idx];
+  map.setView([p.lat, p.lon], Math.max(map.getZoom(), 8));
+  if (!state.showPorts) { state.showPorts = true; updatePortsVisibility(); renderZoneFilters(); }
+  state.portMarkers[idx].openPopup();
 }
 
 /* ------------------------------------------------------------------ флот */
@@ -325,7 +481,7 @@ function vesselPopup(v) {
   const lines = [
     ...st.inside.map((z) => `<div style="color:var(--red)">● В зоне: ${esc(z.name)} <span class="muted">с ${fmtTime(z.since)}</span></div>`),
     ...st.near.map((z) => `<div style="color:var(--amber)">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`),
-  ].join("") || `<div style="color:var(--green)">Вне зон JWC</div>`;
+  ].join("") || `<div style="color:var(--green)">Вне зон риска</div>`;
   return `<h4>${esc(v.name || v.ais_name || "Судно")}</h4>${lines}
     <dl class="kv" style="margin-top:8px">
       <dt>MMSI</dt><dd>${esc(v.mmsi)}</dd>
@@ -447,6 +603,29 @@ async function loadCirculars() {
   });
 }
 
+async function loadIbf() {
+  const d = await api("/api/ibf");
+  const expired = d.list_until && d.list_until < today();
+  const rows = ((d.spec || {}).designations || []).map((x) => {
+    const t = ZONE_TYPES[x.category] || {};
+    return `<tr><td><i class="sw" style="${swatchStyle(t.color ? t : { color: "#888" })}"></i></td>
+      <td>${esc(x.title.replace(/^IBF\s+/, ""))}</td>
+      <td class="muted" style="white-space:nowrap">до ${fmtDate(x.valid_to)}</td></tr>`;
+  }).join("");
+  const problems = (d.log || []).filter((l) => /^[⚠✖]/.test(l));
+  $("#ibf-status").innerHTML = `
+    <div><b>Действует:</b> ${d.list_date ? `список от ${fmtDate(d.list_date)}, продлён до
+      <b style="${expired ? "color:var(--amber)" : ""}">${fmtDate(d.list_until)}</b>` : "ещё не загружен"}</div>
+    ${expired ? `<div class="small" style="color:var(--amber)">Срок истёк, новая версия на сайте пока не найдена. Зоны остаются на карте.</div>` : ""}
+    <div class="muted small">Автопроверка сайта IMEC вместе с проверкой JWC · последняя: ${d.last_check ? ago(d.last_check) : "ещё не было"}
+      ${d.url ? ` · <a href="${esc(d.url)}" target="_blank" rel="noopener">PDF списка</a>` : ""}
+      · <a href="${esc(d.page_url)}" target="_blank" rel="noopener">страница IMEC</a></div>
+    ${d.last_error ? `<div class="small" style="color:var(--red)">Ошибка: ${esc(d.last_error)}</div>` : ""}
+    ${d.running ? `<div class="small" style="color:var(--amber)">⏳ ${esc(d.step)}</div>` : ""}
+    ${problems.map((l) => `<div class="small" style="color:var(--red)">${esc(l)}</div>`).join("")}
+    ${rows ? `<table class="ibf-table">${rows}</table>` : ""}`;
+}
+
 /* ------------------------------------------------------------------ статус и цикл обновления */
 async function loadStatus() {
   const st = await api("/api/status");
@@ -456,10 +635,11 @@ async function loadStatus() {
   const chip = $("#chip-ais");
   if (st.ais.mode === "demo") { chip.textContent = "AIS: демо"; chip.className = "chip demo"; chip.title = "Симулятор движения. Укажите AISSTREAM_API_KEY в .env для живых данных"; }
   else { chip.textContent = `AIS: live${st.ais.connected ? "" : " (нет связи)"}`; chip.className = `chip ${st.ais.connected ? "live" : "demo"}`; chip.title = st.ais.last_error || `сообщений: ${st.ais.messages}`; }
-  $("#sb-refs").textContent = st.zones.ref ? `${st.zones.ref} · ${st.zones.count} зон · JWC (LMA/IUA)` : "";
+  $("#sb-refs").textContent = st.zones.ref
+    ? `JWC ${st.zones.ref}${st.ibf.list_date ? ` · IBF ${fmtDate(st.ibf.list_date)}` : ""} · ${st.zones.count} зон` : "";
   const banner = $("#build-banner");
-  banner.hidden = !st.circular.check.running;
-  banner.textContent = `⏳ ${st.circular.check.step || "Обновление зон"}`;
+  banner.hidden = !st.circular.check.running && !st.ibf.running;
+  banner.textContent = `⏳ ${st.circular.check.step || st.ibf.step || "Обновление зон"}`;
   setUnread(st.unread);
 }
 
@@ -469,7 +649,7 @@ async function refreshAll(forceZones = false) {
     await loadZones(forceZones);
     await loadFleets();
     await loadNotifications();
-    if ($("#panel-circulars").classList.contains("active")) await loadCirculars();
+    if ($("#panel-circulars").classList.contains("active")) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
 }
 
@@ -477,7 +657,10 @@ async function refreshAll(forceZones = false) {
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
-  if (name === "circulars") loadCirculars().catch((e) => toast("Ошибка", e.message, "critical"));
+  if (name === "circulars") {
+    loadCirculars().catch((e) => toast("Ошибка", e.message, "critical"));
+    loadIbf().catch((e) => toast("Ошибка", e.message, "critical"));
+  }
 }
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
 $("#btn-bell").onclick = () => switchTab("alerts");
@@ -545,6 +728,13 @@ $("#btn-circ-check").onclick = async (e) => {
   b.disabled = false; b.textContent = "Проверить сайт LMA сейчас";
   await refreshAll(true);
 };
+$("#btn-ibf-check").onclick = async (e) => {
+  const b = e.target; b.disabled = true; b.textContent = "Проверяю…";
+  try { const r = await api("/api/ibf/check", { method: "POST" }); toast("Проверка IBF завершена", r.message); }
+  catch (err) { toast("Проверка IBF не удалась", err.message, "critical"); }
+  b.disabled = false; b.textContent = "Проверить список IBF сейчас";
+  await refreshAll(true);
+};
 $("#btn-circ-upload").onclick = () => $("#circ-file").click();
 $("#circ-file").onchange = async (e) => {
   const file = e.target.files[0]; e.target.value = "";
@@ -558,6 +748,7 @@ $("#circ-file").onchange = async (e) => {
 
 /* ------------------------------------------------------------------ старт */
 if (window.innerWidth < 820) $("#legend").classList.add("collapsed");
+renderLegend();
 (async () => {
   await refreshAll(true);
   const vs = allVessels().filter((v) => v.position);

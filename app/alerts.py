@@ -45,9 +45,26 @@ def _eta_text(distance_nm: float, sog: Optional[float]) -> str:
 
 def _zone_suffix(zone_id: str) -> str:
     z = zones.index().get(zone_id)
-    if z and z.props.get("severity") == "conditional":
+    if not z:
+        return ""
+    p = z.props
+    if p.get("layer") == "ibf":
+        return f"\nЭкипаж (IBF/ITF): {p.get('benefits', '')}"
+    if p.get("layer") == "inl":
+        return ("\nНавигационные ограничения INL: нужен заранее согласованный со страховщиком корпуса заход "
+                "и доплата премии, иначе страховка корпуса может не действовать.")
+    if p.get("severity") == "conditional":
         return " (условная зона: только при заходе на offshore-установки)"
     return ""
+
+
+def _enter_severity(zone_id: str) -> str:
+    """Вход в зону JWC, WOA и HRA — критично; ERZ и INL — предупреждение."""
+    z = zones.index().get(zone_id)
+    p = z.props if z else {}
+    if p.get("layer") == "inl" or (p.get("layer") == "ibf" and p.get("category") in ("erz", "erz2")):
+        return "warning"
+    return "critical"
 
 
 def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
@@ -55,6 +72,10 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
     """Пересчитывает статусы судна. Возвращает id созданных уведомлений."""
     idx = zones.index()
     result = idx.evaluate(lon, lat, config.WARN_DISTANCE_NM)
+    # сезонные ограничения INL вне сезона не действуют
+    off_season = {zid for zid in result if not zones.in_effect(zid)}
+    for zid in off_season:
+        del result[zid]
     old = {r["zone_id"]: r for r in db.query("SELECT * FROM zone_state WHERE mmsi=?", (mmsi,))}
     label = vessel_label(mmsi)
     created: list[int] = []
@@ -62,6 +83,8 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
 
     # гистерезис: не выпускаем из зоны, пока судно не отошло от границы хотя бы на 0.3 мили
     for zid, st in old.items():
+        if not zones.in_effect(zid):
+            continue
         if st["status"] == "inside" and result.get(zid, {}).get("status") != "inside":
             z = idx.get(zid)
             if z is not None:
@@ -91,10 +114,13 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
             else:
                 title = f"{label}: ВХОД в зону «{zname}»"
                 body = f"Позиция {lat:.4f}, {lon:.4f}." + suffix
-            created.append(db.notify("zone_enter", "critical", title, body, mmsi, zid))
+            created.append(db.notify("zone_enter", _enter_severity(zid), title, body, mmsi, zid))
         elif prev == "inside":
             dur = _fmt_duration(old[zid]["since"])
-            if reason:
+            if not zones.in_effect(zid):
+                title = f"{label}: сезонное ограничение «{zname}» закончилось"
+                body = "Судно по-прежнему в этом районе, но до следующего сезона ограничение не действует."
+            elif reason:
                 title = f"{label}: зона «{zname}» больше не действует для судна"
                 body = reason
             else:

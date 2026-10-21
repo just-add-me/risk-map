@@ -33,6 +33,8 @@ TRAIL_HOURS = float(_env("TRAIL_HOURS", "72"))             # сколько хр
 # --- Циркуляры регулятора -------------------------------------------------
 JWC_PAGE_URL = _env("JWC_PAGE_URL", "https://lmalloyds.com/committee/joint-war-committee/")
 CIRCULAR_CHECK_HOURS = float(_env("CIRCULAR_CHECK_HOURS", "12"))   # 2 раза в сутки
+# Список зон IBF/ITF (экипаж): страница IMEC, где выкладывают свежий PDF «IBF List of designated risk areas»
+IBF_PAGE_URL = _env("IBF_PAGE_URL", "https://imec.org.uk/the-international-bargaining-forum-ibf/ibf-risk-areas")
 HTTP_USER_AGENT = _env(
     "HTTP_USER_AGENT",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -45,11 +47,15 @@ NE_COUNTRIES_URL = _env(
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/"
     "ne_10m_admin_0_countries.geojson",
 )
+NE_BASE_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/"
+NE_PORTS_URL = _env("NE_PORTS_URL", NE_BASE_URL + "ne_10m_ports.geojson")
+NE_LAKES_URL = _env("NE_LAKES_URL", NE_BASE_URL + "ne_10m_lakes.geojson")
 
 DB_PATH = DATA_DIR / "app.db"
 CIRCULARS_DIR = DATA_DIR / "circulars"
+IBF_DIR = DATA_DIR / "ibf"
 ZONES_DIR = DATA_DIR / "zones"
 GEODATA_DIR = DATA_DIR / "geodata"
 
-for _d in (DATA_DIR, CIRCULARS_DIR, ZONES_DIR, GEODATA_DIR):
+for _d in (DATA_DIR, CIRCULARS_DIR, IBF_DIR, ZONES_DIR, GEODATA_DIR):
     _d.mkdir(parents=True, exist_ok=True)

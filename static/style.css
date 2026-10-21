@@ -140,13 +140,20 @@ details.card[open] > summary::before { content: "− "; }
   width: 100%; padding: 7px 10px; margin-bottom: 8px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px;
 }
-.z-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-.chip {
+.zf-layer { margin-bottom: 8px; }
+.zf-layer-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); margin: 4px 0; cursor: pointer; }
+.z-types-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.fchip {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; font: 12px var(--font); cursor: pointer;
   background: var(--bg); border: 1px solid var(--line); border-radius: 999px; color: var(--muted);
 }
-.chip.on { background: var(--bg-3); border-color: #3c6577; color: var(--text); }
-.chip:not(.on) .sw { opacity: .35; }
+.fchip.on { background: var(--bg-3); border-color: #3c6577; color: var(--text); }
+.fchip:not(.on) .sw, .fchip:not(.on) .dot { opacity: .35; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+.sub-h { font-size: 13px; margin: 18px 0 8px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; }
+.ibf-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.ibf-table td { padding: 3px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+.legend-body { max-height: 60vh; overflow: auto; }
 .zone-item .zname { flex: 1; }
 .tag { font: 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
 .tag.amended, .tag.added { color: var(--amber); border-color: #6b5521; }
