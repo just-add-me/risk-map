@@ -57,7 +57,13 @@
       </div>
       <div id="fleet-body">
         <div class="summary" id="fleet-summary"></div>
-        <details class="card" id="add-vessel">
+        <div class="fleet-actions">
+          <button class="btn ghost" type="button" id="btn-add-toggle">+ Добавить судно</button>
+          <button class="btn ghost" type="button" id="btn-share-toggle" title="Открыть флот другому пользователю">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M18 16a3 3 0 0 0-2.4 1.2l-6.7-3.4a3 3 0 0 0 0-1.6l6.7-3.4A3 3 0 1 0 15 7l-6.7 3.4a3 3 0 1 0 0 3.2L15 17a3 3 0 1 0 3-1Z" fill="currentColor"/></svg>
+            Поделиться<span id="share-count"></span></button>
+        </div>
+        <details class="card" id="add-vessel" hidden>
           <summary>Добавить судно</summary>
           <form id="form-vessel" class="form-grid">
             <label>MMSI*<input name="mmsi" inputmode="numeric" maxlength="9" placeholder="9 цифр" required></label>
@@ -72,7 +78,6 @@
             <span class="muted">CSV, TXT или XLSX с колонками mmsi, imo, name</span>
           </div>
         </details>
-        <ul class="vessel-list" id="vessel-list"></ul>
         <details class="card" id="fleet-share" hidden>
           <summary>Доступ к флоту</summary>
           <div id="share-list"></div>
@@ -84,6 +89,7 @@
           <p class="muted small">Пользователь увидит флот у себя, его суда на карте и уведомления по ним.
             Без галочки — только просмотр.</p>
         </details>
+        <ul class="vessel-list" id="vessel-list"></ul>
         <div class="fleet-foot" id="fleet-foot-owner">
           <button class="text-btn danger" id="btn-fleet-delete">Удалить флот</button>
           <button class="text-btn" id="btn-fleet-rename">Переименовать</button>

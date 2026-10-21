@@ -531,8 +531,11 @@ function renderFleet() {
   const f = currentFleet();
   if (!f) return;
   const owner = f.access === "owner", canEdit = f.access !== "view";
-  $("#add-vessel").hidden = !canEdit;
-  $("#fleet-share").hidden = !owner;
+  $("#btn-add-toggle").hidden = !canEdit;
+  $("#btn-share-toggle").hidden = !owner;
+  $("#share-count").textContent = owner && f.shares?.length ? ` · ${f.shares.length}` : "";
+  if (!canEdit) togglePanel("#add-vessel", false);
+  if (!owner) togglePanel("#fleet-share", false);
   $("#fleet-foot-owner").hidden = !owner;
   $("#fleet-foot-guest").hidden = owner;
   $("#fleet-owner-note").textContent = owner ? "" : `Флот пользователя ${f.owner} · ${canEdit ? "можно менять суда" : "только просмотр"}`;
@@ -543,7 +546,7 @@ function renderFleet() {
     <div class="stat inside"><b>${c.inside}</b><span>в зоне</span></div>
     <div class="stat near"><b>${c.near}</b><span>приближаются</span></div>
     <div class="stat safe"><b>${c.safe}</b><span>вне зон</span></div>`;
-  if (!f.vessels.length && canEdit) $("#add-vessel").open = true;
+  if (!f.vessels.length && canEdit) togglePanel("#add-vessel", true);
   const list = $("#vessel-list");
   list.innerHTML = f.vessels.map((v) => {
     const lvl = v.position ? v.status.level : "none";
@@ -555,7 +558,7 @@ function renderFleet() {
       <i class="dot s-${lvl}"></i>
       <div>
         <div class="vessel-name">${esc(v.name || v.ais_name || "Без названия")}</div>
-        <div class="vessel-meta">MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""} · ${v.position ? ago(v.position.ts) : "ждём AIS"}</div>
+        <div class="vessel-meta">MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""} · ${v.position ? `обновлено ${ago(v.position.ts)}` : "ждём AIS"}</div>
         ${v.ship_type ? `<div class="vessel-meta"><i class="dot" style="background:${TRAFFIC_COLORS[v.category]}"></i> ${esc(v.type_name)}${v.length ? ` · ${Math.round(v.length)} м` : ""}${v.flag ? ` · ${esc(v.flag)}` : ""}</div>` : ""}
         ${zones ? `<div class="vessel-zones">${zones}</div>` : ""}
       </div>
@@ -692,7 +695,7 @@ function shipCard(d, zonesHtml, opts = {}) {
       <div><span>Флаг</span><b>${esc(d.flag || "—")}</b></div>
       <div><span>IMO / MMSI</span><b>${esc(d.imo || "—")}<br>${esc(d.mmsi)}</b></div>
     </div>
-    <div class="sc-foot">Получено: <b>${fmtAge(opts.ageS)}</b>${d.ais_class ? ` · AIS класс ${esc(d.ais_class)}` : ""}${d.callsign ? ` · позывной ${esc(d.callsign)}` : ""}</div>
+    <div class="sc-foot">Обновлено: <b>${fmtAge(opts.ageS)}</b>${d.ais_class ? ` · AIS класс ${esc(d.ais_class)}` : ""}${d.callsign ? ` · позывной ${esc(d.callsign)}` : ""}</div>
     <div class="sc-links">Тоннаж, год постройки, владелец:
       <a href="${mt}" target="_blank" rel="noopener">MarineTraffic</a> ·
       <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(d.imo || d.mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
@@ -1086,6 +1089,17 @@ $("#btn-fleet-rename").onclick = async () => {
   await api(`/api/fleets/${f.id}`, { method: "PATCH", json: { name } }).catch((e) => toast("Ошибка", e.message, "critical"));
   await loadFleets();
 };
+// «Добавить судно» и «Поделиться» — кнопки в одну строку, под ними раскрывается нужная панель
+function togglePanel(sel, open) {
+  const el = $(sel);
+  el.open = open ?? !el.open;
+  el.hidden = !el.open;
+  const btn = { "#add-vessel": "#btn-add-toggle", "#fleet-share": "#btn-share-toggle" }[sel];
+  $(btn).classList.toggle("on", el.open);
+}
+$("#btn-add-toggle").onclick = () => { togglePanel("#fleet-share", false); togglePanel("#add-vessel"); };
+$("#btn-share-toggle").onclick = () => { togglePanel("#add-vessel", false); togglePanel("#fleet-share"); };
+
 $("#btn-share-add").onclick = async () => {
   const f = currentFleet(); const u = $("#share-user").value;
   if (!f || !u) return;
