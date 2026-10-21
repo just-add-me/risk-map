@@ -563,6 +563,8 @@ function renderFleet() {
         <div class="vessel-meta">${v.mmsi.startsWith("IMO:") ? `IMO ${esc(v.imo)} · <span class="nowrap">MMSI ещё не известен</span>`
           : `MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""}`} ·
           <span class="nowrap">${v.position ? `обновлено ${ago(v.position.ts)}` : v.mmsi.startsWith("IMO:") ? "ждём паспортные данные AIS" : "ждём AIS"}</span></div>
+        ${v.screening?.sanctions?.length ? `<div class="vessel-meta"><span class="tag review" title="${esc(v.screening.sanctions.map((x) => x.label).join(", "))}">САНКЦИИ: ${esc(v.screening.sanctions.map((x) => x.label.split(" ")[0]).join(", "))}</span></div>` : ""}
+        ${v.screening?.detentions?.length ? `<div class="vessel-meta"><span class="tag amended">задержание ${fmtDate(v.screening.detentions[0].detained_on)}</span></div>` : ""}
         ${v.ship_type ? `<div class="vessel-meta"><i class="dot" style="background:${TRAFFIC_COLORS[v.category]}"></i> ${esc(v.type_name)}${v.length ? ` · ${Math.round(v.length)} м` : ""}${v.flag ? ` · ${esc(v.flag)}` : ""}</div>` : ""}
         ${zones ? `<div class="vessel-zones">${zones}</div>` : ""}
       </div>
@@ -684,6 +686,7 @@ function shipCard(d, zonesHtml, opts = {}) {
     <div class="sc-head">${flagImg(d.flag_iso, d.flag)}
       <div><div class="sc-name">${esc(d.name || "Без названия")}</div>
       <div class="sc-type"><i class="dot" style="background:${TRAFFIC_COLORS[d.category] || TRAFFIC_COLORS.other}"></i> ${esc(d.type_name || "Тип не передан")}</div></div></div>
+    ${screeningBlock(d.screening)}
     <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
     <div class="sc-actions">${opts.actions || ""}
       <button class="btn ghost sc-track" type="button">Трек</button>
@@ -705,6 +708,19 @@ function shipCard(d, zonesHtml, opts = {}) {
       <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(d.imo || d.mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
       ${d.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(d.imo)}">Equasis</a>` : ""}</div>
   </div>`;
+}
+
+// Санкции и задержания по IMO — из официальных списков (обновляются раз в сутки)
+function screeningBlock(sc) {
+  if (!sc || (!sc.sanctions.length && !sc.detentions.length)) return "";
+  const sanc = sc.sanctions.map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.label)}</a>${
+    x.program ? ` <span class="muted">(${esc(x.program.slice(0, 60))}${x.listed_on ? `, с ${fmtDate(x.listed_on)}` : ""})</span>` : ""}`).join("<br>");
+  const det = sc.detentions[0];
+  return `${sanc ? `<div class="sc-alert sanc"><b>⛔ Санкционные списки</b><div>${sanc}</div></div>` : ""}
+    ${det ? `<div class="sc-alert det"><b>⚓ Задержание (Tokyo MoU)</b>
+      <div>${esc(det.port)}, ${fmtDate(det.detained_on)} — ${det.released_on ? `освобождено ${fmtDate(det.released_on)}` : "ещё задержано"}</div>
+      <div class="muted">${esc(det.reasons || "")}</div>
+      <div class="muted">${[det.built && `построено ${esc(det.built)}`, det.gt && `GT ${esc(det.gt)}`, det.company && esc(det.company)].filter(Boolean).join(" · ")}</div></div>` : ""}`;
 }
 
 // После открытия карточки: фото с Wikimedia Commons (если есть) и кнопка трека
@@ -1118,6 +1134,8 @@ const INC_STYLE = {
   mob: { color: "#ff3b30", glyph: "M" }, epirb: { color: "#ff3b30", glyph: "E" },
   aground: { color: "#ff9440", glyph: "▼" }, nuc: { color: "#f5b13d", glyph: "?" },
   sar: { color: "#4dabf7", glyph: "✈" }, safety: { color: "#ffe066", glyph: "i" },
+  sanction: { color: "#c084fc", glyph: "$" }, sanction_new: { color: "#a78bfa", glyph: "$" },
+  detention: { color: "#fb923c", glyph: "⚓" },
 };
 const incidentsLayer = L.layerGroup().addTo(map);
 // «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
@@ -1136,7 +1154,8 @@ function incVisible(it) {
 
 async function loadIncidents(force = false) {
   if (!force && Date.now() - state.inc.loadedAt < 60000) return;     // раз в минуту достаточно
-  const d = await api(`/api/incidents?days=${$("#inc-days").value}`);
+  const [d, sc] = await Promise.all([api(`/api/incidents?days=${$("#inc-days").value}`), api("/api/screening")]);
+  renderScreeningStatus(sc);
   state.inc.items = d.items;
   state.inc.kinds = d.kinds;
   state.inc.loadedAt = Date.now();
@@ -1190,6 +1209,23 @@ function renderIncidents() {
     }), 900);
   });
 }
+function renderScreeningStatus(sc) {
+  const c = sc.sanctions?.counts || {};
+  $("#screen-status").innerHTML = `<b>Санкции и задержания</b>
+    <div class="muted small">Суда в списках: ${Object.entries(sc.sources).map(([k, v]) =>
+      `<a href="${esc(v.page)}" target="_blank" rel="noopener">${esc(v.label)}</a> ${c[k] ?? "—"}`).join(" · ")}<br>
+      Задержания: <a href="${esc(sc.tokyo_page)}" target="_blank" rel="noopener">Tokyo MoU</a> ${sc.detentions?.count ?? "—"}
+      · обновлено ${sc.last_run ? ago(sc.last_run) : "ещё не было"}${sc.running ? " · ⏳ обновляется" : ""}</div>
+    ${(sc.sanctions?.errors || []).map((e) => `<div class="small" style="color:var(--red)">${esc(e)}</div>`).join("")}
+    ${sc.last_error ? `<div class="small" style="color:var(--red)">${esc(sc.last_error)}</div>` : ""}`;
+}
+$("#btn-screen-refresh").onclick = async (e) => {
+  const b = e.target; b.disabled = true; b.textContent = "Обновляю…";
+  try { const r = await api("/api/screening", { method: "POST" }); toast("Списки обновлены", r.message); }
+  catch (err) { toast("Не удалось обновить", err.message, "critical"); }
+  b.disabled = false; b.textContent = "Обновить списки сейчас";
+  await loadIncidents(true); await loadFleets();
+};
 $("#inc-show").onchange = renderIncidents;
 $("#inc-tests").onchange = renderIncidents;
 $("#inc-days").onchange = () => loadIncidents(true).catch(() => {});

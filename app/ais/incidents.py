@@ -32,6 +32,9 @@ KINDS = {
     "nuc": {"label": "Судно не управляется", "severity": "warning"},
     "sar": {"label": "Поисково-спасательный самолёт / вертолёт", "severity": "info"},
     "safety": {"label": "Сообщение о безопасности", "severity": "info"},
+    "sanction": {"label": "Санкции: судно вашего флота", "severity": "critical"},
+    "sanction_new": {"label": "Новое судно в санкционном списке", "severity": "info"},
+    "detention": {"label": "Задержание в порту", "severity": "warning"},
 }
 DEVICE_PREFIX = {"970": "sart", "972": "mob", "974": "epirb"}
 NAV_KIND = {6: "aground", 2: "nuc", 14: "sart"}

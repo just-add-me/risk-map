@@ -457,3 +457,45 @@ def test_rules_engine():
     except ValueError:
         pass
     ports._ports = None
+
+
+def test_screening_parsers_and_fleet_hit():
+    from app import screening
+    from app.layers import ports
+    ofac = ('4243,"EBANO","vessel","CUBA","-0- ","-0- ","General Cargo","2595","1865","Panama","-0- ",'
+            '"Vessel Registration Identification IMO 7406784; f.k.a. \'ANA I\'."\n'
+            '1,"SOMEONE","individual","SDGT","-0-","-0-","-0-","-0-","-0-","-0-","-0-","-0-"\n')
+    assert [x["imo"] for x in screening.parse_ofac(ofac)] == ["7406784"]
+    uk = ("Report Date: 16-Oct-2026\n"
+          "Last Updated,Unique ID,Name 6,Name type,Regime Name,Designation Type,Date Designated,IMO number,Type of ship\n"
+          "01/01/2026,RUS1,ASTRA,Primary Name,Russia,Ship,12/09/2025,IMO9273387,Crude oil tanker\n"
+          "01/01/2026,RUS1,ASTRA II,Alias,Russia,Ship,12/09/2025,IMO9273387,Crude oil tanker\n"
+          "01/01/2026,AFG1,X,Primary Name,Afghanistan,Entity,01/01/2020,,\n")
+    u = screening.parse_uk(uk)
+    assert len(u) == 1 and u[0]["name"] == "ASTRA" and u[0]["listed_on"] == "2025-09-12"
+    eu = "﻿Vessel name;IMO number ;Date of application;Subject to;;\nAngara;9179842;25.06.2024;Article 3s;;\n"
+    assert screening.parse_eu(eu)[0]["listed_on"] == "2024-06-25"
+    un = ("<CONSOLIDATED_LIST><ENTITIES><ENTITY><FIRST_NAME>CHON MA SAN</FIRST_NAME><UN_LIST_TYPE>DPRK</UN_LIST_TYPE>"
+          "<COMMENTS1>IMO: 8660313</COMMENTS1></ENTITY></ENTITIES></CONSOLIDATED_LIST>")
+    assert screening.parse_un(un)[0]["imo"] == "8660313"
+    tokyo = ("<tr><td>1</td><td>1130113</td><td>GIA ASPIRANT</td><td>Marshall Islands</td><td>2025-03-26</td>"
+             "<td>44771</td><td>Bulk carrier</td><td>CCS</td><td>DNV</td><td>BSM</td><td>Vancouver, Canada</td>"
+             "<td>02.10.2026</td><td>10.10.2026</td><td>15150 - ISM</td></tr>")
+    d = screening.parse_tokyo(tokyo)[0]
+    assert d["detained_on"] == "2026-10-02" and d["built"] == "2025" and d["port"] == "Vancouver, Canada"
+    # судно флота нашлось в списке → происшествие и уведомление, повторная проверка — без дублей
+    ports._ports = [{"name": "Vancouver", "lat": 49.3, "lon": -123.1, "country": "Canada"}]
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Санкции', 'admin', ?)", (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, created_at) VALUES(?, '538099001', '9273387', ?)", (fid, db.now_iso()))
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, created_at) VALUES(?, '538099002', '1130113', ?)", (fid, db.now_iso()))
+    now = db.now_iso()
+    db.execute("INSERT INTO sanctions(imo, source, name, program, listed_on, url, first_seen, last_seen) "
+               "VALUES('9273387', 'uk', 'ASTRA', 'Russia', '2025-09-12', 'u', ?, ?)", (now, now))
+    db.execute("INSERT INTO detentions(source, imo, detained_on, name, port, released_on, reasons, first_seen) "
+               "VALUES('tokyo', '1130113', '2026-10-02', 'GIA ASPIRANT', 'Vancouver, Canada', '2026-10-10', 'ISM', ?)", (now,))
+    assert screening.screen_fleets() == 2 and screening.screen_fleets() == 0
+    kinds = {r["kind"]: r for r in db.query("SELECT * FROM incidents WHERE mmsi IN ('538099001', '538099002')")}
+    assert set(kinds) == {"sanction", "detention"} and kinds["detention"]["lat"] == 49.3
+    assert db.query_one("SELECT severity FROM notifications WHERE mmsi='538099001'")["severity"] == "critical"
+    assert screening.lookup("9273387")["sanctions"][0]["label"] == "Великобритания"
+    ports._ports = None

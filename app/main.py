@@ -21,7 +21,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import access, alerts, config, db, fleet_import, rules, users, zones
+from . import access, alerts, config, db, fleet_import, rules, screening, users, zones
 from .ais import incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -210,6 +210,7 @@ async def api_traffic_ship(request: Request):
         found = idx.evaluate(d["lon"], d["lat"], config.WARN_DISTANCE_NM)
         d["zones"] = [{"id": zid, "name": zones.zone_name(zid), **r} for zid, r in found.items()
                       if zones.in_effect(zid)]
+    d["screening"] = screening.lookup(d["imo"])
     user = _user(request)
     d["fleets"] = [r["name"] for r in db.query(
         f"SELECT f.name FROM ({access.VISIBLE_FLEETS_SQL}) f JOIN vessels v ON v.fleet_id=f.id WHERE v.mmsi=?",
@@ -241,6 +242,16 @@ async def api_port(request: Request):
                          "ships": [{k: s[k] for k in ("mmsi", "name", "type_name", "category", "length",
                                                       "nav_status", "sog", "flag_iso", "distance_nm", "lat", "lon")}
                                    for s in ships[:12]]})
+
+
+@api
+async def api_screening(request: Request):
+    if request.method == "POST":
+        if screening.state["running"]:
+            return JSONResponse({"ok": False, "message": "Обновление уже идёт"})
+        msg = await asyncio.to_thread(screening.run_daily)
+        return JSONResponse({"ok": True, "message": msg})
+    return JSONResponse(screening.status())
 
 
 @api
@@ -276,6 +287,7 @@ def _vessel_dict(v: dict) -> dict:
         "flag_iso": shipinfo.flag_iso(v["mmsi"]),
         "nav_status": shipinfo.nav_status((traffic.get(v["mmsi"]) or {}).get("nav")),
         "length": st.get("length"), "beam": st.get("beam"), "draught": st.get("draught"), "eta": st.get("eta"),
+        "screening": screening.lookup(v["imo"] or st.get("imo")),
         "status": alerts.vessel_status(v["mmsi"]),
     }
 
@@ -403,6 +415,9 @@ def _vessel_check(mmsi: str, imo: str = "") -> dict:
     d = traffic.details(s)
     if imo and d.get("imo") and d["imo"] != imo:
         warnings.append(f"У судна с этим MMSI в AIS указан другой IMO: {d['imo']}")
+    sc = screening.lookup(imo or d.get("imo"))
+    if sc["sanctions"]:
+        warnings.append("Судно в санкционных списках: " + ", ".join(x["label"] for x in sc["sanctions"]))
     return {"found": True, "warnings": warnings, "name": d["name"], "type_name": d["type_name"],
             "flag": d["flag"], "flag_iso": d["flag_iso"], "imo": d["imo"], "length": d["length"],
             "has_position": d["lat"] is not None, "age_s": d["age_s"]}
@@ -433,6 +448,7 @@ async def api_vessel_add(request: Request):
     res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80])
     if res == "exists":
         raise ValueError("Это судно уже есть во флоте")
+    await asyncio.to_thread(screening.screen_fleets)
     return JSONResponse({"ok": True, "check": _vessel_check(mmsi, imo)})
 
 
@@ -460,6 +476,7 @@ async def api_vessel_upload(request: Request):
         found = traffic.get(it["mmsi"]) if it["mmsi"] else traffic.find_imo(it["imo"])
         if r == "added" and not found:
             not_found.append(it["name"] or it["mmsi"] or f"IMO {it['imo']}")
+    await asyncio.to_thread(screening.screen_fleets)
     return JSONResponse({"added": added, "exists": exists, "skipped_no_mmsi": no_mmsi[:50],
                          "skipped_count": len(no_mmsi), "total": len(items),
                          "not_found": not_found[:50], "not_found_count": len(not_found)})
@@ -729,6 +746,19 @@ async def _traffic_snapshot_loop(stop: asyncio.Event):
             log.exception("Не удалось сохранить снимок судов")
 
 
+async def _screening_loop(stop: asyncio.Event):
+    """Санкционные списки и задержания: проверяем раз в 6 часов, обновляем, если прошло больше 20 часов."""
+    await asyncio.sleep(60)
+    while not stop.is_set():
+        if screening.due() and not screening.state["running"]:
+            try:
+                log.info("Санкции и задержания: %s", await asyncio.to_thread(screening.run_daily))
+            except Exception:  # noqa: BLE001
+                log.exception("Ошибка обновления санкций и задержаний")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=6 * 3600)
+
+
 async def _maintenance_loop(stop: asyncio.Event):
     while not stop.is_set():
         try:
@@ -757,7 +787,8 @@ async def lifespan(app):
     tasks = [asyncio.create_task(ais_source.run(stop)),
              asyncio.create_task(_circular_loop(stop)),
              asyncio.create_task(_maintenance_loop(stop)),
-             asyncio.create_task(_traffic_snapshot_loop(stop))]
+             asyncio.create_task(_traffic_snapshot_loop(stop)),
+             asyncio.create_task(_screening_loop(stop))]
     try:
         yield
     finally:
@@ -781,6 +812,7 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/incidents", api_incidents),
+    Route("/api/screening", api_screening, methods=["GET", "POST"]),
     Route("/api/rules", api_rules, methods=["GET", "POST"]),
     Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),
     Route("/api/areas", api_areas, methods=["GET", "POST"]),

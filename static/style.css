@@ -382,3 +382,10 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .draw-hint { border-color: var(--accent); }
 .draw-hint .row { gap: 8px; }
 .drawing #map { cursor: crosshair; }
+
+/* ---------- санкции и задержания в карточке ---------- */
+.sc-alert { margin: 0 12px 8px; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; line-height: 1.45; }
+.sc-alert.sanc { background: rgba(255,59,48,.12); border: 1px solid rgba(255,59,48,.55); }
+.sc-alert.det { background: rgba(251,146,60,.1); border: 1px solid rgba(251,146,60,.5); }
+.sc-alert b { display: block; margin-bottom: 2px; }
+#screen-card { margin-top: 10px; }

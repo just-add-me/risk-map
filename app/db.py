@@ -145,6 +145,27 @@ CREATE TABLE IF NOT EXISTS areas(
     geometry TEXT NOT NULL,        -- GeoJSON Polygon
     created_at TEXT NOT NULL
 );
+-- санкционные списки (суда по IMO) и задержания в портах; screening_hits — что уже сообщили по судам флотов
+CREATE TABLE IF NOT EXISTS sanctions(
+    imo TEXT NOT NULL,
+    source TEXT NOT NULL,          -- ofac | uk | eu | un
+    name TEXT, program TEXT, listed_on TEXT, details TEXT, url TEXT,
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+    PRIMARY KEY(imo, source)
+);
+CREATE TABLE IF NOT EXISTS detentions(
+    source TEXT NOT NULL,          -- tokyo
+    imo TEXT NOT NULL,
+    detained_on TEXT NOT NULL,
+    name TEXT, flag TEXT, built TEXT, gt TEXT, ship_type TEXT, company TEXT, port TEXT,
+    released_on TEXT, reasons TEXT, first_seen TEXT NOT NULL,
+    PRIMARY KEY(source, imo, detained_on)
+);
+CREATE INDEX IF NOT EXISTS idx_detentions_imo ON detentions(imo);
+CREATE TABLE IF NOT EXISTS screening_hits(
+    mmsi TEXT NOT NULL, imo TEXT NOT NULL, ref TEXT NOT NULL, first_seen TEXT NOT NULL,
+    PRIMARY KEY(mmsi, imo, ref)
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT
