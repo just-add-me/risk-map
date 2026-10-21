@@ -243,6 +243,8 @@ def _position(imo: str, mmsi: Optional[str]) -> tuple[Optional[float], Optional[
     from .ais import traffic
     m = mmsi if mmsi and not mmsi.startswith("IMO:") else traffic.find_imo(imo)
     s = traffic.get(m) if m else None
+    if (not s or s.get("lat") is None) and m:       # судно флота — последняя позиция есть и в базе
+        s = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=? AND lat IS NOT NULL", (m,))
     return (s or {}).get("lat"), (s or {}).get("lon"), m
 
 
@@ -324,8 +326,10 @@ def run_daily() -> str:
             log.warning("Задержания Tokyo MoU: %s", exc)
             dets = []
             state["last_error"] = f"Tokyo MoU: {exc}"
-        first = not db.kv_get("screening_done")
-        publish_events(added, [] if first else dets)    # первая загрузка — не лавина «событий» за месяц
+        if not db.kv_get("screening_done"):      # первая загрузка: из архива за 2 месяца — только последние 14 дней
+            cutoff = date.fromordinal(date.today().toordinal() - 14).isoformat()
+            dets = [d for d in dets if d["detained_on"] >= cutoff]
+        publish_events(added, dets)
         hits = screen_fleets()
         db.kv_set("screening_done", db.now_iso())
         return f"Списки обновлены; совпадений по флотам: {hits}"
