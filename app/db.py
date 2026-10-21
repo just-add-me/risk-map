@@ -77,6 +77,12 @@ CREATE TABLE IF NOT EXISTS circulars(
     created_at TEXT NOT NULL,
     activated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    pw_hash TEXT NOT NULL,          -- pbkdf2$итерации$соль$хэш, сам пароль не хранится
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT

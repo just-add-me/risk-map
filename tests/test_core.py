@@ -285,3 +285,21 @@ def test_imo_checksum_and_near():
     near = traffic.near(46.50, 30.75, 5)
     assert any(s["mmsi"] == "273000777" and s["nav_status"] == "Ошвартовано" for s in near)
     assert not any(s["mmsi"] == "273000777" for s in traffic.near(44.0, 30.75, 5))
+
+
+def test_users():
+    from app import users
+    pwd = users.add("tester1")
+    assert users.verify("tester1", pwd) and not users.verify("tester1", pwd + "x")
+    assert not users.verify("nobody", pwd)
+    stored = db.query_one("SELECT pw_hash FROM users WHERE username='tester1'")["pw_hash"]
+    assert pwd not in stored and stored.startswith("pbkdf2$")
+    new = users.set_password("tester1")
+    assert users.verify("tester1", new) and not users.verify("tester1", pwd)
+    users.delete("tester1")
+    assert not users.exists("tester1")
+    try:
+        users.add("x y")
+        raise AssertionError("должна быть ошибка")
+    except ValueError:
+        pass

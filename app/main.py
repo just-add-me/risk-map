@@ -21,7 +21,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import alerts, config, db, fleet_import, zones
+from . import alerts, config, db, fleet_import, users, zones
 from .ais import ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -45,7 +45,9 @@ _failed: dict[str, list[float]] = defaultdict(list)
 
 
 def _authed(request: Request) -> bool:
-    return request.session.get("user") == config.ADMIN_USER
+    user = request.session.get("user")
+    # пользователь из базы теряет доступ сразу после удаления, даже с открытой сессией
+    return bool(user) and (user == config.ADMIN_USER or users.exists(user))
 
 
 def api(handler):
@@ -76,12 +78,14 @@ async def login_page(request: Request):
             "{{error}}", "Слишком много попыток. Подождите 15 минут."), status_code=429)
     form = await request.form()
     user, pwd = str(form.get("username", "")), str(form.get("password", ""))
-    ok = bool(config.ADMIN_PASSWORD) and hmac.compare_digest(user, config.ADMIN_USER) and \
-        hmac.compare_digest(pwd, config.ADMIN_PASSWORD)
+    if hmac.compare_digest(user, config.ADMIN_USER):
+        ok = bool(config.ADMIN_PASSWORD) and hmac.compare_digest(pwd, config.ADMIN_PASSWORD)
+    else:
+        ok = await asyncio.to_thread(users.verify, user, pwd)
     if not ok:
         _failed[ip].append(now)
         await asyncio.sleep(1.0)
-        msg = "Неверный логин или пароль" if config.ADMIN_PASSWORD else "ADMIN_PASSWORD не задан в .env"
+        msg = "Неверный логин или пароль"
         return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace("{{error}}", msg), status_code=401)
     request.session["user"] = user
     return RedirectResponse("/", status_code=303)
@@ -115,7 +119,7 @@ async def api_status(request: Request):
         "ibf": {k: v for k, v in ibf.status().items() if k != "log"},
         "unread": unread["n"] if unread else 0,
         "warn_distance_nm": config.WARN_DISTANCE_NM,
-        "user": config.ADMIN_USER,
+        "user": request.session.get("user"),
     })
 
 

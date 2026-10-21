@@ -76,10 +76,20 @@ L.Canvas.include({
     } else if (o.shape === "yacht") {
       ctx.moveTo(0, -r * 1.6); ctx.lineTo(r * 0.75, 0); ctx.lineTo(0, r * 1.3); ctx.lineTo(-r * 0.75, 0);
     } else {
-      ctx.rect(-r, -r, r * 2, r * 2);
+      const k = r * 0.35;                       // скруглённый квадрат порта
+      ctx.moveTo(-r + k, -r); ctx.arcTo(r, -r, r, r, k); ctx.arcTo(r, r, -r, r, k);
+      ctx.arcTo(-r, r, -r, -r, k); ctx.arcTo(-r, -r, r, -r, k);
     }
     ctx.closePath();
     this._fillStroke(ctx, layer);
+    if (o.shape === "port" && r >= 4.5) {       // якорь внутри, когда значок достаточно крупный
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.6); ctx.lineTo(0, r * 0.6);
+      ctx.moveTo(-r * 0.35, -r * 0.3); ctx.lineTo(r * 0.35, -r * 0.3);
+      ctx.moveTo(-r * 0.55, r * 0.15); ctx.quadraticCurveTo(0, r * 0.95, r * 0.55, r * 0.15);
+      ctx.strokeStyle = "#0b1a22"; ctx.lineWidth = Math.max(1.2, r / 5); ctx.lineCap = "round";
+      ctx.stroke();
+    }
     ctx.restore();
   },
 });
@@ -422,7 +432,7 @@ function renderPorts() {
   state.portMarkers = (state.ports || []).map((p) => {
     const inZone = p.zones.length > 0;
     return new ShapeMarker([p.lat, p.lon], {
-      shape: "port", renderer: portsRenderer, radius: inZone ? 3.5 : 2.6, weight: 1, color: "#0b1a22",
+      shape: "port", renderer: portsRenderer, radius: portRadius(inZone), weight: 1.2, color: "#0b1a22",
       fillColor: portColor(p), fillOpacity: 0.95,
     }).bindTooltip(esc(p.name), { direction: "top", offset: [0, -4] })
       .on("click", () => openPort(p))
@@ -431,12 +441,21 @@ function renderPorts() {
   updatePortsVisibility();
 }
 
+// Порт растёт с масштабом: на обзорной карте небольшой квадрат, при приближении — с якорем внутри
+function portRadius(inZone) {
+  const z = map.getZoom();
+  return (z <= 5 ? 3.6 : z <= 7 ? 5 : z <= 9 ? 6.5 : 7.5) * (inZone ? 1.1 : 1);
+}
+
 function updatePortsVisibility() {
   const show = state.showPorts && map.getZoom() >= 4;
   if (show && !map.hasLayer(portsLayer)) portsLayer.addTo(map);
   if (!show && map.hasLayer(portsLayer)) map.removeLayer(portsLayer);
 }
-map.on("zoomend", updatePortsVisibility);
+map.on("zoomend", () => {
+  updatePortsVisibility();
+  (state.portMarkers || []).forEach((m, i) => m.setRadius(portRadius(state.ports[i].zones.length > 0)));
+});
 
 function portSearch(q) {
   q = q.trim().toLowerCase();
