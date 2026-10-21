@@ -8,6 +8,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const state = {
   fleets: [], fleetId: null, zonesRef: null, zonesFC: null, lastNotifId: null,
   selectedMmsi: null, notifications: [], unread: 0, firstNotifLoad: true,
+  selectedZone: null, zoneFilter: { q: "", types: new Set(["country", "sea", "conditional"]), changedOnly: false },
 };
 
 /* ------------------------------------------------------------------ API */
@@ -61,11 +62,37 @@ const vesselsLayer = L.layerGroup().addTo(map);
 const trackLayer = L.layerGroup().addTo(map);
 const markers = new Map();
 
+// Типы зон JWC: цвет заливки зависит от типа, изменённые в циркуляре — жёлтый пунктир по контуру
+const ZONE_TYPES = {
+  country: { label: "Страна (порты и 12 миль)", color: "#ff5a4e" },
+  sea: { label: "Морской район", color: "#ff9440" },
+  conditional: { label: "Условная (offshore)", color: "#b48cff" },
+};
+const CHANGED_COLOR = "#ffe066";
+
+function zoneType(p) {
+  if (p.severity === "conditional") return "conditional";
+  return p.kind === "defined" ? "sea" : "country";
+}
+const isChanged = (p) => p.change === "amended" || p.change === "added";
+
 function zoneStyle(f) {
   const p = f.properties;
-  if (p.severity === "conditional") return { color: "#b48cff", weight: 1.2, dashArray: "4 4", fillColor: "#b48cff", fillOpacity: 0.08 };
-  if (p.change === "amended" || p.change === "added") return { color: "#f5b13d", weight: 1.2, fillColor: "#f5b13d", fillOpacity: 0.22 };
-  return { color: "#ff5a4e", weight: 1, fillColor: "#ff5a4e", fillOpacity: 0.18 };
+  const t = zoneType(p);
+  const { color } = ZONE_TYPES[t];
+  const s = { color, weight: 1, fillColor: color, fillOpacity: t === "conditional" ? 0.1 : 0.2 };
+  if (t === "conditional") s.dashArray = "4 4";
+  if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
+  if (state.selectedZone === p.id) Object.assign(s, { color: "#ffffff", weight: 2.5, dashArray: null, fillOpacity: 0.45 });
+  return s;
+}
+
+function selectZone(id) {
+  state.selectedZone = id;
+  zonesLayer.setStyle(zoneStyle);
+  zonesLayer.eachLayer((l) => { if (l.feature.properties.id === id) l.bringToFront(); });
+  $$("#zones-list .zone-item").forEach((el) =>
+    el.classList.toggle("selected", state.zonesFC.features[+el.dataset.i].properties.id === id));
 }
 
 function zonePopup(p) {
@@ -86,6 +113,8 @@ function zonePopup(p) {
 function bindZone(f, layer) {
   layer.bindTooltip(esc(f.properties.name), { sticky: true, direction: "top", opacity: 0.95 });
   layer.bindPopup(() => zonePopup(f.properties));
+  layer.on("popupopen", () => selectZone(f.properties.id));
+  layer.on("popupclose", () => { if (state.selectedZone === f.properties.id) selectZone(null); });
 }
 
 function shipIcon(level, cog, selected) {
@@ -115,12 +144,44 @@ async function loadZones(force = false) {
   renderZonesPanel();
 }
 
+function zoneVisible(p) {
+  const zf = state.zoneFilter;
+  if (!zf.types.has(zoneType(p))) return false;
+  if (zf.changedOnly && !isChanged(p)) return false;
+  const q = zf.q.trim().toLowerCase();
+  return !q || `${p.name} ${p.region || ""}`.toLowerCase().includes(q);
+}
+
 function renderZoneLayer() {
   zonesLayer.clearLayers();
   if (!state.zonesFC) return;
-  const showCond = $("#z-show-conditional").checked;
-  zonesLayer.addData({ ...state.zonesFC, features: state.zonesFC.features.filter((f) => showCond || f.properties.severity !== "conditional") });
+  zonesLayer.addData({ ...state.zonesFC, features: state.zonesFC.features.filter((f) => zoneVisible(f.properties)) });
   zonesLayer.bringToBack();
+}
+
+function renderZoneFilters() {
+  const fc = state.zonesFC;
+  const counts = { country: 0, sea: 0, conditional: 0 };
+  let changed = 0;
+  (fc ? fc.features : []).forEach((f) => { counts[zoneType(f.properties)]++; if (isChanged(f.properties)) changed++; });
+  const zf = state.zoneFilter;
+  $("#z-types").innerHTML = Object.entries(ZONE_TYPES).map(([t, d]) => `
+    <button class="chip ${zf.types.has(t) ? "on" : ""}" data-t="${t}" aria-pressed="${zf.types.has(t)}">
+      <i class="sw z-${t}"></i>${esc(d.label)} <span class="muted">${counts[t]}</span></button>`).join("") + `
+    <button class="chip ${zf.changedOnly ? "on" : ""}" data-t="changed" aria-pressed="${zf.changedOnly}">
+      <i class="sw z-changed"></i>Только изменённые <span class="muted">${changed}</span></button>`;
+  $$("#z-types .chip").forEach((b) => b.onclick = () => {
+    const t = b.dataset.t;
+    if (t === "changed") zf.changedOnly = !zf.changedOnly;
+    else if (zf.types.has(t)) zf.types.delete(t);
+    else zf.types.add(t);
+    applyZoneFilter();
+  });
+}
+
+function applyZoneFilter() {
+  renderZoneLayer();
+  renderZonesPanel();
 }
 
 function renderZonesPanel() {
@@ -132,15 +193,25 @@ function renderZonesPanel() {
     return;
   }
   const p = fc.properties || {};
-  $("#zones-meta").innerHTML = `<b>${esc(p.ref || "")}</b> · ${esc(p.issued || "")} · ${fc.features.length} зон`;
+  renderZoneFilters();
   const groups = {};
-  fc.features.forEach((f, i) => { (groups[f.properties.region || "Прочее"] ||= []).push([f, i]); });
+  let shown = 0;
+  fc.features.forEach((f, i) => {
+    if (!zoneVisible(f.properties)) return;
+    shown++;
+    (groups[f.properties.region || "Прочее"] ||= []).push([f, i]);
+  });
+  $("#zones-meta").innerHTML = `<b>${esc(p.ref || "")}</b> · ${esc(p.issued || "")} · ${shown === fc.features.length ? `${shown} зон` : `${shown} из ${fc.features.length} зон`}`;
+  if (!shown) {
+    box.innerHTML = `<div class="empty"><p class="muted">Под фильтр не попала ни одна зона.</p></div>`;
+    return;
+  }
   box.innerHTML = Object.entries(groups).map(([region, items]) => `
     <div class="region">${esc(region)}</div>
     ${items.map(([f, i]) => {
       const z = f.properties;
-      return `<div class="zone-item" data-i="${i}">
-        <i class="sw ${z.severity === "conditional" ? "z-conditional" : (z.change !== "unchanged" ? "z-amended" : "z-unchanged")}"></i>
+      return `<div class="zone-item ${state.selectedZone === z.id ? "selected" : ""}" data-i="${i}">
+        <i class="sw z-${zoneType(z)} ${isChanged(z) ? "is-changed" : ""}"></i>
         <span class="zname">${esc(z.name)}</span>
         ${z.change && z.change !== "unchanged" ? `<span class="tag amended">${z.change === "added" ? "new" : "изм."}</span>` : ""}
         ${z.approximate ? `<span class="tag" title="Контур приблизительный">≈</span>` : ""}
@@ -154,7 +225,7 @@ function focusZone(i) {
   const f = state.zonesFC.features[i];
   const layer = L.geoJSON(f);
   map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 7 });
-  zonesLayer.eachLayer((l) => { if (l.feature === f) l.openPopup(layer.getBounds().getCenter()); });
+  zonesLayer.eachLayer((l) => { if (l.feature.properties.id === f.properties.id) l.openPopup(layer.getBounds().getCenter()); });
 }
 
 /* ------------------------------------------------------------------ флот */
@@ -411,7 +482,7 @@ function switchTab(name) {
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
 $("#btn-bell").onclick = () => switchTab("alerts");
 $("#legend-toggle").onclick = () => $("#legend").classList.toggle("collapsed");
-$("#z-show-conditional").onchange = renderZoneLayer;
+$("#z-search").oninput = (e) => { state.zoneFilter.q = e.target.value; applyZoneFilter(); };
 $("#n-unread-only").onchange = loadNotifications;
 $("#fleet-select").onchange = (e) => { state.fleetId = +e.target.value; localStorageSet("fleetId", state.fleetId); renderFleet(); };
 

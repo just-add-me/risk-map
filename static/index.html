@@ -74,8 +74,9 @@
     <section class="panel" id="panel-zones">
       <div class="zones-head">
         <div id="zones-meta" class="muted"></div>
-        <label class="check"><input type="checkbox" id="z-show-conditional" checked> Условные зоны</label>
       </div>
+      <input type="search" id="z-search" class="z-search" placeholder="Поиск зоны: Black Sea, Iran…" autocomplete="off">
+      <div class="z-types" id="z-types"></div>
       <div id="zones-list"></div>
       <p class="muted small">Названные страны — порты и воды до 12 морских миль от берега. Границы построены
         автоматически по тексту циркуляра; зоны с пометкой «≈» приблизительны.</p>
@@ -107,9 +108,12 @@
     <div class="legend" id="legend">
       <button class="legend-toggle" id="legend-toggle">Легенда ▾</button>
       <div class="legend-body">
-        <div class="lg"><i class="sw z-unchanged"></i>Зона JWC</div>
-        <div class="lg"><i class="sw z-amended"></i>Изменена / добавлена</div>
+        <div class="lg-title">Зоны JWC (Hull War, Piracy, Terrorism)</div>
+        <div class="lg"><i class="sw z-country"></i>Страна: порты и 12 миль</div>
+        <div class="lg"><i class="sw z-sea"></i>Морской район</div>
         <div class="lg"><i class="sw z-conditional"></i>Условная (offshore)</div>
+        <div class="lg"><i class="sw z-changed"></i>Изменена в циркуляре</div>
+        <div class="lg-title">Суда</div>
         <div class="lg"><i class="dot s-safe"></i>Судно вне зон</div>
         <div class="lg"><i class="dot s-near"></i>Приближается</div>
         <div class="lg"><i class="dot s-inside"></i>В зоне</div>
