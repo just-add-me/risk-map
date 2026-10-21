@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response)
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
@@ -76,6 +76,8 @@ def api(handler):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         try:
             return await handler(request)
+        except ClientDisconnect:            # клиент оборвал запрос (или Caddy отсёк слишком большой) — не ошибка сервера
+            return Response(status_code=400)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         except Exception as exc:  # noqa: BLE001
@@ -109,7 +111,10 @@ async def login_page(request: Request):
     _failed[ip] = [t for t in _failed[ip] if now - t < 900]
     if len(_failed[ip]) >= 10:
         return HTMLResponse(_login_html("Слишком много попыток. Подождите 15 минут."), status_code=429)
-    form = await request.form()
+    try:
+        form = await request.form()
+    except Exception:  # noqa: BLE001 — оборванный или испорченный запрос: без трассировки в журнале
+        return HTMLResponse(_login_html("Некорректный запрос"), status_code=400)
     user, pwd = str(form.get("username", "")), str(form.get("password", ""))
     if hmac.compare_digest(user, config.ADMIN_USER):
         ok = bool(config.ADMIN_PASSWORD) and hmac.compare_digest(pwd, config.ADMIN_PASSWORD)
