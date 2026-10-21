@@ -13,6 +13,8 @@ WarRisk Monitor — внутренний аналог jwla.ai: карта зон
 - **Не проверено на реальных данных:** `app/geo/builder.py`, построение полигонов через shapely по границам
   Natural Earth 10m. Первый запуск на сервере — его проверка. После построения зон запусти
   `docker compose exec app python -m app.geo.selftest` (17 эталонных точек) и разбери ошибки.
+- Сервер: Timeweb Cloud, Амстердам, Ubuntu. SSH слушает порты 22 **и 2222**
+  (`/etc/ssh/sshd_config.d/ports.conf`); пользователь заходит на 2222 через VPN. Не закрывай 2222 в файрволе.
 - Сервер пока без домена: `DOMAIN=<ip-через-дефисы>.sslip.io` в `.env`, HTTPS выдаёт Caddy.
 
 ## Правила
