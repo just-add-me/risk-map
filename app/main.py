@@ -225,7 +225,21 @@ def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
         return "exists"
     db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, name, created_at) VALUES(?,?,?,?,?)",
                (fid, mmsi, imo or None, name or None, db.now_iso()))
+    _backfill_from_traffic(mmsi)
     return "added"
+
+
+def _backfill_from_traffic(mmsi: str) -> None:
+    """Если судно уже есть в общем потоке AIS — сразу берём его данные, не ждём нового сообщения."""
+    s = traffic.get(mmsi)
+    if not s:
+        return
+    ingest.static_data(mmsi, name=s.get("name"), imo=s.get("imo"), callsign=s.get("callsign"),
+                       ship_type=s.get("ship_type"), destination=s.get("destination"), length=s.get("length"),
+                       beam=s.get("beam"), draught=s.get("draught"), eta=s.get("eta"))
+    if s.get("lat") is not None:
+        ingest.position(mmsi, s["lat"], s["lon"], sog=s.get("sog"), cog=s.get("cog"), heading=s.get("heading"),
+                        source="aisstream", ais_name=s.get("name"))
 
 
 @api
