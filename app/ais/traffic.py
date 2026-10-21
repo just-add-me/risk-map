@@ -179,11 +179,12 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
         if cell is None:
             key = (id(s), 0)
         else:
-            y = math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(s["lat"], 85), -85)) / 2)))
-            key = (math.floor(s["lon"] / cell), math.floor(y / cell))
+            key = (math.floor(s["lon"] / cell), math.floor(_merc_y(s["lat"]) / cell))
         groups.setdefault(key, []).append((s, cat))
     singles, clusters = [], []
     need = min_group(zoom)
+    if cell is not None:
+        groups = _merge_close(groups, cell, need)
     for members in groups.values():
         if len(members) < need:
             for s, cat in members:
@@ -201,6 +202,29 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
         singles.sort(key=lambda r: -r[0])      # свежие позиции важнее
         singles = singles[:limit]
     return {"ships": [r[1] for r in singles], "clusters": clusters, "counts": counts, "total": total}
+
+
+def _merc_y(lat: float) -> float:
+    return math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(lat, 85), -85)) / 2)))
+
+
+def _merge_close(groups: dict, cell: float, need: int) -> dict:
+    """Соседние группы, центры которых ближе ячейки, сливаются — иначе кружки налезают друг на друга."""
+    big = sorted((m for m in groups.values() if len(m) >= need), key=len, reverse=True)
+    rest = [m for m in groups.values() if len(m) < need]
+    merged: list[list] = []
+    centers: list[tuple[float, float]] = []
+    for members in big:
+        x = sum(m[0]["lon"] for m in members) / len(members)
+        y = sum(_merc_y(m[0]["lat"]) for m in members) / len(members)
+        for i, (cx, cy) in enumerate(centers):
+            if abs(cx - x) < cell and abs(cy - y) < cell:
+                merged[i].extend(members)
+                break
+        else:
+            merged.append(list(members))
+            centers.append((x, y))
+    return {i: m for i, m in enumerate(merged + rest)}
 
 
 def stats() -> dict:
