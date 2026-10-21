@@ -670,7 +670,8 @@ async function loadTraffic() {
   const bbox = span >= 360 ? "-180,-90,180,90"
     : [norm(b.getWest()), Math.max(b.getSouth(), -90), norm(b.getEast()), Math.min(b.getNorth(), 90)].map((x) => x.toFixed(3)).join(",");
   const seq = ++t.seq;
-  const data = await api(`/api/traffic?bbox=${bbox}&limit=4000`);
+  const cats = [...t.cats].join(",");
+  const data = await api(`/api/traffic?bbox=${bbox}&zoom=${map.getZoom()}&cats=${cats}&limit=5000`);
   if (seq !== t.seq) return;           // пришёл ответ на устаревший запрос
   t.data = data;
   renderTraffic();
@@ -681,9 +682,15 @@ function renderTraffic() {
   trafficLayer.clearLayers();
   renderTrafficCats();
   if (!t.on || !t.data) return;
+  for (const c of t.data.clusters) {
+    L.marker([c.lat, c.lon], { icon: clusterIcon(c), zIndexOffset: 500 })
+      .bindTooltip(clusterTooltip(c), { direction: "top", offset: [0, -14] })
+      .on("click", () => map.fitBounds([[c.bbox[1], c.bbox[0]], [c.bbox[3], c.bbox[2]]], { padding: [50, 50], maxZoom: 12 }))
+      .addTo(trafficLayer);
+  }
   const fleet = new Set(allVessels().map((v) => v.mmsi));
   for (const [mmsi, lat, lon, cog, sog, cat, name, len] of t.data.ships) {
-    if (!t.cats.has(cat) || fleet.has(mmsi)) continue;
+    if (fleet.has(mmsi)) continue;
     new ShapeMarker([lat, lon], {
       shape: cat === "yacht" ? "yacht" : "ship", rotation: cog ?? 0,
       renderer: trafficRenderer, radius: len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8,
@@ -694,13 +701,28 @@ function renderTraffic() {
   }
 }
 
+// Группа судов: кружок с числом; цвет обводки — самая частая категория в группе
+function clusterIcon(c) {
+  const size = c.n < 10 ? 26 : c.n < 100 ? 32 : c.n < 1000 ? 38 : 44;
+  const top = Object.entries(c.cats).sort((a, b) => b[1] - a[1])[0][0];
+  const label = c.n >= 1000 ? `${(c.n / 1000).toFixed(c.n >= 10000 ? 0 : 1)}k` : c.n;
+  return L.divIcon({ className: "tcl", iconSize: [size, size],
+    html: `<div style="border-color:${TRAFFIC_COLORS[top]}">${label}</div>` });
+}
+
+function clusterTooltip(c) {
+  const names = (state.traffic.data || {}).categories || {};
+  return `<b>${c.n} судов</b><br>` + Object.entries(c.cats).sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<i class="dot" style="background:${TRAFFIC_COLORS[k]}"></i> ${esc(names[k] || k)}: ${n}`).join("<br>");
+}
+
 function renderTrafficCats() {
   const t = state.traffic;
   const d = t.data;
   $("#traffic-meta").textContent = !t.on ? "Слой выключен"
     : !d ? "Загружаю…"
       : !d.enabled ? "Нужен живой AIS: ключ aisstream.io в .env"
-        : `В видимой области: ${d.total}${d.total > d.ships.length ? ` (показаны ${d.ships.length} самых свежих)` : ""}. Приблизьте карту, чтобы увидеть больше.`;
+        : `В видимой области: ${d.total}. Число в кружке — сколько судов рядом; нажмите, чтобы приблизить.`;
   const cats = (d && d.categories) || {};
   $("#traffic-cats").innerHTML = t.on ? Object.keys(TRAFFIC_COLORS).map((c) => `
     <button class="fchip ${t.cats.has(c) ? "on" : ""}" data-cat="${c}" aria-pressed="${t.cats.has(c)}">
@@ -709,7 +731,7 @@ function renderTrafficCats() {
   $$("#traffic-cats .fchip").forEach((b) => b.onclick = () => {
     const c = b.dataset.cat;
     if (t.cats.has(c)) t.cats.delete(c); else t.cats.add(c);
-    renderTraffic();
+    loadTraffic().catch(() => {});
   });
 }
 

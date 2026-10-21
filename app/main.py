@@ -134,14 +134,18 @@ async def api_ports(request: Request):
 
 @api
 async def api_traffic(request: Request):
-    """Все суда AIS в видимой области карты: ?bbox=запад,юг,восток,север&limit=4000."""
+    """Все суда AIS в видимой области: ?bbox=запад,юг,восток,север&zoom=6&cats=cargo,tanker."""
+    q = request.query_params
     try:
-        w, s_, e, n = (float(x) for x in request.query_params.get("bbox", "-180,-90,180,90").split(","))
-        limit = min(int(request.query_params.get("limit", 4000)), 8000)
+        w, s_, e, n = (float(x) for x in q.get("bbox", "-180,-90,180,90").split(","))
+        zoom = int(float(q.get("zoom", 20)))
+        limit = min(int(q.get("limit", 5000)), 10000)
     except ValueError:
         return JSONResponse({"error": "bbox: запад,юг,восток,север"}, status_code=400)
-    rows, counts, total = await asyncio.to_thread(traffic.in_bbox, w, s_, e, n, limit)
-    return JSONResponse({"ships": rows, "counts": counts, "total": total, "categories": shipinfo.CATEGORIES,
+    cats = set(q["cats"].split(",")) if "cats" in q else None
+    fleet = set(ingest.tracked_mmsis())          # суда флотов рисуются отдельно, в группы не входят
+    res = await asyncio.to_thread(traffic.query, w, s_, e, n, zoom, cats, limit, fleet)
+    return JSONResponse({**res, "categories": shipinfo.CATEGORIES,
                          "enabled": config.AIS_MODE == "aisstream" and config.AIS_TRAFFIC},
                         headers={"Cache-Control": "no-store"})
 

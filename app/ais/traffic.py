@@ -12,6 +12,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import math
 import threading
 import time
 from typing import Optional
@@ -27,6 +28,9 @@ STATIC_TTL = 7 * 24 * 3600
 # короткий трек в памяти: точка не чаще раза в 10 минут, до 3 часов
 TRAIL_STEP = 600
 TRAIL_POINTS = 18
+# группировка на карте: ячейка ~56 пикселей, с этого масштаба — все суда по отдельности
+CLUSTER_PX = 56
+CLUSTER_MAX_ZOOM = 11
 
 _lock = threading.Lock()
 _ships: dict[str, dict] = {}
@@ -140,26 +144,56 @@ def details(s: dict) -> dict:
     }
 
 
-def in_bbox(west: float, south: float, east: float, north: float, limit: int) -> tuple[list[list], dict, int]:
-    """Суда в прямоугольнике карты: компактные строки, счётчики по категориям, сколько всего."""
+def query(west: float, south: float, east: float, north: float, zoom: int, cats: Optional[set[str]] = None,
+          limit: int = 5000, exclude: Optional[set[str]] = None) -> dict:
+    """Суда в прямоугольнике карты; на мелком масштабе близкие суда объединяются в группы.
+
+    Сетка — ячейки ~CLUSTER_PX пикселей в проекции Меркатора (как на карте). Ячейка с одним
+    судном отдаётся как судно, с несколькими — как группа с числом и рамкой для приближения.
+    cats — какие категории показывать (счётчики по категориям считаются по всем).
+    """
     now = time.time()
     wrap = west > east          # прямоугольник через линию перемены дат
-    rows, counts = [], {k: 0 for k in shipinfo.CATEGORIES}
+    counts = {k: 0 for k in shipinfo.CATEGORIES}
     with _lock:
         ships = [s for s in _ships.values() if s.get("ts") and now - s["ts"] <= POSITION_TTL]
+    picked = []
     for s in ships:
         lat, lon = s["lat"], s["lon"]
         if not (south <= lat <= north and ((lon >= west or lon <= east) if wrap else west <= lon <= east)):
             continue
         cat = shipinfo.category(s.get("ship_type"))
         counts[cat] += 1
-        rows.append((s["ts"], [s["mmsi"], lat, lon, s.get("cog"), s.get("sog"), cat, s.get("name") or "",
-                               s.get("length")]))
-    total = len(rows)
-    if total > limit:
-        rows.sort(key=lambda r: -r[0])         # свежие позиции важнее
-        rows = rows[:limit]
-    return [r[1] for r in rows], counts, total
+        if (cats is None or cat in cats) and not (exclude and s["mmsi"] in exclude):
+            picked.append((s, cat))
+    total = len(picked)
+    cell = None if zoom >= CLUSTER_MAX_ZOOM else CLUSTER_PX * 360.0 / (256 * 2 ** max(zoom, 0))
+    groups: dict[tuple[int, int], list] = {}
+    for s, cat in picked:
+        if cell is None:
+            key = (id(s), 0)
+        else:
+            y = math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(s["lat"], 85), -85)) / 2)))
+            key = (math.floor(s["lon"] / cell), math.floor(y / cell))
+        groups.setdefault(key, []).append((s, cat))
+    singles, clusters = [], []
+    for members in groups.values():
+        if len(members) == 1:
+            s, cat = members[0]
+            singles.append((s["ts"], [s["mmsi"], s["lat"], s["lon"], s.get("cog"), s.get("sog"), cat,
+                                      s.get("name") or "", s.get("length")]))
+            continue
+        lats = [m[0]["lat"] for m in members]
+        lons = [m[0]["lon"] for m in members]
+        by_cat: dict[str, int] = {}
+        for _, cat in members:
+            by_cat[cat] = by_cat.get(cat, 0) + 1
+        clusters.append({"lat": round(sum(lats) / len(lats), 4), "lon": round(sum(lons) / len(lons), 4),
+                         "n": len(members), "bbox": [min(lons), min(lats), max(lons), max(lats)], "cats": by_cat})
+    if len(singles) > limit:
+        singles.sort(key=lambda r: -r[0])      # свежие позиции важнее
+        singles = singles[:limit]
+    return {"ships": [r[1] for r in singles], "clusters": clusters, "counts": counts, "total": total}
 
 
 def stats() -> dict:

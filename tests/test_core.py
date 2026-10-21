@@ -239,9 +239,15 @@ def test_shipinfo_and_traffic():
                                                                 "Sog": 13.3, "Cog": 45, "TrueHeading": 511}}}))
     d = traffic.details(traffic.get("538010472"))
     assert d["category"] == "tanker" and d["length"] == 250 and d["draught"] == 12.4 and d["heading"] is None
-    rows, counts, total = traffic.in_bbox(27, 40, 42, 48, 100)
-    assert total == 1 and counts["tanker"] == 1 and rows[0][0] == "538010472"
-    assert traffic.in_bbox(170, 40, -170, 48, 100)[2] == 0          # прямоугольник через 180°
+    r = traffic.query(27, 40, 42, 48, 12)
+    assert r["total"] == 1 and r["counts"]["tanker"] == 1 and r["ships"][0][0] == "538010472"
+    assert traffic.query(170, 40, -170, 48, 12)["total"] == 0        # прямоугольник через 180°
+    # группировка: два судна рядом на мелком масштабе — одна группа, на крупном — два судна
+    traffic.update_position("538010473", 42.48, 28.26, 10.0, 0.0, None, "NEIGHBOUR", "A")
+    far = traffic.query(27, 40, 42, 48, 5)
+    assert far["ships"] == [] and far["clusters"][0]["n"] == 2
+    assert len(traffic.query(27, 40, 42, 48, 14)["ships"]) == 2
+    assert traffic.query(27, 40, 42, 48, 5, cats={"cargo"})["total"] == 0
     assert db.query_one("SELECT * FROM ais_state WHERE mmsi='538010472'") is None
     assert len(traffic.trail("538010472")) == 2         # точка трека + текущая позиция
     aisstream._tracked = None
