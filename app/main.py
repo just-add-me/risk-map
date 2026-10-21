@@ -343,34 +343,40 @@ async def api_users(request: Request):
 
 
 def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
-    """Права проверяет вызывающий (access.require(..., "edit"))."""
+    """Права проверяет вызывающий (access.require(..., "edit")).
+
+    Без MMSI ищем судно по IMO в потоке AIS; не нашли — добавляем с временным номером IMO:…,
+    настоящий MMSI подставится, когда судно передаст паспортные данные (см. ingest.resolve_imo).
+    """
     if not db.query_one("SELECT id FROM fleets WHERE id=?", (fid,)):
         raise ValueError("Флот не найден")
+    if not mmsi and not imo:
+        raise ValueError("Укажите MMSI или IMO")
     if not mmsi:
-        raise ValueError("Нужен MMSI (9 цифр) — по нему идёт отслеживание AIS")
-    if db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND mmsi=?", (fid, mmsi)):
+        mmsi = traffic.find_imo(imo) or ingest.PENDING + imo
+    if db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND (mmsi=? OR (? <> '' AND imo=?))",
+                    (fid, mmsi, imo, imo)):
         return "exists"
     db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, name, created_at) VALUES(?,?,?,?,?)",
                (fid, mmsi, imo or None, name or None, db.now_iso()))
-    _backfill_from_traffic(mmsi)
+    if not mmsi.startswith(ingest.PENDING):
+        ingest.backfill_from_traffic(mmsi)
     return "added"
-
-
-def _backfill_from_traffic(mmsi: str) -> None:
-    """Если судно уже есть в общем потоке AIS — сразу берём его данные, не ждём нового сообщения."""
-    s = traffic.get(mmsi)
-    if not s:
-        return
-    ingest.static_data(mmsi, name=s.get("name"), imo=s.get("imo"), callsign=s.get("callsign"),
-                       ship_type=s.get("ship_type"), destination=s.get("destination"), length=s.get("length"),
-                       beam=s.get("beam"), draught=s.get("draught"), eta=s.get("eta"))
-    if s.get("lat") is not None:
-        ingest.position(mmsi, s["lat"], s["lon"], sog=s.get("sog"), cog=s.get("cog"), heading=s.get("heading"),
-                        source="aisstream", ais_name=s.get("name"))
 
 
 def _vessel_check(mmsi: str, imo: str = "") -> dict:
     """Есть ли такое судно в потоке AIS и не похож ли номер на опечатку."""
+    if not mmsi and imo:
+        if not fleet_import.imo_valid(imo):
+            return {"found": False, "by_imo": True, "flag": None,
+                    "warnings": ["IMO не проходит проверку контрольной цифры — вероятно, опечатка"]}
+        found = traffic.find_imo(imo)
+        if not found:
+            return {"found": False, "by_imo": True, "flag": None,
+                    "warnings": ["Судна с таким IMO пока нет в потоке AIS. Добавить можно: MMSI подставится "
+                                 "сам, когда судно передаст паспортные данные (обычно раз в несколько минут, "
+                                 "если оно в зоне береговых станций)."]}
+        return {**_vessel_check(found, imo), "mmsi": found, "by_imo": True}
     warnings = []
     if mmsi and mmsi[0] not in "234567":
         kinds = {"0": "береговой станции или группы судов", "1": "поисково-спасательного самолёта",
@@ -396,9 +402,10 @@ def _vessel_check(mmsi: str, imo: str = "") -> dict:
 @api
 async def api_ship_check(request: Request):
     mmsi = fleet_import.clean_mmsi(request.query_params.get("mmsi"))
-    if not mmsi:
-        return JSONResponse({"error": "MMSI должен состоять из 9 цифр"}, status_code=400)
-    return JSONResponse(_vessel_check(mmsi, fleet_import.clean_imo(request.query_params.get("imo"))))
+    imo = fleet_import.clean_imo(request.query_params.get("imo"))
+    if not mmsi and not imo:
+        return JSONResponse({"error": "Нужен MMSI (9 цифр) или IMO (7 цифр)"}, status_code=400)
+    return JSONResponse(_vessel_check(mmsi, imo))
 
 
 @api
@@ -412,6 +419,8 @@ async def api_vessel_add(request: Request):
         raise ValueError("MMSI должен состоять из 9 цифр")
     if body.get("imo") and not imo:
         raise ValueError("IMO должен состоять из 7 цифр")
+    if not mmsi and imo and not fleet_import.imo_valid(imo):
+        raise ValueError("IMO не проходит проверку контрольной цифры — проверьте номер")
     res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80])
     if res == "exists":
         raise ValueError("Это судно уже есть во флоте")
@@ -433,14 +442,15 @@ async def api_vessel_upload(request: Request):
     added = exists = 0
     no_mmsi, not_found = [], []
     for it in items:
-        if not it["mmsi"]:
-            no_mmsi.append(it["name"] or (f"IMO {it['imo']}" if it["imo"] else "?"))
+        if not it["mmsi"] and not it["imo"]:
+            no_mmsi.append(it["name"] or "?")
             continue
         r = _add_vessel(fid, it["mmsi"], it["imo"], it["name"])
         added += r == "added"
         exists += r == "exists"
-        if r == "added" and not traffic.get(it["mmsi"]):
-            not_found.append(it["name"] or it["mmsi"])
+        found = traffic.get(it["mmsi"]) if it["mmsi"] else traffic.find_imo(it["imo"])
+        if r == "added" and not found:
+            not_found.append(it["name"] or it["mmsi"] or f"IMO {it['imo']}")
     return JSONResponse({"added": added, "exists": exists, "skipped_no_mmsi": no_mmsi[:50],
                          "skipped_count": len(no_mmsi), "total": len(items),
                          "not_found": not_found[:50], "not_found_count": len(not_found)})

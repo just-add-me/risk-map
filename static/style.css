@@ -342,3 +342,4 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .fleet-actions .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .fleet-actions .btn.on { background: var(--bg-3); border-color: var(--accent); color: var(--text); }
 #add-vessel > summary, #fleet-share > summary { display: none; }
+.nowrap { white-space: nowrap; }

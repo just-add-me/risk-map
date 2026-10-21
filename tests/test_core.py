@@ -344,3 +344,19 @@ def test_fleet_access_and_migration():
     assert old.execute("SELECT COUNT(*) FROM vessels").fetchone()[0] == 1
     assert old.execute("SELECT notification_id FROM notification_reads").fetchone()[0] == 5
     old.close()
+
+
+def test_add_by_imo_pending_resolves():
+    from app.ais import aisstream, ingest
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('IMO-флот', 'admin', ?)",
+                     (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, created_at) VALUES(?, 'IMO:9811000', '9811000', ?)",
+               (fid, db.now_iso()))
+    assert "IMO:9811000" not in ingest.tracked_mmsis() and "9811000" in ingest.pending_imos()
+    aisstream._tracked, aisstream._pending = set(), ingest.pending_imos()
+    aisstream.handle(json.dumps({"MessageType": "ShipStaticData", "MetaData": {"MMSI": 353136000, "ShipName": "EVER GIVEN"},
+                                 "Message": {"ShipStaticData": {"Type": 70, "ImoNumber": 9811000}}}))
+    v = db.query_one("SELECT mmsi FROM vessels WHERE fleet_id=?", (fid,))
+    assert v["mmsi"] == "353136000" and "353136000" in aisstream._tracked
+    assert db.query_one("SELECT title FROM notifications WHERE mmsi='353136000'")["title"].startswith("EVER GIVEN")
+    aisstream._tracked, aisstream._pending = None, set()

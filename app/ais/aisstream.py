@@ -29,6 +29,8 @@ MESSAGE_TYPES = ["PositionReport", "StandardClassBPositionReport", "ExtendedClas
 status: dict[str, Any] = {"connected": 0, "last_message": None, "messages": 0, "last_error": None}
 # MMSI судов из флотов; None — фильтр на стороне aisstream (режим без общего слоя)
 _tracked: Optional[set[str]] = None
+# IMO судов, добавленных без MMSI: ждём от них паспортное сообщение
+_pending: set[str] = set()
 
 
 def _f(v) -> Optional[float]:
@@ -84,7 +86,12 @@ def handle(raw: str | bytes) -> None:
                     destination=(body.get("Destination") or "").strip() or None,
                     length=length, beam=beam, draught=draught, eta=shipinfo.eta_text(body.get("Eta")))
         traffic.update_static(mmsi, **info)
-        if tracked:
+        if info["imo"] and info["imo"] in _pending:
+            _pending.discard(info["imo"])
+            ingest.resolve_imo(info["imo"], mmsi)
+            if _tracked is not None:
+                _tracked.add(mmsi)
+        elif tracked:
             ingest.static_data(mmsi, **info)
     elif mtype == "StaticDataReport":
         rep_a = body.get("ReportA") or {}
@@ -169,8 +176,9 @@ async def run(stop: asyncio.Event) -> None:
 
 async def _run_world(stop: asyncio.Event) -> None:
     """Одно соединение на весь мир; список судов флотов обновляем раз в 15 секунд."""
-    global _tracked
+    global _tracked, _pending
     _tracked = set(ingest.tracked_mmsis())
+    _pending = ingest.pending_imos()
     task = asyncio.create_task(_connection(None, stop))
     try:
         while not stop.is_set():
@@ -179,6 +187,7 @@ async def _run_world(stop: asyncio.Event) -> None:
             except asyncio.TimeoutError:
                 pass
             _tracked = set(ingest.tracked_mmsis())
+            _pending = ingest.pending_imos()
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

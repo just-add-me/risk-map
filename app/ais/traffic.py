@@ -204,6 +204,20 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
     return {"ships": [r[1] for r in singles], "clusters": clusters, "counts": counts, "total": total}
 
 
+def find_imo(imo: str) -> Optional[str]:
+    """MMSI судна с этим IMO (если оно передавало паспортные данные). Живая позиция — в приоритете."""
+    now = time.time()
+    best = None
+    with _lock:
+        for s in _ships.values():
+            if str(s.get("imo") or "") == imo:
+                live = bool(s.get("ts")) and now - s["ts"] <= POSITION_TTL
+                if live:
+                    return s["mmsi"]
+                best = best or s["mmsi"]
+    return best
+
+
 def search(q: str, limit: int = 12) -> list[dict]:
     """Поиск по названию, MMSI, IMO или позывному. Сначала точные совпадения, потом начало, потом вхождение."""
     q = q.strip().upper()

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .. import alerts, config, db
+from . import traffic
 
 log = logging.getLogger(__name__)
 
@@ -15,8 +16,46 @@ TRAIL_MIN_MINUTES = 5
 TRAIL_MIN_NM = 1.0
 
 
+# Судно, добавленное только по IMO, хранится с временным «MMSI» вида IMO:1234567, пока
+# от него не придёт паспортное сообщение AIS с этим IMO — тогда подставляется настоящий MMSI.
+PENDING = "IMO:"
+
+
 def tracked_mmsis() -> list[str]:
-    return [r["mmsi"] for r in db.query("SELECT DISTINCT mmsi FROM vessels ORDER BY mmsi")]
+    return [r["mmsi"] for r in db.query("SELECT DISTINCT mmsi FROM vessels WHERE mmsi NOT LIKE 'IMO:%' ORDER BY mmsi")]
+
+
+def pending_imos() -> set[str]:
+    return {r["mmsi"][len(PENDING):] for r in db.query("SELECT DISTINCT mmsi FROM vessels WHERE mmsi LIKE 'IMO:%'")}
+
+
+def resolve_imo(imo: str, mmsi: str) -> int:
+    """Судну, ждавшему MMSI, нашёлся номер: подставляем, сразу берём данные из потока, пишем уведомление."""
+    rows = db.query("SELECT id, fleet_id, name FROM vessels WHERE mmsi=?", (PENDING + imo,))
+    for r in rows:
+        if db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND mmsi=?", (r["fleet_id"], mmsi)):
+            db.execute("DELETE FROM vessels WHERE id=?", (r["id"],))      # это судно уже есть во флоте по MMSI
+        else:
+            db.execute("UPDATE vessels SET mmsi=?, imo=? WHERE id=?", (mmsi, imo, r["id"]))
+    if rows:
+        backfill_from_traffic(mmsi)
+        name = rows[0]["name"] or (traffic.get(mmsi) or {}).get("name") or f"IMO {imo}"
+        db.notify("system", "info", f"{name}: найден MMSI {mmsi}",
+                  f"Судно было добавлено по IMO {imo}. Теперь его позиция отслеживается.", mmsi)
+    return len(rows)
+
+
+def backfill_from_traffic(mmsi: str) -> None:
+    """Если судно уже есть в общем потоке AIS — сразу берём его данные, не ждём нового сообщения."""
+    s = traffic.get(mmsi)
+    if not s:
+        return
+    static_data(mmsi, name=s.get("name"), imo=s.get("imo"), callsign=s.get("callsign"),
+                ship_type=s.get("ship_type"), destination=s.get("destination"), length=s.get("length"),
+                beam=s.get("beam"), draught=s.get("draught"), eta=s.get("eta"))
+    if s.get("lat") is not None:
+        position(mmsi, s["lat"], s["lon"], sog=s.get("sog"), cog=s.get("cog"), heading=s.get("heading"),
+                 source="aisstream", ais_name=s.get("name"))
 
 
 def _dist_nm(lat1, lon1, lat2, lon2) -> float:

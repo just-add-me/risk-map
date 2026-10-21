@@ -558,7 +558,9 @@ function renderFleet() {
       <i class="dot s-${lvl}"></i>
       <div>
         <div class="vessel-name">${esc(v.name || v.ais_name || "Без названия")}</div>
-        <div class="vessel-meta">MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""} · ${v.position ? `обновлено ${ago(v.position.ts)}` : "ждём AIS"}</div>
+        <div class="vessel-meta">${v.mmsi.startsWith("IMO:") ? `IMO ${esc(v.imo)} · <span class="nowrap">MMSI ещё не известен</span>`
+          : `MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""}`} ·
+          <span class="nowrap">${v.position ? `обновлено ${ago(v.position.ts)}` : v.mmsi.startsWith("IMO:") ? "ждём паспортные данные AIS" : "ждём AIS"}</span></div>
         ${v.ship_type ? `<div class="vessel-meta"><i class="dot" style="background:${TRAFFIC_COLORS[v.category]}"></i> ${esc(v.type_name)}${v.length ? ` · ${Math.round(v.length)} м` : ""}${v.flag ? ` · ${esc(v.flag)}` : ""}</div>` : ""}
         ${zones ? `<div class="vessel-zones">${zones}</div>` : ""}
       </div>
@@ -1125,16 +1127,17 @@ $("#form-vessel").onsubmit = async (e) => {
   e.preventDefault();
   const f = currentFleet(); if (!f) return;
   const fd = Object.fromEntries(new FormData(e.target));
+  if (!fd.mmsi.trim() && !fd.imo.trim()) { toast("Укажите MMSI или IMO", "", "warning"); return; }
   try {
     const r = await api(`/api/fleets/${f.id}/vessels`, { json: fd });
     e.target.reset();
     $("#mmsi-check").innerHTML = "";
     const c = r.check || {};
     if (c.found) {
-      toast(`Добавлено: ${c.name || fd.mmsi}`, [c.type_name, c.flag, c.has_position ? `позиция ${fmtAge(c.age_s)}` : "позиции пока нет",
+      toast(`Добавлено: ${c.name || fd.mmsi || "IMO " + fd.imo}${c.by_imo ? ` (MMSI ${c.mmsi} найден по IMO)` : ""}`, [c.type_name, c.flag, c.has_position ? `позиция ${fmtAge(c.age_s)}` : "позиции пока нет",
         ...c.warnings].filter(Boolean).join(" · "), c.warnings.length ? "warning" : "info");
     } else {
-      toast("Судно добавлено, но в потоке AIS его нет", c.warnings.join(" "), "warning");
+      toast(c.by_imo ? "Судно добавлено, ждём его MMSI" : "Судно добавлено, но в потоке AIS его нет", c.warnings.join(" "), "warning");
     }
     await loadFleets();
   } catch (err) { toast("Не удалось добавить", err.message, "critical"); }
@@ -1148,15 +1151,16 @@ function scheduleVesselCheck() {
   const mmsi = form.mmsi.value.replace(/\D/g, "");
   const imo = form.imo.value.replace(/\D/g, "");
   const box = $("#mmsi-check");
-  if (mmsi.length !== 9) { box.innerHTML = mmsi ? `<span class="muted">MMSI — 9 цифр (сейчас ${mmsi.length})</span>` : ""; return; }
+  if (mmsi && mmsi.length !== 9) { box.innerHTML = `<span class="muted">MMSI — 9 цифр (сейчас ${mmsi.length})</span>`; return; }
+  if (!mmsi && imo.length !== 7) { box.innerHTML = imo ? `<span class="muted">IMO — 7 цифр (сейчас ${imo.length})</span>` : ""; return; }
   checkTimer = setTimeout(async () => {
     try {
       const c = await api(`/api/ships/check?mmsi=${mmsi}&imo=${imo}`);
       const head = c.found
-        ? `<div class="ok">✓ ${flagImg(c.flag_iso, c.flag)} <b>${esc(c.name || "без названия")}</b> · ${esc(c.type_name)}${c.length ? ` · ${Math.round(c.length)} м` : ""} · ${c.has_position ? `позиция ${fmtAge(c.age_s)}` : "позиции пока нет"}</div>`
+        ? `<div class="ok">✓ ${flagImg(c.flag_iso, c.flag)} <b>${esc(c.name || "без названия")}</b>${c.by_imo ? ` · MMSI ${esc(c.mmsi)}` : ""} · ${esc(c.type_name)}${c.length ? ` · ${Math.round(c.length)} м` : ""} · ${c.has_position ? `позиция ${fmtAge(c.age_s)}` : "позиции пока нет"}</div>`
         : `<div class="warn">Не найдено в потоке AIS${c.flag ? ` (флаг по номеру: ${esc(c.flag)})` : ""}</div>`;
-      box.innerHTML = head + c.warnings.filter((w) => c.found || !w.startsWith("Судна с таким")).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("")
-        + (c.found ? "" : `<div class="muted">Возможна опечатка, или судно давно вне зоны покрытия. Добавить всё равно можно — позиция появится, когда оно выйдет на связь.</div>`);
+      box.innerHTML = head + c.warnings.filter((w) => c.found || c.by_imo || !w.startsWith("Судна с таким")).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("")
+        + (c.found || c.by_imo ? "" : `<div class="muted">Возможна опечатка, или судно давно вне зоны покрытия. Добавить всё равно можно — позиция появится, когда оно выйдет на связь.</div>`);
     } catch (err) { box.textContent = err.message; }
   }, 300);
 }
@@ -1169,7 +1173,7 @@ async function uploadFleetFile(file) {
   try {
     const r = await api(`/api/fleets/${f.id}/upload`, { method: "POST", body: fd });
     let body = `Добавлено: ${r.added}, уже были: ${r.exists}`;
-    if (r.skipped_count) body += `. Пропущено без MMSI: ${r.skipped_count} (${r.skipped_no_mmsi.slice(0, 5).join(", ")}${r.skipped_count > 5 ? "…" : ""})`;
+    if (r.skipped_count) body += `. Пропущено без MMSI и IMO: ${r.skipped_count} (${r.skipped_no_mmsi.slice(0, 5).join(", ")}${r.skipped_count > 5 ? "…" : ""})`;
     if (r.not_found_count) body += `. Нет в потоке AIS (проверьте номера): ${r.not_found_count} — ${r.not_found.slice(0, 5).join(", ")}${r.not_found_count > 5 ? "…" : ""}`;
     toast("Файл обработан", body, r.skipped_count || r.not_found_count ? "warning" : "info");
     await loadFleets();

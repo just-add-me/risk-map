@@ -66,8 +66,9 @@
         <details class="card" id="add-vessel" hidden>
           <summary>Добавить судно</summary>
           <form id="form-vessel" class="form-grid">
-            <label>MMSI*<input name="mmsi" inputmode="numeric" maxlength="9" placeholder="9 цифр" required></label>
+            <label>MMSI<input name="mmsi" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>
             <label>IMO<input name="imo" inputmode="numeric" maxlength="10" placeholder="7 цифр"></label>
+            <div class="span2 small muted">Достаточно MMSI или IMO. Если указан только IMO, MMSI найдётся по данным AIS.</div>
             <div class="span2 small mmsi-check" id="mmsi-check" aria-live="polite"></div>
             <label class="span2">Название<input name="name" maxlength="80" placeholder="Необязательно"></label>
             <button class="btn span2" type="submit">Добавить</button>
