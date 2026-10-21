@@ -232,6 +232,24 @@ def search(q: str, limit: int = 12) -> list[dict]:
     return [details(r[3]) for r in found[:limit]]
 
 
+def near(lat: float, lon: float, nm: float) -> list[dict]:
+    """Суда с живой позицией в радиусе nm миль от точки (для карточки порта)."""
+    now = time.time()
+    dlat = nm / 60.0
+    dlon = nm / (60.0 * max(math.cos(math.radians(lat)), 0.05))
+    out = []
+    with _lock:
+        for s in _ships.values():
+            if not s.get("ts") or now - s["ts"] > POSITION_TTL:
+                continue
+            if abs(s["lat"] - lat) <= dlat and abs(((s["lon"] - lon + 180) % 360) - 180) <= dlon:
+                k = math.cos(math.radians(lat))
+                d = math.hypot((s["lat"] - lat) * 60, (((s["lon"] - lon + 180) % 360) - 180) * 60 * k)
+                if d <= nm:
+                    out.append({**details(dict(s)), "distance_nm": round(d, 1)})
+    return out
+
+
 def _merc_y(lat: float) -> float:
     return math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(lat, 85), -85)) / 2)))
 

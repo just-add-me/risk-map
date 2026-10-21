@@ -35,6 +35,13 @@ def clean_imo(v) -> str:
     return s if len(s) == 7 else ""
 
 
+def imo_valid(imo: str) -> bool:
+    """У номера IMO есть контрольная цифра: сумма первых шести цифр, умноженных на 7…2, по модулю 10."""
+    if not re.fullmatch(r"\d{7}", imo or ""):
+        return False
+    return sum(int(d) * w for d, w in zip(imo[:6], range(7, 1, -1))) % 10 == int(imo[6])
+
+
 def _rows_from_table(rows: Iterable[list]) -> list[dict]:
     rows = [[("" if c is None else str(c)).strip() for c in r] for r in rows]
     rows = [r for r in rows if any(r)]

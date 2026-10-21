@@ -193,6 +193,32 @@ async def api_traffic_ship(request: Request):
 
 
 @api
+async def api_port(request: Request):
+    """Карточка порта: страна, зоны, суда рядом (в радиусе 5 миль) по категориям и статусам."""
+    pid = int(request.path_params["pid"])
+    plist = await asyncio.to_thread(ports.with_zones)
+    if not 0 <= pid < len(plist):
+        return JSONResponse({"error": "Порт не найден"}, status_code=404)
+    p = plist[pid]
+    ships = await asyncio.to_thread(traffic.near, p["lat"], p["lon"], 5.0)
+    by_cat: dict[str, int] = {}
+    for s in ships:
+        by_cat[s["category"]] = by_cat.get(s["category"], 0) + 1
+    status = {"moored": sum(1 for s in ships if s["nav_status"] == "Ошвартовано"),
+              "anchored": sum(1 for s in ships if s["nav_status"] == "На якоре"),
+              "moving": sum(1 for s in ships if (s["sog"] or 0) >= 1)}
+    ships.sort(key=lambda s: -(s["length"] or 0))
+    zone_info = [{"id": z, "name": zones.zone_name(z), "layer": (zones.index().get(z).props.get("layer")
+                                                                if zones.index().get(z) else None)}
+                 for z in p["zones"]]
+    return JSONResponse({**p, "zones": zone_info, "ships_total": len(ships), "by_category": by_cat,
+                         "status": status, "categories": shipinfo.CATEGORIES,
+                         "ships": [{k: s[k] for k in ("mmsi", "name", "type_name", "category", "length",
+                                                      "nav_status", "sog", "flag_iso", "distance_nm", "lat", "lon")}
+                                   for s in ships[:12]]})
+
+
+@api
 async def api_traffic_track(request: Request):
     return JSONResponse({"points": traffic.trail(request.path_params["mmsi"])})
 
@@ -284,6 +310,38 @@ def _backfill_from_traffic(mmsi: str) -> None:
                         source="aisstream", ais_name=s.get("name"))
 
 
+def _vessel_check(mmsi: str, imo: str = "") -> dict:
+    """Есть ли такое судно в потоке AIS и не похож ли номер на опечатку."""
+    warnings = []
+    if mmsi and mmsi[0] not in "234567":
+        kinds = {"0": "береговой станции или группы судов", "1": "поисково-спасательного самолёта",
+                 "8": "переносной рации", "9": "навигационного знака, аварийного буя или шлюпки"}
+        warnings.append(f"MMSI на «{mmsi[0]}» — это номер {kinds.get(mmsi[0], 'не судна')}, а не судна")
+    elif mmsi and not shipinfo.flag(mmsi):
+        warnings.append(f"Код страны {mmsi[:3]} в начале MMSI не найден в таблице МСЭ — проверьте номер")
+    if imo and not fleet_import.imo_valid(imo):
+        warnings.append("IMO не проходит проверку контрольной цифры — вероятно, опечатка")
+    s = traffic.get(mmsi) if mmsi else None
+    if not s:
+        warnings.append("Судна с таким MMSI нет в потоке AIS за последнюю неделю: возможна опечатка, "
+                        "или судно давно вне зоны покрытия береговых станций. Позиция появится, когда оно выйдет на связь.")
+        return {"found": False, "warnings": warnings, "flag": shipinfo.flag(mmsi) if mmsi else None}
+    d = traffic.details(s)
+    if imo and d.get("imo") and d["imo"] != imo:
+        warnings.append(f"У судна с этим MMSI в AIS указан другой IMO: {d['imo']}")
+    return {"found": True, "warnings": warnings, "name": d["name"], "type_name": d["type_name"],
+            "flag": d["flag"], "flag_iso": d["flag_iso"], "imo": d["imo"], "length": d["length"],
+            "has_position": d["lat"] is not None, "age_s": d["age_s"]}
+
+
+@api
+async def api_ship_check(request: Request):
+    mmsi = fleet_import.clean_mmsi(request.query_params.get("mmsi"))
+    if not mmsi:
+        return JSONResponse({"error": "MMSI должен состоять из 9 цифр"}, status_code=400)
+    return JSONResponse(_vessel_check(mmsi, fleet_import.clean_imo(request.query_params.get("imo"))))
+
+
 @api
 async def api_vessel_add(request: Request):
     fid = int(request.path_params["fid"])
@@ -297,7 +355,7 @@ async def api_vessel_add(request: Request):
     res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80])
     if res == "exists":
         raise ValueError("Это судно уже есть во флоте")
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "check": _vessel_check(mmsi, imo)})
 
 
 @api
@@ -312,7 +370,7 @@ async def api_vessel_upload(request: Request):
         raise ValueError("Файл больше 5 МБ")
     items = fleet_import.parse_file(data, up.filename or "upload.csv")
     added = exists = 0
-    no_mmsi = []
+    no_mmsi, not_found = [], []
     for it in items:
         if not it["mmsi"]:
             no_mmsi.append(it["name"] or (f"IMO {it['imo']}" if it["imo"] else "?"))
@@ -320,8 +378,11 @@ async def api_vessel_upload(request: Request):
         r = _add_vessel(fid, it["mmsi"], it["imo"], it["name"])
         added += r == "added"
         exists += r == "exists"
+        if r == "added" and not traffic.get(it["mmsi"]):
+            not_found.append(it["name"] or it["mmsi"])
     return JSONResponse({"added": added, "exists": exists, "skipped_no_mmsi": no_mmsi[:50],
-                         "skipped_count": len(no_mmsi), "total": len(items)})
+                         "skipped_count": len(no_mmsi), "total": len(items),
+                         "not_found": not_found[:50], "not_found_count": len(not_found)})
 
 
 @api
@@ -521,6 +582,8 @@ routes = [
     Route("/api/status", api_status),
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
+    Route("/api/ports/{pid:int}", api_port),
+    Route("/api/ships/check", api_ship_check),
     Route("/api/traffic", api_traffic),
     Route("/api/ships/search", api_ship_search),
     Route("/api/traffic/{mmsi}", api_traffic_ship),

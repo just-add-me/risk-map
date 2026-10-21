@@ -274,3 +274,14 @@ def test_ship_search():
     assert traffic.search("6360123")[0]["mmsi"] == "636012345"
     assert traffic.search("d5ab1")[0]["mmsi"] == "636012345"
     assert traffic.search("x") == []
+
+
+def test_imo_checksum_and_near():
+    from app import fleet_import
+    from app.ais import traffic
+    assert fleet_import.imo_valid("9653795") and fleet_import.imo_valid("9811000")
+    assert not fleet_import.imo_valid("9653796") and not fleet_import.imo_valid("123")
+    traffic.update_position("273000777", 46.49, 30.76, 0.0, None, None, "PORT SHIP", "A", 5)
+    near = traffic.near(46.50, 30.75, 5)
+    assert any(s["mmsi"] == "273000777" and s["nav_status"] == "Ошвартовано" for s in near)
+    assert not any(s["mmsi"] == "273000777" for s in traffic.near(44.0, 30.75, 5))

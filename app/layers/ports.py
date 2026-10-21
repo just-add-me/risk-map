@@ -68,6 +68,6 @@ def with_zones() -> list[dict]:
         # точка порта в справочнике стоит у берега, а морские зоны начинаются у воды: допуск 2 мили
         inside = [z.id for z in idx.zones if idx.contains(z, p["lon"], p["lat"])
                   or idx.distance_nm(z, p["lon"], p["lat"], 2.0) is not None]
-        out.append({**p, "zones": inside})
+        out.append({**p, "id": len(out), "zones": inside})
     _with_zones = (ver, out)
     return out
