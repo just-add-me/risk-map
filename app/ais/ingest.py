@@ -63,13 +63,17 @@ def position(mmsi: str, lat: float, lon: float, sog: Optional[float] = None, cog
 
 def static_data(mmsi: str, name: Optional[str] = None, imo: Optional[str] = None,
                 callsign: Optional[str] = None, ship_type: Optional[int] = None,
-                destination: Optional[str] = None) -> None:
+                destination: Optional[str] = None, length: Optional[float] = None,
+                beam: Optional[float] = None, draught: Optional[float] = None, eta: Optional[str] = None) -> None:
     db.execute(
-        "INSERT INTO ais_state(mmsi, ais_name, imo, callsign, ship_type, destination) VALUES(?,?,?,?,?,?) "
+        "INSERT INTO ais_state(mmsi, ais_name, imo, callsign, ship_type, destination, length, beam, draught, eta) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(mmsi) DO UPDATE SET ais_name=COALESCE(excluded.ais_name, ais_name), "
         "imo=COALESCE(excluded.imo, imo), callsign=COALESCE(excluded.callsign, callsign), "
-        "ship_type=COALESCE(excluded.ship_type, ship_type), destination=COALESCE(excluded.destination, destination)",
-        (mmsi, name, imo, callsign, ship_type, destination),
+        "ship_type=COALESCE(excluded.ship_type, ship_type), destination=COALESCE(excluded.destination, destination), "
+        "length=COALESCE(excluded.length, length), beam=COALESCE(excluded.beam, beam), "
+        "draught=COALESCE(excluded.draught, draught), eta=COALESCE(excluded.eta, eta)",
+        (mmsi, name, imo, callsign, ship_type, destination, length, beam, draught, eta),
     )
 
 

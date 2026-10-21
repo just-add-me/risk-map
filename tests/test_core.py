@@ -214,3 +214,32 @@ def test_inl_season():
     assert zones.in_season(winter, datetime(2026, 12, 10))
     assert not zones.in_season(winter, datetime(2026, 7, 1))
     assert zones.in_season({}, datetime(2026, 7, 1))
+
+
+def test_shipinfo_and_traffic():
+    from app.ais import aisstream, shipinfo, traffic
+    assert shipinfo.category(37) == "yacht" and shipinfo.category(36) == "yacht"
+    assert shipinfo.category(71) == "cargo" and shipinfo.category(84) == "tanker" and shipinfo.category(None) == "other"
+    assert shipinfo.type_name(81) == "Танкер, опасный груз X"
+    assert shipinfo.flag("273123456") == "Россия" and shipinfo.flag("538010472") == "Маршалловы о-ва"
+    assert shipinfo.flag("992731234") is None
+    assert shipinfo.dimensions({"A": 150, "B": 33, "C": 16, "D": 16}) == (183, 32)
+    assert shipinfo.eta_text({"Month": 10, "Day": 23, "Hour": 6, "Minute": 30}) == "23.10 06:30 UTC"
+    # поток aisstream: чужое судно — только в общий слой, без записи в базу
+    aisstream._tracked = set()
+    aisstream.handle(json.dumps({"MessageType": "ShipStaticData",
+                                 "MetaData": {"MMSI": 538010472, "ShipName": "BELGRAVIA V"},
+                                 "Message": {"ShipStaticData": {"Type": 80, "ImoNumber": 9300001,
+                                             "Dimension": {"A": 200, "B": 50, "C": 20, "D": 22},
+                                             "MaximumStaticDraught": 12.4, "Destination": "NOVOROSSIYSK"}}}))
+    aisstream.handle(json.dumps({"MessageType": "PositionReport",
+                                 "MetaData": {"MMSI": 538010472, "ShipName": "BELGRAVIA V"},
+                                 "Message": {"PositionReport": {"Latitude": 42.47, "Longitude": 28.2,
+                                                                "Sog": 13.3, "Cog": 45, "TrueHeading": 511}}}))
+    d = traffic.details(traffic.get("538010472"))
+    assert d["category"] == "tanker" and d["length"] == 250 and d["draught"] == 12.4 and d["heading"] is None
+    rows, counts, total = traffic.in_bbox(27, 40, 42, 48, 100)
+    assert total == 1 and counts["tanker"] == 1 and rows[0][0] == "538010472"
+    assert traffic.in_bbox(170, 40, -170, 48, 100)[2] == 0          # прямоугольник через 180°
+    assert db.query_one("SELECT * FROM ais_state WHERE mmsi='538010472'") is None
+    aisstream._tracked = None

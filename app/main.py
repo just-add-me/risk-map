@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import alerts, config, db, fleet_import, zones
-from .ais import ingest
+from .ais import ingest, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
 
@@ -105,7 +105,7 @@ async def api_status(request: Request):
     active = db.query_one("SELECT ref, issued, activated_at, source_url FROM circulars WHERE status='active'")
     unread = db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE is_read=0")
     return JSONResponse({
-        "ais": {"mode": config.AIS_MODE, **({k: v for k, v in aisstream.status.items()}
+        "ais": {"mode": config.AIS_MODE, "traffic": traffic.stats(), **({k: v for k, v in aisstream.status.items()}
                                             if config.AIS_MODE == "aisstream" else {})},
         "circular": {"active": active, "check": {**pipeline.state,
                                                  "last_check": db.kv_get("circular_last_check"),
@@ -132,6 +132,37 @@ async def api_ports(request: Request):
     return JSONResponse({"ports": data}, headers={"Cache-Control": "no-store"})
 
 
+@api
+async def api_traffic(request: Request):
+    """Все суда AIS в видимой области карты: ?bbox=запад,юг,восток,север&limit=4000."""
+    try:
+        w, s_, e, n = (float(x) for x in request.query_params.get("bbox", "-180,-90,180,90").split(","))
+        limit = min(int(request.query_params.get("limit", 4000)), 8000)
+    except ValueError:
+        return JSONResponse({"error": "bbox: запад,юг,восток,север"}, status_code=400)
+    rows, counts, total = await asyncio.to_thread(traffic.in_bbox, w, s_, e, n, limit)
+    return JSONResponse({"ships": rows, "counts": counts, "total": total, "categories": shipinfo.CATEGORIES,
+                         "enabled": config.AIS_MODE == "aisstream" and config.AIS_TRAFFIC},
+                        headers={"Cache-Control": "no-store"})
+
+
+@api
+async def api_traffic_ship(request: Request):
+    mmsi = request.path_params["mmsi"]
+    s = traffic.get(mmsi)
+    if not s:
+        return JSONResponse({"error": "Нет данных по судну"}, status_code=404)
+    d = traffic.details(s)
+    if d["lat"] is not None:
+        idx = zones.index()
+        found = idx.evaluate(d["lon"], d["lat"], config.WARN_DISTANCE_NM)
+        d["zones"] = [{"id": zid, "name": zones.zone_name(zid), **r} for zid, r in found.items()
+                      if zones.in_effect(zid)]
+    d["fleets"] = [r["name"] for r in db.query(
+        "SELECT f.name FROM vessels v JOIN fleets f ON f.id=v.fleet_id WHERE v.mmsi=?", (mmsi,))]
+    return JSONResponse(d)
+
+
 # --------------------------------------------------------------------------- API: флот
 def _vessel_dict(v: dict) -> dict:
     st = db.query_one("SELECT * FROM ais_state WHERE mmsi=?", (v["mmsi"],)) or {}
@@ -142,6 +173,9 @@ def _vessel_dict(v: dict) -> dict:
                       "heading": st.get("heading"), "ts": st.get("ts"), "source": st.get("source")}
                      if st.get("lat") is not None else None),
         "destination": st.get("destination"), "callsign": st.get("callsign"),
+        "ship_type": st.get("ship_type"), "type_name": shipinfo.type_name(st.get("ship_type")),
+        "category": shipinfo.category(st.get("ship_type")), "flag": shipinfo.flag(v["mmsi"]),
+        "length": st.get("length"), "beam": st.get("beam"), "draught": st.get("draught"), "eta": st.get("eta"),
         "status": alerts.vessel_status(v["mmsi"]),
     }
 
@@ -413,6 +447,8 @@ routes = [
     Route("/api/status", api_status),
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
+    Route("/api/traffic", api_traffic),
+    Route("/api/traffic/{mmsi}", api_traffic_ship),
     Route("/api/ibf", api_ibf),
     Route("/api/ibf/check", api_ibf_check, methods=["POST"]),
     Route("/api/fleets", api_fleets),

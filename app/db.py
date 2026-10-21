@@ -97,6 +97,11 @@ def connect() -> sqlite3.Connection:
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _conn.executescript(SCHEMA)
+            # миграции: новые колонки в существующей базе
+            cols = {r[1] for r in _conn.execute("PRAGMA table_info(ais_state)")}
+            for col, typ in (("length", "REAL"), ("beam", "REAL"), ("draught", "REAL"), ("eta", "TEXT")):
+                if col not in cols:
+                    _conn.execute(f"ALTER TABLE ais_state ADD COLUMN {col} {typ}")
         return _conn
 
 

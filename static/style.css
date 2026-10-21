@@ -254,3 +254,9 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .legend { bottom: 30px; }
   .tab { font-size: 13px; }
 }
+
+/* ---------- все суда (AIS) ---------- */
+.traffic-card { margin-bottom: 12px; }
+.traffic-card .zf-layer-head { margin-top: 0; font-weight: 600; }
+.ship-links { margin-top: 8px; color: var(--muted); }
+.vessel-meta .dot { width: 8px; height: 8px; vertical-align: middle; }

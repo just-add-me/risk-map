@@ -21,6 +21,8 @@ AISSTREAM_API_KEY = _env("AISSTREAM_API_KEY")
 # demo — симулятор движения судов; aisstream — живые данные aisstream.io
 AIS_MODE = _env("AIS_MODE") or ("aisstream" if AISSTREAM_API_KEY else "demo")
 AISSTREAM_URL = _env("AISSTREAM_URL", "wss://stream.aisstream.io/v0/stream")
+# 1 — принимать все суда мира (слой «Все суда» на карте); 0 — только суда из флотов
+AIS_TRAFFIC = _env("AIS_TRAFFIC", "1") == "1"
 DEMO_SPEED = float(_env("DEMO_SPEED", "40"))         # во сколько раз ускорено время в демо
 DEMO_TICK_SECONDS = float(_env("DEMO_TICK_SECONDS", "5"))
 

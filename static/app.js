@@ -435,6 +435,7 @@ function renderFleet() {
       <div>
         <div class="vessel-name">${esc(v.name || v.ais_name || "Без названия")}</div>
         <div class="vessel-meta">MMSI ${esc(v.mmsi)}${v.imo ? ` · IMO ${esc(v.imo)}` : ""} · ${v.position ? ago(v.position.ts) : "ждём AIS"}</div>
+        ${v.ship_type ? `<div class="vessel-meta"><i class="dot" style="background:${TRAFFIC_COLORS[v.category]}"></i> ${esc(v.type_name)}${v.length ? ` · ${Math.round(v.length)} м` : ""}${v.flag ? ` · ${esc(v.flag)}` : ""}</div>` : ""}
         ${zones ? `<div class="vessel-zones">${zones}</div>` : ""}
       </div>
       <button class="text-btn danger vessel-del" data-id="${v.id}" title="Удалить из флота">✕</button>
@@ -482,16 +483,34 @@ function vesselPopup(v) {
     ...st.inside.map((z) => `<div style="color:var(--red)">● В зоне: ${esc(z.name)} <span class="muted">с ${fmtTime(z.since)}</span></div>`),
     ...st.near.map((z) => `<div style="color:var(--amber)">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`),
   ].join("") || `<div style="color:var(--green)">Вне зон риска</div>`;
-  return `<h4>${esc(v.name || v.ais_name || "Судно")}</h4>${lines}
+  return `<h4>${esc(v.name || v.ais_name || "Судно")}</h4>
+    <div class="muted small">${esc(v.type_name || "")}${v.flag ? ` · флаг: ${esc(v.flag)}` : ""}</div>${lines}
     <dl class="kv" style="margin-top:8px">
       <dt>MMSI</dt><dd>${esc(v.mmsi)}</dd>
       ${v.imo ? `<dt>IMO</dt><dd>${esc(v.imo)}</dd>` : ""}
+      ${v.callsign ? `<dt>Позывной</dt><dd>${esc(v.callsign)}</dd>` : ""}
+      ${shipSizeRows(v)}
       <dt>Позиция</dt><dd>${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</dd>
       <dt>Скорость</dt><dd>${p.sog != null ? p.sog.toFixed(1) + " уз" : "—"}</dd>
       <dt>Курс</dt><dd>${p.cog != null ? Math.round(p.cog) + "°" : "—"}</dd>
       ${v.destination ? `<dt>Назначение</dt><dd>${esc(v.destination)}</dd>` : ""}
+      ${v.eta ? `<dt>ETA</dt><dd>${esc(v.eta)}</dd>` : ""}
       <dt>Обновлено</dt><dd>${ago(p.ts)}${p.source === "demo" ? " (демо)" : ""}</dd>
-    </dl>`;
+    </dl>${shipLinks(v)}`;
+}
+
+function shipSizeRows(v) {
+  return `${v.length ? `<dt>Размеры</dt><dd>${Math.round(v.length)} × ${v.beam ? Math.round(v.beam) : "?"} м</dd>` : ""}
+    ${v.draught ? `<dt>Осадка</dt><dd>${v.draught.toFixed(1)} м</dd>` : ""}`;
+}
+
+// Тоннажа, года постройки и цены в AIS нет — даём ссылки на открытые карточки судна
+function shipLinks(v) {
+  const vf = v.imo ? v.imo : v.mmsi;
+  return `<div class="ship-links small">Тоннаж, год постройки, владелец:
+    <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${encodeURIComponent(v.mmsi)}" target="_blank" rel="noopener">MarineTraffic</a> ·
+    <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(vf)}" target="_blank" rel="noopener">VesselFinder</a>
+    ${v.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(v.imo)}">Equasis</a>` : ""}</div>`;
 }
 
 async function selectVessel(mmsi, fly) {
@@ -510,6 +529,126 @@ async function selectVessel(mmsi, fly) {
     if (pts.length > 1) L.polyline(pts, { color: "#4fc3d9", weight: 2, opacity: 0.8, dashArray: "2 6" }).addTo(trackLayer);
   } catch { /* трек необязателен */ }
 }
+
+/* ------------------------------------------------------------------ все суда (AIS) */
+const TRAFFIC_COLORS = {
+  cargo: "#6fa8dc", tanker: "#c27ba0", passenger: "#f6b26b", yacht: "#5fe0c8",
+  fishing: "#93c47d", service: "#ffd966", other: "#8a9ba3",
+};
+const trafficRenderer = L.canvas({ padding: 0.3 });
+const trafficLayer = L.layerGroup().addTo(map);
+state.traffic = { on: null, cats: new Set(Object.keys(TRAFFIC_COLORS)), data: null, seq: 0 };
+
+function trafficDefault() {
+  // по умолчанию слой включён, пока во флотах нет судов; дальше — как выбрал пользователь
+  const saved = localStorageGet("showTraffic");
+  return saved === null ? allVessels().length === 0 : saved === "1";
+}
+
+async function loadTraffic() {
+  const t = state.traffic;
+  if (t.on === null) t.on = trafficDefault();
+  $("#traffic-toggle").checked = t.on;
+  if (!t.on) { trafficLayer.clearLayers(); t.data = null; renderTrafficCats(); return; }
+  const b = map.getBounds();
+  const span = b.getEast() - b.getWest();
+  const norm = (x) => ((x + 540) % 360) - 180;
+  const bbox = span >= 360 ? "-180,-90,180,90"
+    : [norm(b.getWest()), Math.max(b.getSouth(), -90), norm(b.getEast()), Math.min(b.getNorth(), 90)].map((x) => x.toFixed(3)).join(",");
+  const seq = ++t.seq;
+  const data = await api(`/api/traffic?bbox=${bbox}&limit=4000`);
+  if (seq !== t.seq) return;           // пришёл ответ на устаревший запрос
+  t.data = data;
+  renderTraffic();
+}
+
+function renderTraffic() {
+  const t = state.traffic;
+  trafficLayer.clearLayers();
+  renderTrafficCats();
+  if (!t.on || !t.data) return;
+  const fleet = new Set(allVessels().map((v) => v.mmsi));
+  for (const [mmsi, lat, lon, , , cat, name, len] of t.data.ships) {
+    if (!t.cats.has(cat) || fleet.has(mmsi)) continue;
+    L.circleMarker([lat, lon], {
+      renderer: trafficRenderer, radius: len > 200 ? 4.5 : len > 100 ? 3.5 : 2.5,
+      weight: 0.5, color: "#0b1a22", fillColor: TRAFFIC_COLORS[cat], fillOpacity: 0.9,
+    }).bindTooltip(esc(name || `MMSI ${mmsi}`), { direction: "top", offset: [0, -4] })
+      .on("click", (e) => openTrafficShip(mmsi, e.latlng))
+      .addTo(trafficLayer);
+  }
+}
+
+function renderTrafficCats() {
+  const t = state.traffic;
+  const d = t.data;
+  $("#traffic-meta").textContent = !t.on ? "Слой выключен"
+    : !d ? "Загружаю…"
+      : !d.enabled ? "Нужен живой AIS: ключ aisstream.io в .env"
+        : `В видимой области: ${d.total}${d.total > d.ships.length ? ` (показаны ${d.ships.length} самых свежих)` : ""}. Приблизьте карту, чтобы увидеть больше.`;
+  const cats = (d && d.categories) || {};
+  $("#traffic-cats").innerHTML = t.on ? Object.keys(TRAFFIC_COLORS).map((c) => `
+    <button class="fchip ${t.cats.has(c) ? "on" : ""}" data-cat="${c}" aria-pressed="${t.cats.has(c)}">
+      <i class="dot" style="background:${TRAFFIC_COLORS[c]}"></i>${esc(cats[c] || c)}
+      <span class="muted">${d ? d.counts[c] : ""}</span></button>`).join("") : "";
+  $$("#traffic-cats .fchip").forEach((b) => b.onclick = () => {
+    const c = b.dataset.cat;
+    if (t.cats.has(c)) t.cats.delete(c); else t.cats.add(c);
+    renderTraffic();
+  });
+}
+
+async function openTrafficShip(mmsi, latlng) {
+  const popup = L.popup({ minWidth: 260, maxWidth: 340 }).setLatLng(latlng).setContent("Загружаю…").openOn(map);
+  try {
+    const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
+    popup.setContent(trafficPopup(s));
+    const btn = popup.getElement()?.querySelector("[data-add-fleet]");
+    if (btn) btn.onclick = async () => {
+      const fid = +popup.getElement().querySelector("select").value;
+      try {
+        await api(`/api/fleets/${fid}/vessels`, { json: { mmsi: s.mmsi, imo: s.imo || "", name: s.name || "" } });
+        toast("Судно добавлено во флот", s.name || s.mmsi);
+        map.closePopup(popup);
+        await loadFleets();
+        renderTraffic();
+      } catch (e) { toast("Не удалось добавить", e.message, "critical"); }
+    };
+  } catch (e) { popup.setContent(esc(e.message)); }
+}
+
+function trafficPopup(s) {
+  const zones = (s.zones || []).map((z) => z.status === "inside"
+    ? `<div style="color:var(--red)">● В зоне: ${esc(z.name)}</div>`
+    : `<div style="color:var(--amber)">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`).join("")
+    || `<div style="color:var(--green)">Вне зон риска</div>`;
+  const fleetSel = s.fleets.length ? `<div class="small muted">Уже во флоте: ${s.fleets.map(esc).join(", ")}</div>`
+    : state.fleets.length ? `<div class="row" style="margin-top:8px">
+        <select>${state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
+        <button class="btn" data-add-fleet>Во флот</button></div>` : "";
+  return `<h4>${esc(s.name || "Без названия")}</h4>
+    <div class="muted small"><i class="dot" style="background:${TRAFFIC_COLORS[s.category]}"></i> ${esc(s.type_name)}${s.flag ? ` · флаг: ${esc(s.flag)}` : ""}</div>
+    ${zones}
+    <dl class="kv" style="margin-top:8px">
+      <dt>MMSI</dt><dd>${esc(s.mmsi)}</dd>
+      ${s.imo ? `<dt>IMO</dt><dd>${esc(s.imo)}</dd>` : ""}
+      ${s.callsign ? `<dt>Позывной</dt><dd>${esc(s.callsign)}</dd>` : ""}
+      ${shipSizeRows(s)}
+      <dt>Скорость</dt><dd>${s.sog != null ? s.sog.toFixed(1) + " уз" : "—"}</dd>
+      <dt>Курс</dt><dd>${s.cog != null ? Math.round(s.cog) + "°" : "—"}</dd>
+      ${s.destination ? `<dt>Назначение</dt><dd>${esc(s.destination)}</dd>` : ""}
+      ${s.eta ? `<dt>ETA</dt><dd>${esc(s.eta)}</dd>` : ""}
+      <dt>Обновлено</dt><dd>${s.age_s != null ? (s.age_s < 60 ? "только что" : `${Math.round(s.age_s / 60)} мин назад`) : "—"}${s.ais_class === "B" ? " · AIS класс B" : ""}</dd>
+    </dl>${shipLinks(s)}${fleetSel}`;
+}
+
+let trafficTimer = null;
+map.on("moveend", () => { clearTimeout(trafficTimer); trafficTimer = setTimeout(() => loadTraffic().catch(() => {}), 400); });
+$("#traffic-toggle").onchange = (e) => {
+  state.traffic.on = e.target.checked;
+  localStorageSet("showTraffic", e.target.checked ? "1" : "0");
+  loadTraffic().catch((err) => toast("Ошибка", err.message, "critical"));
+};
 
 /* ------------------------------------------------------------------ уведомления */
 async function loadNotifications() {
@@ -648,6 +787,7 @@ async function refreshAll(forceZones = false) {
     await loadStatus();
     await loadZones(forceZones);
     await loadFleets();
+    await loadTraffic();
     await loadNotifications();
     if ($("#panel-circulars").classList.contains("active")) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }

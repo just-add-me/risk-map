@@ -38,6 +38,11 @@
 
     <!-- ФЛОТ -->
     <section class="panel active" id="panel-fleet">
+      <div class="card traffic-card">
+        <label class="zf-layer-head"><input type="checkbox" id="traffic-toggle"> Все суда на карте (AIS)</label>
+        <div class="muted small" id="traffic-meta"></div>
+        <div class="z-types-row" id="traffic-cats"></div>
+      </div>
       <div class="row">
         <select id="fleet-select" aria-label="Флот"></select>
         <button class="btn ghost" id="btn-fleet-new" title="Новый флот">+ Флот</button>
