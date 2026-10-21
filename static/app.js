@@ -866,6 +866,88 @@ async function openTrafficShip(mmsi, latlng) {
   } catch (e) { popup.setContent(esc(e.message)); }
 }
 
+/* ------------------------------------------------------------------ происшествия */
+const INC_STYLE = {
+  distress: { color: "#ff3b30", glyph: "!" }, sart: { color: "#ff3b30", glyph: "S" },
+  mob: { color: "#ff3b30", glyph: "M" }, epirb: { color: "#ff3b30", glyph: "E" },
+  aground: { color: "#ff9440", glyph: "▼" }, nuc: { color: "#f5b13d", glyph: "?" },
+  sar: { color: "#4dabf7", glyph: "✈" }, safety: { color: "#ffe066", glyph: "i" },
+};
+const incidentsLayer = L.layerGroup().addTo(map);
+// «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
+state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0 };
+
+function incIcon(it) {
+  const st = INC_STYLE[it.kind] || INC_STYLE.safety;
+  const urgent = it.severity === "critical" && !it.test;
+  return L.divIcon({ className: `inc-icon${urgent ? " urgent" : ""}${it.test ? " test" : ""}`, iconSize: [24, 24],
+    html: `<span style="background:${st.color}">${st.glyph}</span>` });
+}
+
+function incVisible(it) {
+  return !state.inc.hidden.has(it.kind) && (it.test ? $("#inc-tests").checked : true);
+}
+
+async function loadIncidents(force = false) {
+  if (!force && Date.now() - state.inc.loadedAt < 60000) return;     // раз в минуту достаточно
+  const d = await api(`/api/incidents?days=${$("#inc-days").value}`);
+  state.inc.items = d.items;
+  state.inc.kinds = d.kinds;
+  state.inc.loadedAt = Date.now();
+  renderIncidents();
+}
+
+function incPopup(it) {
+  return `<h4>${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</h4>
+    <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · ${fmtTime(it.ts)}${it.count > 1 ? ` · повторялось ${it.count} раз, последний ${ago(it.last_seen)}` : ""}</div>
+    ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
+    ${it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
+    <dl class="kv"><dt>MMSI</dt><dd>${esc(it.mmsi)}</dd>
+      ${it.lat != null ? `<dt>Позиция</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
+      <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>`;
+}
+
+function renderIncidents() {
+  const inc = state.inc;
+  const counts = {};
+  inc.items.forEach((it) => { if (!it.test || $("#inc-tests").checked) counts[it.kind] = (counts[it.kind] || 0) + 1; });
+  $("#inc-kinds").innerHTML = Object.entries(inc.kinds).map(([k, d]) => `
+    <button class="fchip ${inc.hidden.has(k) ? "" : "on"}" data-kind="${k}">
+      <span class="inc-dot" style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</span>${esc(d.label)}
+      <span class="muted">${counts[k] || 0}</span></button>`).join("");
+  $$("#inc-kinds .fchip").forEach((b) => b.onclick = () => {
+    if (inc.hidden.has(b.dataset.kind)) inc.hidden.delete(b.dataset.kind); else inc.hidden.add(b.dataset.kind);
+    renderIncidents();
+  });
+  const shown = inc.items.filter(incVisible);
+  incidentsLayer.clearLayers();
+  if ($("#inc-show").checked) {
+    shown.filter((it) => it.lat != null).forEach((it) =>
+      L.marker([it.lat, it.lon], { icon: incIcon(it), zIndexOffset: 2000 })
+        .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
+        .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
+        .addTo(incidentsLayer));
+  }
+  $("#inc-list").innerHTML = shown.slice(0, 300).map((it, i) => `
+    <li class="inc ${it.severity}${it.test ? " test" : ""}" data-i="${i}">
+      <span class="inc-dot" style="background:${(INC_STYLE[it.kind] || INC_STYLE.safety).color}">${(INC_STYLE[it.kind] || INC_STYLE.safety).glyph}</span>
+      <div><div class="inc-title">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
+        <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · <span class="nowrap">${ago(it.last_seen)}</span>${it.lat == null ? " · без координат" : ""}</div>
+        ${it.text ? `<div class="small inc-text">«${esc(it.text)}»</div>` : ""}</div></li>`).join("")
+    || `<li class="empty muted">За выбранный период ничего нет. Сообщения о происшествиях редкие — они появятся здесь, как только придут.</li>`;
+  $$("#inc-list .inc").forEach((el) => el.onclick = () => {
+    const it = shown[+el.dataset.i];
+    if (it.lat == null) return;
+    map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
+    setTimeout(() => incidentsLayer.eachLayer((m) => {
+      const ll = m.getLatLng(); if (ll.lat === it.lat && ll.lng === it.lon) m.openPopup();
+    }), 900);
+  });
+}
+$("#inc-show").onchange = renderIncidents;
+$("#inc-tests").onchange = renderIncidents;
+$("#inc-days").onchange = () => loadIncidents(true).catch(() => {});
+
 /* ------------------------------------------------------------------ поиск судна */
 let searchTimer = null;
 $("#ship-q").oninput = (e) => {
@@ -1054,6 +1136,7 @@ async function refreshAll(forceZones = false) {
     await loadZones(forceZones);
     await loadFleets();
     await loadTraffic();
+    await loadIncidents().catch(() => {});
     await loadNotifications();
     if ($("#panel-circulars").classList.contains("active")) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }

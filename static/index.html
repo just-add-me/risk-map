@@ -37,6 +37,7 @@
       <button class="tab active" data-tab="fleet">Флот</button>
       <button class="tab" data-tab="zones">Зоны</button>
       <button class="tab" data-tab="alerts">Уведомления <span class="tab-count" id="tab-alert-count" hidden></span></button>
+      <button class="tab" data-tab="incidents">Происшествия</button>
       <button class="tab" data-tab="circulars">Циркуляры</button>
     </nav>
 
@@ -121,6 +122,24 @@
         <button class="text-btn" id="btn-read-all">Прочитать все</button>
       </div>
       <ul class="notif-list" id="notif-list"></ul>
+    </section>
+
+    <!-- ПРОИСШЕСТВИЯ -->
+    <section class="panel" id="panel-incidents">
+      <div class="card">
+        <label class="zf-layer-head"><input type="checkbox" id="inc-show" checked> Показывать на карте</label>
+        <div class="row inc-opts">
+          <select id="inc-days" aria-label="Период">
+            <option value="1">за сутки</option><option value="3">за 3 дня</option><option value="7" selected>за 7 дней</option>
+          </select>
+          <label class="check"><input type="checkbox" id="inc-tests"> тесты оборудования</label>
+        </div>
+        <div class="z-types-row" id="inc-kinds"></div>
+        <p class="muted small">Из потока AIS: сигналы бедствия, аварийные маяки (SART, «человек за бортом», EPIRB),
+          суда, сообщающие «на мели» или «не управляется», спасательная авиация и текстовые сообщения о безопасности.
+          Такие сообщения редкие и видны только в зоне береговых станций.</p>
+      </div>
+      <ul class="inc-list" id="inc-list"></ul>
     </section>
 
     <!-- ЦИРКУЛЯРЫ -->

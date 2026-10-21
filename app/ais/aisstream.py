@@ -18,13 +18,15 @@ import random
 from typing import Any, Optional
 
 from .. import config, db
-from . import ingest, shipinfo, traffic
+from . import incidents, ingest, shipinfo, traffic
 
 log = logging.getLogger(__name__)
 
 CHUNK = 50
 MESSAGE_TYPES = ["PositionReport", "StandardClassBPositionReport", "ExtendedClassBPositionReport",
-                 "ShipStaticData", "StaticDataReport"]
+                 "ShipStaticData", "StaticDataReport",
+                 # происшествия: текстовые сообщения безопасности и спасательная авиация
+                 "SafetyBroadcastMessage", "AddressedSafetyMessage", "StandardSearchAndRescueAircraftReport"]
 
 status: dict[str, Any] = {"connected": 0, "last_message": None, "messages": 0, "last_error": None}
 # MMSI судов из флотов; None — фильтр на стороне aisstream (режим без общего слоя)
@@ -71,8 +73,15 @@ def handle(raw: str | bytes) -> None:
             sog = None
         if cog is not None and cog >= 360:
             cog = None
+        nav = body.get("NavigationalStatus")
         traffic.update_position(mmsi, lat, lon, sog, cog, hdg, name,
-                                "A" if mtype == "PositionReport" else "B", body.get("NavigationalStatus"))
+                                "A" if mtype == "PositionReport" else "B", nav)
+        if mmsi[:3] in incidents.DEVICE_PREFIX:          # аварийный маяк: SART, MOB, EPIRB
+            incidents.record(incidents.DEVICE_PREFIX[mmsi[:3]], mmsi, name=name, lat=lat, lon=lon,
+                             test=nav == 15, source=mtype)
+        elif nav in incidents.NAV_KIND:                   # судно само сообщает «на мели» и т. п.
+            incidents.record(incidents.NAV_KIND[nav], mmsi, name=name or (traffic.get(mmsi) or {}).get("name"),
+                             lat=lat, lon=lon, source=mtype, tracked=tracked)
         if tracked:
             ingest.position(mmsi, lat, lon, sog=sog, cog=cog, heading=hdg, source="aisstream", ais_name=name)
     elif mtype == "ShipStaticData":
@@ -93,6 +102,22 @@ def handle(raw: str | bytes) -> None:
                 _tracked.add(mmsi)
         elif tracked:
             ingest.static_data(mmsi, **info)
+    elif mtype in ("SafetyBroadcastMessage", "AddressedSafetyMessage"):
+        text = (body.get("Text") or "").strip()
+        if not text:
+            return
+        kind, test = incidents.classify(text)
+        s = traffic.get(mmsi) or {}
+        lat = _f(meta.get("latitude")) or s.get("lat")
+        lon = _f(meta.get("longitude")) or s.get("lon")
+        dest = body.get("DestinationID")
+        incidents.record(kind, mmsi, name=name or s.get("name"), lat=lat, lon=lon, text=text[:300], test=test,
+                         source=mtype, extra=f"адресовано MMSI {dest}" if dest else "", tracked=tracked)
+    elif mtype == "StandardSearchAndRescueAircraftReport":
+        lat, lon = _f(body.get("Latitude")), _f(body.get("Longitude"))
+        alt = body.get("Altitude")
+        incidents.record("sar", mmsi, name=name, lat=lat, lon=lon, source=mtype,
+                         extra=f"высота {alt} м, скорость {body.get('Sog')} уз" if alt is not None and alt < 4095 else "")
     elif mtype == "StaticDataReport":
         rep_a = body.get("ReportA") or {}
         rep_b = body.get("ReportB") or {}

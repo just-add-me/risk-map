@@ -22,7 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import access, alerts, config, db, fleet_import, users, zones
-from .ais import ingest, photos, shipinfo, traffic
+from .ais import incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
 
@@ -239,6 +239,13 @@ async def api_port(request: Request):
                          "ships": [{k: s[k] for k in ("mmsi", "name", "type_name", "category", "length",
                                                       "nav_status", "sog", "flag_iso", "distance_nm", "lat", "lon")}
                                    for s in ships[:12]]})
+
+
+@api
+async def api_incidents(request: Request):
+    days = int(request.query_params.get("days", 7) or 7)
+    return JSONResponse({"items": await asyncio.to_thread(incidents.recent, days), "kinds": incidents.KINDS},
+                        headers={"Cache-Control": "no-store"})
 
 
 @api
@@ -617,6 +624,7 @@ async def _maintenance_loop(stop: asyncio.Event):
         try:
             ingest.cleanup_trails()
             alerts.check_stale()
+            incidents.cleanup()
         except Exception:  # noqa: BLE001
             log.exception("Ошибка обслуживания")
         with contextlib.suppress(asyncio.TimeoutError):
@@ -661,6 +669,7 @@ routes = [
     Route("/api/status", api_status),
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
+    Route("/api/incidents", api_incidents),
     Route("/api/ports/{pid:int}", api_port),
     Route("/api/ships/check", api_ship_check),
     Route("/api/traffic", api_traffic),

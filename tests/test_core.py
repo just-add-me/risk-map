@@ -360,3 +360,29 @@ def test_add_by_imo_pending_resolves():
     assert v["mmsi"] == "353136000" and "353136000" in aisstream._tracked
     assert db.query_one("SELECT title FROM notifications WHERE mmsi='353136000'")["title"].startswith("EVER GIVEN")
     aisstream._tracked, aisstream._pending = None, set()
+
+
+def test_incidents():
+    from app.ais import aisstream, incidents
+    assert incidents.classify("SART ACTIVE") == ("sart", False)
+    assert incidents.classify("SART TEST") == ("sart", True)
+    assert incidents.classify("MAYDAY MAYDAY FIRE ON BOARD")[0] == "distress"
+    assert incidents.classify("DRIFTING CONTAINER 43-10N 029-50E")[0] == "safety"
+    aisstream._tracked = {"273000555"}
+    # аварийный маяк (MMSI 970…), статус «на мели» у судна флота, текстовое сообщение, повтор
+    aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 970123456, "ShipName": "SART"},
+                                 "Message": {"PositionReport": {"Latitude": 43.1, "Longitude": 29.5, "NavigationalStatus": 14}}}))
+    aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 273000555, "ShipName": "STUCK"},
+                                 "Message": {"PositionReport": {"Latitude": 44.0, "Longitude": 33.0, "NavigationalStatus": 6}}}))
+    for _ in range(3):
+        aisstream.handle(json.dumps({"MessageType": "SafetyBroadcastMessage",
+                                     "MetaData": {"MMSI": 2734567, "latitude": 44.6, "longitude": 33.5},
+                                     "Message": {"SafetyBroadcastMessage": {"Text": "NAVIGATIONAL WARNING MINE DANGER"}}}))
+    items = {i["kind"]: i for i in incidents.recent(1)}
+    assert items["sart"]["lat"] == 43.1 and not items["sart"]["test"]
+    assert items["aground"]["name"] == "STUCK"
+    assert items["safety"]["text"] == "NAVIGATIONAL WARNING MINE DANGER" and items["safety"]["lat"] == 44.6
+    assert len([i for i in incidents.recent(1) if i["kind"] == "safety"]) == 1      # повторы не плодят записи
+    note = db.query_one("SELECT severity, title FROM notifications WHERE kind='incident' AND mmsi='273000555'")
+    assert note["severity"] == "warning" and "мели" in note["title"]
+    aisstream._tracked = None

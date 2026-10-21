@@ -98,6 +98,22 @@ CREATE TABLE IF NOT EXISTS users(
     pw_hash TEXT NOT NULL,          -- pbkdf2$итерации$соль$хэш, сам пароль не хранится
     created_at TEXT NOT NULL
 );
+-- происшествия и опасности из AIS: бедствие, аварийные маяки, «на мели», спасательная авиация
+CREATE TABLE IF NOT EXISTS incidents(
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,              -- когда впервые получено
+    last_seen TEXT NOT NULL,       -- последнее повторение
+    kind TEXT NOT NULL,            -- distress | sart | mob | epirb | aground | nuc | sar | safety
+    mmsi TEXT NOT NULL,
+    name TEXT,
+    lat REAL, lon REAL,
+    text TEXT NOT NULL DEFAULT '',
+    test INTEGER NOT NULL DEFAULT 0,
+    source TEXT,                   -- тип сообщения AIS
+    extra TEXT,                    -- высота самолёта, адресат сообщения и т. п.
+    count INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_seen ON incidents(last_seen);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT
