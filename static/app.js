@@ -365,7 +365,7 @@ function renderPorts() {
 }
 
 function updatePortsVisibility() {
-  const show = state.showPorts && map.getZoom() >= 3;
+  const show = state.showPorts && map.getZoom() >= 4;
   if (show && !map.hasLayer(portsLayer)) portsLayer.addTo(map);
   if (!show && map.hasLayer(portsLayer)) map.removeLayer(portsLayer);
 }
@@ -664,7 +664,10 @@ function switchTab(name) {
 }
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
 $("#btn-bell").onclick = () => switchTab("alerts");
-$("#legend-toggle").onclick = () => $("#legend").classList.toggle("collapsed");
+$("#legend-toggle").onclick = () => {
+  const collapsed = $("#legend").classList.toggle("collapsed");
+  localStorageSet("legendCollapsed", collapsed ? "1" : "0");
+};
 $("#z-search").oninput = (e) => { state.zoneFilter.q = e.target.value; applyZoneFilter(); };
 $("#n-unread-only").onchange = loadNotifications;
 $("#fleet-select").onchange = (e) => { state.fleetId = +e.target.value; localStorageSet("fleetId", state.fleetId); renderFleet(); };
@@ -747,7 +750,8 @@ $("#circ-file").onchange = async (e) => {
 };
 
 /* ------------------------------------------------------------------ старт */
-if (window.innerWidth < 820) $("#legend").classList.add("collapsed");
+// легенда длинная: по умолчанию свёрнута, раскрытие запоминается
+if (window.innerWidth < 820 || localStorageGet("legendCollapsed") !== "0") $("#legend").classList.add("collapsed");
 renderLegend();
 (async () => {
   await refreshAll(true);
