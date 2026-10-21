@@ -1,6 +1,10 @@
 # Caddy сам получает и продлевает HTTPS-сертификат для адреса из переменной DOMAIN.
 # Без своего домена подойдёт адрес вида 203-0-113-5.sslip.io (указывает на IP 203.0.113.5).
 {$DOMAIN} {
+	# Пускаем только адреса из ALLOWED_IPS (.env), остальным сразу рвём соединение
+	@blocked not remote_ip {$ALLOWED_IPS}
+	abort @blocked
+
 	encode gzip
 	reverse_proxy app:8000
 	header {

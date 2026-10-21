@@ -16,6 +16,8 @@ services:
       - "443:443"
     environment:
       - DOMAIN=${DOMAIN:-:80}
+      # Разрешённые адреса через пробел; без значения сайт открыт всем
+      - ALLOWED_IPS=${ALLOWED_IPS:-0.0.0.0/0 ::/0}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
