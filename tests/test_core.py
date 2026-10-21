@@ -244,8 +244,9 @@ def test_shipinfo_and_traffic():
     assert traffic.query(170, 40, -170, 48, 12)["total"] == 0        # прямоугольник через 180°
     # группировка: два судна рядом на мелком масштабе — одна группа, на крупном — два судна
     traffic.update_position("538010473", 42.48, 28.26, 10.0, 0.0, None, "NEIGHBOUR", "A")
-    far = traffic.query(27, 40, 42, 48, 5)
+    far = traffic.query(27, 40, 42, 48, 4)
     assert far["ships"] == [] and far["clusters"][0]["n"] == 2
+    assert len(traffic.query(27, 40, 42, 48, 8)["ships"]) == 2       # двух судов мало для группы
     assert len(traffic.query(27, 40, 42, 48, 14)["ships"]) == 2
     assert traffic.query(27, 40, 42, 48, 5, cats={"cargo"})["total"] == 0
     assert db.query_one("SELECT * FROM ais_state WHERE mmsi='538010472'") is None

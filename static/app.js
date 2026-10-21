@@ -693,12 +693,18 @@ function renderTraffic() {
     if (fleet.has(mmsi)) continue;
     new ShapeMarker([lat, lon], {
       shape: cat === "yacht" ? "yacht" : "ship", rotation: cog ?? 0,
-      renderer: trafficRenderer, radius: (len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8) * (map.getZoom() >= 10 ? 1.4 : 1),
+      renderer: trafficRenderer, radius: (len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8) * iconScale(),
       weight: 0.6, color: "#0b1a22", fillColor: TRAFFIC_COLORS[cat], fillOpacity: sog != null && sog < 0.5 ? 0.55 : 0.95,
     }).bindTooltip(esc(name || `MMSI ${mmsi}`), { direction: "top", offset: [0, -4] })
       .on("click", (e) => openTrafficShip(mmsi, e.latlng))
       .addTo(trafficLayer);
   }
+}
+
+// Значки судов растут с масштабом: на обзорной карте мелкие, при приближении — крупнее
+function iconScale() {
+  const z = map.getZoom();
+  return z <= 4 ? 0.9 : z <= 6 ? 1.25 : z <= 8 ? 1.6 : z <= 10 ? 1.85 : 2.1;
 }
 
 // Группа судов: кружок с числом; цвет обводки — самая частая категория в группе

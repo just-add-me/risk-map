@@ -28,9 +28,15 @@ STATIC_TTL = 7 * 24 * 3600
 # короткий трек в памяти: точка не чаще раза в 10 минут, до 3 часов
 TRAIL_STEP = 600
 TRAIL_POINTS = 18
-# группировка на карте: ячейка ~56 пикселей, с этого масштаба — все суда по отдельности
-CLUSTER_PX = 56
-CLUSTER_MAX_ZOOM = 11
+# группировка на карте: ячейка ~36 пикселей; группа — только если судов в ячейке столько,
+# что значки налезают друг на друга. С CLUSTER_MAX_ZOOM — все суда по отдельности
+CLUSTER_PX = 36
+CLUSTER_MAX_ZOOM = 10
+
+
+def min_group(zoom: int) -> int:
+    """Сколько судов в ячейке нужно для группы: на мелком масштабе — 2, на крупном — больше."""
+    return 2 if zoom <= 4 else 3 if zoom <= 6 else 5
 
 _lock = threading.Lock()
 _ships: dict[str, dict] = {}
@@ -177,11 +183,12 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
             key = (math.floor(s["lon"] / cell), math.floor(y / cell))
         groups.setdefault(key, []).append((s, cat))
     singles, clusters = [], []
+    need = min_group(zoom)
     for members in groups.values():
-        if len(members) == 1:
-            s, cat = members[0]
-            singles.append((s["ts"], [s["mmsi"], s["lat"], s["lon"], s.get("cog"), s.get("sog"), cat,
-                                      s.get("name") or "", s.get("length")]))
+        if len(members) < need:
+            for s, cat in members:
+                singles.append((s["ts"], [s["mmsi"], s["lat"], s["lon"], s.get("cog"), s.get("sog"), cat,
+                                          s.get("name") or "", s.get("length")]))
             continue
         lats = [m[0]["lat"] for m in members]
         lons = [m[0]["lon"] for m in members]
