@@ -151,6 +151,31 @@ async def api_traffic(request: Request):
 
 
 @api
+async def api_ship_search(request: Request):
+    """Поиск судна: сначала среди судов флотов, потом во всём потоке AIS."""
+    q = request.query_params.get("q", "").strip()
+    if len(q) < 2:
+        return JSONResponse({"items": []})
+    like = f"%{q.upper()}%"
+    fleet = db.query("SELECT DISTINCT v.mmsi FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi "
+                     "WHERE v.mmsi LIKE ? OR v.imo LIKE ? OR UPPER(v.name) LIKE ? OR UPPER(a.ais_name) LIKE ? LIMIT 5",
+                     (f"{q}%", f"{q}%", like, like))
+    fleet_mmsi = {r["mmsi"] for r in fleet}
+    items = await asyncio.to_thread(traffic.search, q, 12)
+    for it in items:
+        it["in_fleet"] = it["mmsi"] in fleet_mmsi
+    known = {it["mmsi"] for it in items}
+    for m in fleet_mmsi - known:          # судно флота, которого ещё нет в потоке
+        v = db.query_one("SELECT v.mmsi, v.imo, COALESCE(v.name, a.ais_name) AS name, a.lat, a.lon, a.ship_type "
+                         "FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi WHERE v.mmsi=?", (m,))
+        items.insert(0, {"mmsi": v["mmsi"], "imo": v["imo"], "name": v["name"], "lat": v["lat"], "lon": v["lon"],
+                         "category": shipinfo.category(v["ship_type"]), "type_name": shipinfo.type_name(v["ship_type"]),
+                         "flag": shipinfo.flag(m), "flag_iso": shipinfo.flag_iso(m), "in_fleet": True})
+    items.sort(key=lambda it: not it.get("in_fleet"))
+    return JSONResponse({"items": items[:12]})
+
+
+@api
 async def api_traffic_ship(request: Request):
     mmsi = request.path_params["mmsi"]
     s = traffic.get(mmsi)
@@ -497,6 +522,7 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/traffic", api_traffic),
+    Route("/api/ships/search", api_ship_search),
     Route("/api/traffic/{mmsi}", api_traffic_ship),
     Route("/api/traffic/{mmsi}/track", api_traffic_track),
     Route("/api/photo/{imo}", api_ship_photo),

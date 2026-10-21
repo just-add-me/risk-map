@@ -263,3 +263,14 @@ def test_traffic_snapshot():
     assert traffic.load() >= 1
     d = traffic.details(traffic.get("273000099"))
     assert d["category"] == "cargo" and d["lat"] == 44.6 and d["nav_status"] == "Идёт под двигателем"
+
+
+def test_ship_search():
+    from app.ais import traffic
+    traffic.update_position("636012345", 25.0, 55.0, 12.0, 10.0, None, "MSC ANTONIA", "A")
+    traffic.update_static("636012345", imo="9619438", callsign="D5AB1")
+    assert traffic.search("antonia")[0]["mmsi"] == "636012345"
+    assert traffic.search("9619438")[0]["name"] == "MSC ANTONIA"
+    assert traffic.search("6360123")[0]["mmsi"] == "636012345"
+    assert traffic.search("d5ab1")[0]["mmsi"] == "636012345"
+    assert traffic.search("x") == []

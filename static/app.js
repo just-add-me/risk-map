@@ -767,6 +767,45 @@ async function openTrafficShip(mmsi, latlng) {
   } catch (e) { popup.setContent(esc(e.message)); }
 }
 
+/* ------------------------------------------------------------------ поиск судна */
+let searchTimer = null;
+$("#ship-q").oninput = (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) { $("#ship-results").hidden = true; return; }
+  searchTimer = setTimeout(() => runShipSearch(q).catch(() => {}), 250);
+};
+$("#ship-q").onkeydown = (e) => {
+  if (e.key === "Enter") $("#ship-results .sr-item")?.click();
+  if (e.key === "Escape") { $("#ship-results").hidden = true; e.target.blur(); }
+};
+document.addEventListener("click", (e) => { if (!e.target.closest(".ship-search")) $("#ship-results").hidden = true; });
+
+async function runShipSearch(q) {
+  const { items } = await api(`/api/ships/search?q=${encodeURIComponent(q)}`);
+  if ($("#ship-q").value.trim() !== q) return;         // пользователь уже печатает дальше
+  const box = $("#ship-results");
+  box.innerHTML = items.length ? items.map((s, i) => `
+    <button class="sr-item" type="button" data-i="${i}">
+      ${flagImg(s.flag_iso, s.flag)}
+      <span class="sr-main"><b>${esc(s.name || "Без названия")}</b>${s.in_fleet ? ` <span class="tag">во флоте</span>` : ""}
+        <span class="muted small">${esc(s.type_name || "")} · MMSI ${esc(s.mmsi)}${s.imo ? ` · IMO ${esc(s.imo)}` : ""}</span></span>
+      <span class="muted small">${s.lat != null ? fmtAge(s.age_s) : "нет позиции"}</span>
+    </button>`).join("")
+    : `<div class="sr-empty muted small">Не найдено. Судно может быть вне зоны покрытия береговых станций AIS.</div>`;
+  box.hidden = false;
+  $$(".sr-item", box).forEach((b) => b.onclick = () => {
+    const s = items[+b.dataset.i];
+    box.hidden = true;
+    if (s.lat == null) { toast("Позиции нет", "Судно сейчас не передаёт AIS или вне зоны покрытия."); return; }
+    map.flyTo([s.lat, s.lon], Math.max(map.getZoom(), 11), { duration: 0.8 });
+    setTimeout(() => {
+      if (s.in_fleet) selectVessel(s.mmsi, false);
+      else openTrafficShip(s.mmsi, L.latLng(s.lat, s.lon));
+    }, 900);
+  });
+}
+
 let trafficTimer = null;
 map.on("moveend", () => { clearTimeout(trafficTimer); trafficTimer = setTimeout(() => loadTraffic().catch(() => {}), 400); });
 $("#traffic-toggle").onchange = (e) => {

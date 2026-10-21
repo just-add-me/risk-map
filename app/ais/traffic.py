@@ -204,6 +204,34 @@ def query(west: float, south: float, east: float, north: float, zoom: int, cats:
     return {"ships": [r[1] for r in singles], "clusters": clusters, "counts": counts, "total": total}
 
 
+def search(q: str, limit: int = 12) -> list[dict]:
+    """Поиск по названию, MMSI, IMO или позывному. Сначала точные совпадения, потом начало, потом вхождение."""
+    q = q.strip().upper()
+    if len(q) < 2:
+        return []
+    now = time.time()
+    found = []
+    with _lock:
+        for s in _ships.values():
+            name = (s.get("name") or "").upper()
+            fields = (s["mmsi"], str(s.get("imo") or ""), (s.get("callsign") or "").upper())
+            if q.isdigit():
+                rank = 0 if q in fields[:2] else 1 if any(f.startswith(q) for f in fields[:2]) else None
+            elif name == q or fields[2] == q:
+                rank = 0
+            elif name.startswith(q):
+                rank = 1
+            elif q in name:
+                rank = 2
+            else:
+                rank = None
+            if rank is not None:
+                live = bool(s.get("ts")) and now - s["ts"] <= POSITION_TTL
+                found.append((rank, not live, name, dict(s)))
+    found.sort(key=lambda r: r[:3])
+    return [details(r[3]) for r in found[:limit]]
+
+
 def _merc_y(lat: float) -> float:
     return math.degrees(math.log(math.tan(math.pi / 4 + math.radians(max(min(lat, 85), -85)) / 2)))
 
