@@ -1,0 +1,12 @@
+starlette>=0.37,<1.0
+uvicorn[standard]>=0.30
+itsdangerous>=2.1
+python-multipart>=0.0.9
+numpy>=1.26
+shapely>=2.0
+requests>=2.31
+pypdf>=4.0
+python-docx>=1.1
+openpyxl>=3.1
+websockets>=12.0
+pytest>=8.0

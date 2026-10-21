@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WarRisk Monitor</title>
+<meta name="theme-color" content="#0b1a22">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 27 26H5z' fill='%23ff5a4e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark"></span>WarRisk<span class="brand-dim">Monitor</span></div>
+  <div class="chips">
+    <span class="chip" id="chip-circular" title="Действующий циркуляр JWC">—</span>
+    <span class="chip" id="chip-ais" title="Источник AIS">AIS</span>
+  </div>
+  <div class="top-actions">
+    <button class="icon-btn" id="btn-bell" title="Уведомления">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 22a2.5 2.5 0 0 0 2.5-2.5h-5A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.8V3a1.5 1.5 0 0 0-3 0v1.2A7 7 0 0 0 5 11v5l-2 2v1h18v-1z" fill="currentColor"/></svg>
+      <span class="badge" id="bell-count" hidden>0</span>
+    </button>
+    <form method="post" action="/logout"><button class="text-btn" title="Выйти">Выйти</button></form>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="fleet">Флот</button>
+      <button class="tab" data-tab="zones">Зоны</button>
+      <button class="tab" data-tab="alerts">Уведомления <span class="tab-count" id="tab-alert-count" hidden></span></button>
+      <button class="tab" data-tab="circulars">Циркуляры</button>
+    </nav>
+
+    <!-- ФЛОТ -->
+    <section class="panel active" id="panel-fleet">
+      <div class="row">
+        <select id="fleet-select" aria-label="Флот"></select>
+        <button class="btn ghost" id="btn-fleet-new" title="Новый флот">+ Флот</button>
+      </div>
+      <div id="fleet-empty" class="empty" hidden>
+        <p>Флотов пока нет.</p>
+        <p class="muted">Создайте флот и добавьте суда по MMSI. Список хранится только на вашем сервере.</p>
+      </div>
+      <div id="fleet-body">
+        <div class="summary" id="fleet-summary"></div>
+        <details class="card" id="add-vessel">
+          <summary>Добавить судно</summary>
+          <form id="form-vessel" class="form-grid">
+            <label>MMSI*<input name="mmsi" inputmode="numeric" maxlength="9" placeholder="9 цифр" required></label>
+            <label>IMO<input name="imo" inputmode="numeric" maxlength="10" placeholder="7 цифр"></label>
+            <label class="span2">Название<input name="name" maxlength="80" placeholder="Необязательно"></label>
+            <button class="btn span2" type="submit">Добавить</button>
+          </form>
+          <div class="drop" id="drop">
+            <input type="file" id="file-input" accept=".csv,.txt,.xlsx" hidden>
+            <strong>Загрузить список</strong> — перетащите файл или <a href="#" id="pick-file">выберите</a><br>
+            <span class="muted">CSV, TXT или XLSX с колонками mmsi, imo, name</span>
+          </div>
+        </details>
+        <ul class="vessel-list" id="vessel-list"></ul>
+        <div class="fleet-foot">
+          <button class="text-btn danger" id="btn-fleet-delete">Удалить флот</button>
+          <button class="text-btn" id="btn-fleet-rename">Переименовать</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ЗОНЫ -->
+    <section class="panel" id="panel-zones">
+      <div class="zones-head">
+        <div id="zones-meta" class="muted"></div>
+        <label class="check"><input type="checkbox" id="z-show-conditional" checked> Условные зоны</label>
+      </div>
+      <div id="zones-list"></div>
+      <p class="muted small">Названные страны — порты и воды до 12 морских миль от берега. Границы построены
+        автоматически по тексту циркуляра; зоны с пометкой «≈» приблизительны.</p>
+    </section>
+
+    <!-- УВЕДОМЛЕНИЯ -->
+    <section class="panel" id="panel-alerts">
+      <div class="row between">
+        <label class="check"><input type="checkbox" id="n-unread-only"> Только непрочитанные</label>
+        <button class="text-btn" id="btn-read-all">Прочитать все</button>
+      </div>
+      <ul class="notif-list" id="notif-list"></ul>
+    </section>
+
+    <!-- ЦИРКУЛЯРЫ -->
+    <section class="panel" id="panel-circulars">
+      <div class="card" id="circ-status"></div>
+      <div class="row">
+        <button class="btn" id="btn-circ-check">Проверить сайт LMA сейчас</button>
+        <button class="btn ghost" id="btn-circ-upload">Загрузить PDF…</button>
+        <input type="file" id="circ-file" accept=".pdf,.docx,.txt" hidden>
+      </div>
+      <ul class="circ-list" id="circ-list"></ul>
+    </section>
+  </aside>
+
+  <main class="map-wrap">
+    <div id="map"></div>
+    <div class="legend" id="legend">
+      <button class="legend-toggle" id="legend-toggle">Легенда ▾</button>
+      <div class="legend-body">
+        <div class="lg"><i class="sw z-unchanged"></i>Зона JWC</div>
+        <div class="lg"><i class="sw z-amended"></i>Изменена / добавлена</div>
+        <div class="lg"><i class="sw z-conditional"></i>Условная (offshore)</div>
+        <div class="lg"><i class="dot s-safe"></i>Судно вне зон</div>
+        <div class="lg"><i class="dot s-near"></i>Приближается</div>
+        <div class="lg"><i class="dot s-inside"></i>В зоне</div>
+      </div>
+    </div>
+    <div class="statusbar"><span id="cursor">—</span><span id="sb-refs"></span></div>
+    <div class="build-banner" id="build-banner" hidden></div>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

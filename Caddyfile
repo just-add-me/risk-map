@@ -1,0 +1,14 @@
+# Caddy сам получает и продлевает HTTPS-сертификат для адреса из переменной DOMAIN.
+# Без своего домена подойдёт адрес вида 203-0-113-5.sslip.io (указывает на IP 203.0.113.5).
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:8000
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+}

@@ -1,0 +1,172 @@
+"""Тесты логики, не требующие интернета и shapely.
+
+Запуск:  python -m pytest -q tests   (или просто: python tests/test_core.py)
+"""
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="warrisk-test-")
+
+from app import alerts, db, zones  # noqa: E402
+from app.ais import ingest, simulator  # noqa: E402
+from app.circular import coords, parser, pipeline  # noqa: E402
+from app.fleet_import import parse_file  # noqa: E402
+from app.geo.zone_index import ZoneIndex  # noqa: E402
+
+FIXTURE = (ROOT / "tests" / "fixtures" / "JWLA-035.txt").read_text(encoding="utf-8")
+
+
+def test_coords():
+    pts = coords.find_points("from the Pakistan coastline at 25°19’15”N, 65°E; line to 10°48’N, 65°E")
+    assert pts == [(65.0, 25.320833), (65.0, 10.8)]
+    pts = coords.find_points("from Mnazi Bay at 10°19.6'S, 40°18.9'E to high seas point at 10° 10.3' \nS, 40° 34.44' E")
+    assert pts == [(40.315, -10.326667), (40.574, -10.171667)]
+    assert coords.find_latitude_line("south of Latitude 25.5°N, (not including") == 25.5
+    assert coords.find_latitude_line("south of horizontal line at 52° 30’ N") == 52.5
+    assert coords.find_longitude_line("to vertical line at 41° E") == 41.0
+    # линия широты не должна склеиваться со следующей точкой
+    pts = coords.find_points("by the Red Sea, south of Latitude 25.5°N; from 25°19’15”N, 65°E")
+    assert pts == [(65.0, 25.320833)]
+
+
+def test_parser_jwla035():
+    s = parser.parse(FIXTURE)
+    assert s["ref"] == "JWLA-035" and s["issued"] == "2026-09-16"
+    ids = {e["id"]: e for e in s["entries"]}
+    assert len(ids) == 31
+    assert ids["europe-black-sea"]["template"] == "black_sea_basin"
+    assert ids["europe-black-sea"]["params"]["keep_countries"] == ["Russia", "Ukraine"]
+    assert ids["europe-black-sea"]["cover_change"] == "amended"
+    assert ids["russia"]["cover_change"] == "unchanged"
+    assert ids["guyana"]["severity"] == "conditional"
+    assert ids["iraq"]["params"]["extras"] == "offshore_terminals"
+    io = next(e for e in s["entries"] if e["template"] == "indian_ocean")
+    assert io["params"]["red_sea_lat"] == 25.5 and io["params"]["exclude_egypt_tw"]
+    assert len(io["params"]["points"]) == 5
+    assert not any(e["needs_review"] for e in s["entries"])
+
+
+def test_parser_diff():
+    old = parser.parse(FIXTURE)
+    new_text = FIXTURE.replace("Libya\n", "").replace("Togo\n", "Togo\nCameroon\n") \
+                      .replace("south of Latitude 25.5°N", "south of Latitude 27°N")
+    new = parser.parse(new_text.replace("JWLA-035", "JWLA-036"))
+    d = parser.diff(old, new)
+    assert d["added"] == ["cameroon"]
+    assert d["removed"] == ["libya"]
+    assert any("indian-ocean" in i for i in d["amended"])
+
+
+def _square(lon0, lat0, size, hole=None):
+    ring = [[lon0, lat0], [lon0 + size, lat0], [lon0 + size, lat0 + size], [lon0, lat0 + size], [lon0, lat0]]
+    rings = [ring]
+    if hole:
+        hx, hy, hs = hole
+        rings.append([[hx, hy], [hx + hs, hy], [hx + hs, hy + hs], [hx, hy + hs], [hx, hy]])
+    return {"type": "Polygon", "coordinates": rings}
+
+
+FAKE_ZONES = {
+    "type": "FeatureCollection", "properties": {"ref": "TEST-001"},
+    "features": [
+        {"type": "Feature", "properties": {"id": "red-sea", "name": "Red Sea test", "severity": "full"},
+         "geometry": _square(35, 12, 10, hole=(38, 15, 1))},
+        {"type": "Feature", "properties": {"id": "cond", "name": "Conditional", "severity": "conditional"},
+         "geometry": {"type": "MultiPolygon", "coordinates": [_square(-60, 8, 2)["coordinates"]]}},
+    ],
+}
+
+
+def test_zone_index():
+    idx = ZoneIndex(FAKE_ZONES)
+    z = idx.get("red-sea")
+    assert idx.contains(z, 40, 20)
+    assert not idx.contains(z, 38.5, 15.5)        # «дырка»
+    assert not idx.contains(z, 34, 20)
+    d = idx.distance_nm(z, 34.0, 20.0, 100)       # 1° долготы на 20°N ≈ 56.4 мили
+    assert 55 < d < 58, d
+    assert idx.distance_nm(z, 30.0, 20.0, 50) is None
+    r = idx.evaluate(-59, 9, 50)
+    assert r["cond"]["status"] == "inside"
+
+
+def test_alert_flow():
+    db.connect()
+    zones.set_active(FAKE_ZONES)
+    db.execute("INSERT INTO fleets(name, created_at) VALUES('Test', ?)", (db.now_iso(),))
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(1, '273000001', 'TEST ONE', ?)",
+               (db.now_iso(),))
+    kinds = lambda: [n["kind"] for n in db.query("SELECT kind FROM notifications ORDER BY id")]  # noqa: E731
+
+    ingest.position("273000001", 20.0, 33.5, sog=12)      # далеко от зоны (≈84 мили)
+    assert kinds() == []
+    ingest.position("273000001", 20.0, 34.5, sog=12)      # ≈28 миль — приближается
+    assert kinds() == ["zone_near"]
+    ingest.position("273000001", 20.0, 34.8, sog=12)      # всё ещё рядом — без дублей
+    assert kinds() == ["zone_near"]
+    ingest.position("273000001", 20.0, 35.5, sog=12)      # внутри
+    assert kinds() == ["zone_near", "zone_enter"]
+    ingest.position("273000001", 20.0, 34.998, sog=12)   # в 0.1 мили снаружи — гистерезис держит «внутри»
+    assert kinds() == ["zone_near", "zone_enter"]
+    ingest.position("273000001", 20.0, 34.9, sog=12)      # вышел
+    assert kinds() == ["zone_near", "zone_enter", "zone_exit"]
+    st = alerts.vessel_status("273000001")
+    assert st["level"] == "near"
+
+    # смена зон: новая версия без red-sea, судно сидело внутри → уведомление с причиной
+    ingest.position("273000001", 20.0, 36.0, sog=12)
+    zones.set_active({**FAKE_ZONES, "features": FAKE_ZONES["features"][1:]})
+    alerts.reevaluate_all("Причина: тест")
+    last = db.query("SELECT * FROM notifications ORDER BY id DESC LIMIT 1")[0]
+    assert last["kind"] == "zone_exit" and "тест" in last["body"]
+    assert alerts.vessel_status("273000001")["level"] == "safe"
+
+
+def test_simulator_route():
+    _, _, pts = simulator.ROUTES[0]
+    lon, lat, cog = simulator.position_at(pts, 0)
+    assert (round(lon, 2), round(lat, 2)) == pts[0]
+    total = sum(simulator._seg_nm(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+    lon, lat, _ = simulator.position_at(pts, total)
+    assert abs(lon - pts[-1][0]) < 1e-6 and abs(lat - pts[-1][1]) < 1e-6
+    lon, lat, _ = simulator.position_at(pts, 2 * total)  # вернулся обратно
+    assert abs(lon - pts[0][0]) < 1e-6
+
+
+def test_fleet_import():
+    csv_data = "Vessel Name;IMO;MMSI\nNORDIC STAR;9123456;273111222\nNO MMSI;9234567;\n".encode()
+    items = parse_file(csv_data, "fleet.csv")
+    assert items[0] == {"mmsi": "273111222", "imo": "9123456", "name": "NORDIC STAR"}
+    assert items[1]["mmsi"] == "" and items[1]["imo"] == "9234567"
+    plain = parse_file(b"273111222\n273111333 OCEAN ONE\n", "list.txt")
+    assert [i["mmsi"] for i in plain] == ["273111222", "273111333"] and plain[1]["name"] == "OCEAN ONE"
+
+
+def test_find_latest_link():
+    html = """<p>The current listed areas are linked below:</p>
+      <a href="https://lmalloyds.com/wp-content/uploads/2026/03/JWLA-033_Iran.pdf">JWLA-033</a>
+      <a href="/wp-content/uploads/2026/09/JWLA-035-Black-Sea.pdf">JWLA-035</a>
+      <a href="https://lmalloyds.com/wp-content/uploads/2025/06/JWLA-034-Saudi-Arabia.docx">JWLA-034</a>
+      <a href="https://lmalloyds.com/committee/">JWLA committee page</a>"""
+    ref, n, url = pipeline.find_latest_link(html, "https://lmalloyds.com/committee/joint-war-committee/")
+    assert (ref, n) == ("JWLA-035", 35)
+    assert url == "https://lmalloyds.com/wp-content/uploads/2026/09/JWLA-035-Black-Sea.pdf"
+
+
+if __name__ == "__main__":
+    failed = 0
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            try:
+                fn()
+                print(f"✓ {name}")
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                print(f"✗ {name}: {exc!r}")
+    print(json.dumps({"failed": failed}))
+    sys.exit(1 if failed else 0)

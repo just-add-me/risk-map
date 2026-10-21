@@ -1,0 +1,409 @@
+"""Веб-приложение: страница с картой + JSON API + фоновые задачи.
+
+Запуск локально:  uvicorn app.main:app --reload
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hmac
+import json
+import logging
+import secrets
+import time
+from collections import defaultdict
+
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
+from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response)
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
+
+from . import alerts, config, db, fleet_import, zones
+from .ais import ingest
+from .circular import pipeline
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("app")
+
+
+def _secret_key() -> str:
+    if config.SECRET_KEY:
+        return config.SECRET_KEY
+    f = config.DATA_DIR / "secret.key"
+    if not f.exists():
+        f.write_text(secrets.token_urlsafe(48))
+        f.chmod(0o600)
+    return f.read_text().strip()
+
+
+# --------------------------------------------------------------------------- auth
+_failed: dict[str, list[float]] = defaultdict(list)
+
+
+def _authed(request: Request) -> bool:
+    return request.session.get("user") == config.ADMIN_USER
+
+
+def api(handler):
+    async def wrapper(request: Request):
+        if not _authed(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        try:
+            return await handler(request)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Ошибка API %s", request.url.path)
+            return JSONResponse({"error": f"Внутренняя ошибка: {exc}"}, status_code=500)
+    return wrapper
+
+
+LOGIN_HTML = (config.STATIC_DIR / "login.html")
+
+
+async def login_page(request: Request):
+    if request.method == "GET":
+        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace("{{error}}", ""))
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    _failed[ip] = [t for t in _failed[ip] if now - t < 900]
+    if len(_failed[ip]) >= 10:
+        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace(
+            "{{error}}", "Слишком много попыток. Подождите 15 минут."), status_code=429)
+    form = await request.form()
+    user, pwd = str(form.get("username", "")), str(form.get("password", ""))
+    ok = bool(config.ADMIN_PASSWORD) and hmac.compare_digest(user, config.ADMIN_USER) and \
+        hmac.compare_digest(pwd, config.ADMIN_PASSWORD)
+    if not ok:
+        _failed[ip].append(now)
+        await asyncio.sleep(1.0)
+        msg = "Неверный логин или пароль" if config.ADMIN_PASSWORD else "ADMIN_PASSWORD не задан в .env"
+        return HTMLResponse(LOGIN_HTML.read_text(encoding="utf-8").replace("{{error}}", msg), status_code=401)
+    request.session["user"] = user
+    return RedirectResponse("/", status_code=303)
+
+
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
+async def index(request: Request):
+    if not _authed(request):
+        return RedirectResponse("/login", status_code=303)
+    return FileResponse(config.STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
+
+
+# --------------------------------------------------------------------------- API: статус и зоны
+@api
+async def api_status(request: Request):
+    from .ais import aisstream
+    active = db.query_one("SELECT ref, issued, activated_at, source_url FROM circulars WHERE status='active'")
+    unread = db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE is_read=0")
+    return JSONResponse({
+        "ais": {"mode": config.AIS_MODE, **({k: v for k, v in aisstream.status.items()}
+                                            if config.AIS_MODE == "aisstream" else {})},
+        "circular": {"active": active, "check": {**pipeline.state,
+                                                 "last_check": db.kv_get("circular_last_check"),
+                                                 "last_seen": db.kv_get("circular_last_seen")},
+                     "interval_hours": config.CIRCULAR_CHECK_HOURS},
+        "zones": {"ref": zones.active_ref(), "count": len(zones.index().zones)},
+        "unread": unread["n"] if unread else 0,
+        "warn_distance_nm": config.WARN_DISTANCE_NM,
+        "user": config.ADMIN_USER,
+    })
+
+
+@api
+async def api_zones(request: Request):
+    fc = zones.raw() or {"type": "FeatureCollection", "features": [], "properties": {}}
+    return Response(json.dumps(fc, ensure_ascii=False, separators=(",", ":")),
+                    media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+# --------------------------------------------------------------------------- API: флот
+def _vessel_dict(v: dict) -> dict:
+    st = db.query_one("SELECT * FROM ais_state WHERE mmsi=?", (v["mmsi"],)) or {}
+    return {
+        "id": v["id"], "fleet_id": v["fleet_id"], "mmsi": v["mmsi"], "imo": v["imo"] or st.get("imo"),
+        "name": v["name"] or st.get("ais_name") or "", "ais_name": st.get("ais_name"),
+        "position": ({"lat": st["lat"], "lon": st["lon"], "sog": st.get("sog"), "cog": st.get("cog"),
+                      "heading": st.get("heading"), "ts": st.get("ts"), "source": st.get("source")}
+                     if st.get("lat") is not None else None),
+        "destination": st.get("destination"), "callsign": st.get("callsign"),
+        "status": alerts.vessel_status(v["mmsi"]),
+    }
+
+
+@api
+async def api_fleets(request: Request):
+    fleets = db.query("SELECT * FROM fleets ORDER BY name")
+    for f in fleets:
+        f["vessels"] = [_vessel_dict(v) for v in db.query(
+            "SELECT * FROM vessels WHERE fleet_id=? ORDER BY COALESCE(name, mmsi)", (f["id"],))]
+    return JSONResponse({"fleets": fleets})
+
+
+@api
+async def api_fleet_create(request: Request):
+    body = await request.json()
+    name = str(body.get("name", "")).strip()[:80]
+    if not name:
+        raise ValueError("Укажите название флота")
+    if db.query_one("SELECT id FROM fleets WHERE name=?", (name,)):
+        raise ValueError("Флот с таким названием уже есть")
+    cur = db.execute("INSERT INTO fleets(name, created_at) VALUES(?,?)", (name, db.now_iso()))
+    return JSONResponse({"id": cur.lastrowid, "name": name})
+
+
+@api
+async def api_fleet_update(request: Request):
+    fid = int(request.path_params["fid"])
+    if request.method == "DELETE":
+        db.execute("DELETE FROM fleets WHERE id=?", (fid,))
+        ingest.cleanup_trails()
+        return JSONResponse({"ok": True})
+    body = await request.json()
+    name = str(body.get("name", "")).strip()[:80]
+    if not name:
+        raise ValueError("Укажите название флота")
+    db.execute("UPDATE fleets SET name=? WHERE id=?", (name, fid))
+    return JSONResponse({"ok": True})
+
+
+def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
+    if not db.query_one("SELECT id FROM fleets WHERE id=?", (fid,)):
+        raise ValueError("Флот не найден")
+    if not mmsi:
+        raise ValueError("Нужен MMSI (9 цифр) — по нему идёт отслеживание AIS")
+    if db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND mmsi=?", (fid, mmsi)):
+        return "exists"
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, name, created_at) VALUES(?,?,?,?,?)",
+               (fid, mmsi, imo or None, name or None, db.now_iso()))
+    return "added"
+
+
+@api
+async def api_vessel_add(request: Request):
+    fid = int(request.path_params["fid"])
+    body = await request.json()
+    mmsi = fleet_import.clean_mmsi(body.get("mmsi"))
+    imo = fleet_import.clean_imo(body.get("imo"))
+    if body.get("mmsi") and not mmsi:
+        raise ValueError("MMSI должен состоять из 9 цифр")
+    if body.get("imo") and not imo:
+        raise ValueError("IMO должен состоять из 7 цифр")
+    res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80])
+    if res == "exists":
+        raise ValueError("Это судно уже есть во флоте")
+    return JSONResponse({"ok": True})
+
+
+@api
+async def api_vessel_upload(request: Request):
+    fid = int(request.path_params["fid"])
+    form = await request.form()
+    up = form.get("file")
+    if up is None or isinstance(up, str):
+        raise ValueError("Файл не получен")
+    data = await up.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise ValueError("Файл больше 5 МБ")
+    items = fleet_import.parse_file(data, up.filename or "upload.csv")
+    added = exists = 0
+    no_mmsi = []
+    for it in items:
+        if not it["mmsi"]:
+            no_mmsi.append(it["name"] or (f"IMO {it['imo']}" if it["imo"] else "?"))
+            continue
+        r = _add_vessel(fid, it["mmsi"], it["imo"], it["name"])
+        added += r == "added"
+        exists += r == "exists"
+    return JSONResponse({"added": added, "exists": exists, "skipped_no_mmsi": no_mmsi[:50],
+                         "skipped_count": len(no_mmsi), "total": len(items)})
+
+
+@api
+async def api_vessel_update(request: Request):
+    vid = int(request.path_params["vid"])
+    if request.method == "DELETE":
+        db.execute("DELETE FROM vessels WHERE id=?", (vid,))
+        ingest.cleanup_trails()
+        return JSONResponse({"ok": True})
+    body = await request.json()
+    imo = fleet_import.clean_imo(body.get("imo"))
+    db.execute("UPDATE vessels SET name=?, imo=? WHERE id=?",
+               (str(body.get("name", "")).strip()[:80] or None, imo or None, vid))
+    return JSONResponse({"ok": True})
+
+
+@api
+async def api_track(request: Request):
+    mmsi = request.path_params["mmsi"]
+    rows = db.query("SELECT ts, lat, lon, sog FROM positions WHERE mmsi=? ORDER BY ts", (mmsi,))
+    return JSONResponse({"mmsi": mmsi, "points": rows})
+
+
+# --------------------------------------------------------------------------- API: уведомления
+@api
+async def api_notifications(request: Request):
+    after = int(request.query_params.get("after_id", 0) or 0)
+    limit = min(int(request.query_params.get("limit", 200) or 200), 500)
+    only_unread = request.query_params.get("unread") == "1"
+    sql = "SELECT * FROM notifications WHERE id > ?" + (" AND is_read=0" if only_unread else "")
+    rows = db.query(sql + " ORDER BY id DESC LIMIT ?", (after, limit))
+    unread = db.query_one("SELECT COUNT(*) AS n FROM notifications WHERE is_read=0")
+    for r in rows:
+        r["zone_name"] = zones.zone_name(r["zone_id"]) if r["zone_id"] else None
+    return JSONResponse({"items": rows, "unread": unread["n"] if unread else 0})
+
+
+@api
+async def api_notifications_read(request: Request):
+    body = await request.json()
+    if body.get("all"):
+        db.execute("UPDATE notifications SET is_read=1 WHERE is_read=0")
+    else:
+        ids = [int(i) for i in body.get("ids", [])][:500]
+        if ids:
+            db.execute(f"UPDATE notifications SET is_read=1 WHERE id IN ({','.join('?' * len(ids))})", ids)
+    return JSONResponse({"ok": True})
+
+
+# --------------------------------------------------------------------------- API: циркуляры
+@api
+async def api_circulars(request: Request):
+    rows = db.query("SELECT ref, number, issued, source_url, file_name, status, build_log, diff, created_at, "
+                    "activated_at, spec FROM circulars ORDER BY number DESC")
+    for r in rows:
+        spec = json.loads(r.pop("spec") or "{}")
+        r["diff"] = json.loads(r["diff"] or "{}")
+        names = {e["id"]: e["name"] for e in spec.get("entries", [])}
+        r["diff_names"] = {k: [names.get(i, i) for i in r["diff"].get(k, [])] for k in ("added", "amended")}
+        r["diff_names"]["removed"] = r["diff"].get("removed_names", [])
+        r["review"] = [{"name": e["name"], "reason": e.get("review_reason", "")}
+                       for e in spec.get("entries", []) if e.get("needs_review")]
+        r["entries"] = len(spec.get("entries", []))
+    return JSONResponse({"items": rows, "state": pipeline.state})
+
+
+@api
+async def api_circular_check(request: Request):
+    res = await pipeline.check_now(manual=True)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 502)
+
+
+@api
+async def api_circular_upload(request: Request):
+    form = await request.form()
+    up = form.get("file")
+    if up is None or isinstance(up, str):
+        raise ValueError("Файл не получен")
+    data = await up.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise ValueError("Файл больше 20 МБ")
+    res = await pipeline.ingest_document(data, up.filename or "circular.pdf", source_url="upload",
+                                         force=form.get("force") == "1")
+    return JSONResponse(res)
+
+
+@api
+async def api_circular_rebuild(request: Request):
+    res = await pipeline.build_and_activate(request.path_params["ref"])
+    return JSONResponse(res)
+
+
+async def circular_file(request: Request):
+    if not _authed(request):
+        return RedirectResponse("/login", status_code=303)
+    row = db.query_one("SELECT file_name FROM circulars WHERE ref=?", (request.path_params["ref"],))
+    path = config.CIRCULARS_DIR / (row["file_name"] if row and row["file_name"] else "__none__")
+    if not row or not path.is_file() or path.parent != config.CIRCULARS_DIR:
+        return Response("Файл не найден", status_code=404)
+    return FileResponse(path, filename=path.name.split("__", 1)[-1])
+
+
+async def health(request: Request):
+    return JSONResponse({"ok": True, "zones": len(zones.index().zones)})
+
+
+# --------------------------------------------------------------------------- фоновые задачи
+async def _circular_loop(stop: asyncio.Event):
+    await pipeline.bootstrap()
+    await asyncio.sleep(20)
+    while not stop.is_set():
+        try:
+            await pipeline.check_now()
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка проверки циркуляров")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=config.CIRCULAR_CHECK_HOURS * 3600)
+
+
+async def _maintenance_loop(stop: asyncio.Event):
+    while not stop.is_set():
+        try:
+            ingest.cleanup_trails()
+            alerts.check_stale()
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка обслуживания")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=600)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app):
+    db.connect()
+    zones.load_active()
+    if not config.ADMIN_PASSWORD:
+        log.warning("ADMIN_PASSWORD не задан — вход в панель невозможен. Укажите его в .env")
+    stop = asyncio.Event()
+    if config.AIS_MODE == "aisstream":
+        from .ais import aisstream as ais_source
+    else:
+        from .ais import simulator as ais_source
+    tasks = [asyncio.create_task(ais_source.run(stop)),
+             asyncio.create_task(_circular_loop(stop)),
+             asyncio.create_task(_maintenance_loop(stop))]
+    try:
+        yield
+    finally:
+        stop.set()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+routes = [
+    Route("/", index),
+    Route("/login", login_page, methods=["GET", "POST"]),
+    Route("/logout", logout, methods=["POST", "GET"]),
+    Route("/health", health),
+    Route("/api/status", api_status),
+    Route("/api/zones", api_zones),
+    Route("/api/fleets", api_fleets),
+    Route("/api/fleets/create", api_fleet_create, methods=["POST"]),
+    Route("/api/fleets/{fid:int}", api_fleet_update, methods=["PATCH", "DELETE"]),
+    Route("/api/fleets/{fid:int}/vessels", api_vessel_add, methods=["POST"]),
+    Route("/api/fleets/{fid:int}/upload", api_vessel_upload, methods=["POST"]),
+    Route("/api/vessels/{vid:int}", api_vessel_update, methods=["PATCH", "DELETE"]),
+    Route("/api/track/{mmsi}", api_track),
+    Route("/api/notifications", api_notifications),
+    Route("/api/notifications/read", api_notifications_read, methods=["POST"]),
+    Route("/api/circulars", api_circulars),
+    Route("/api/circulars/check", api_circular_check, methods=["POST"]),
+    Route("/api/circulars/upload", api_circular_upload, methods=["POST"]),
+    Route("/api/circulars/{ref}/rebuild", api_circular_rebuild, methods=["POST"]),
+    Route("/circulars/{ref}/file", circular_file),
+    Mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static"),
+]
+
+app = Starlette(
+    routes=routes,
+    lifespan=lifespan,
+    middleware=[Middleware(SessionMiddleware, secret_key=_secret_key(), session_cookie="warrisk_session",
+                           max_age=14 * 24 * 3600, same_site="lax", https_only=config.COOKIE_SECURE)],
+)
