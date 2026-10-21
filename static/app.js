@@ -693,7 +693,7 @@ function renderTraffic() {
     if (fleet.has(mmsi)) continue;
     new ShapeMarker([lat, lon], {
       shape: cat === "yacht" ? "yacht" : "ship", rotation: cog ?? 0,
-      renderer: trafficRenderer, radius: len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8,
+      renderer: trafficRenderer, radius: (len > 200 ? 4.5 : len > 100 ? 3.6 : 2.8) * (map.getZoom() >= 10 ? 1.4 : 1),
       weight: 0.6, color: "#0b1a22", fillColor: TRAFFIC_COLORS[cat], fillOpacity: sog != null && sog < 0.5 ? 0.55 : 0.95,
     }).bindTooltip(esc(name || `MMSI ${mmsi}`), { direction: "top", offset: [0, -4] })
       .on("click", (e) => openTrafficShip(mmsi, e.latlng))

@@ -276,7 +276,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-credit a { color: #fff; text-decoration: none; }
 .sc-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .sc-actions .btn { padding: 5px 10px; font-size: 12.5px; text-decoration: none; }
-.sc-actions select { flex: 1; min-width: 0; padding: 5px; font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.sc-actions select { flex: 1 1 130px; min-width: 110px; padding: 5px; font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
 .sc-tag { flex: 1; font-size: 12px; color: var(--muted); }
 .sc-route { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px 4px; }
 .sc-route b { display: block; font-size: 16px; font-family: var(--mono); }
