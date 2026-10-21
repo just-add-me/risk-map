@@ -253,20 +253,22 @@ def screen_fleets() -> int:
     hits = 0
     for imo, mmsis in _fleet_vessels().items():
         found = lookup(imo)
-        for s in found["sanctions"]:
-            key = f"sanction:{s['source']}"
-            for mmsi in mmsis:
-                if db.query_one("SELECT 1 AS x FROM screening_hits WHERE mmsi=? AND imo=? AND ref=?", (mmsi, imo, key)):
-                    continue
+        for mmsi in mmsis:
+            # все новые для этого судна списки — одним происшествием и одним уведомлением
+            fresh = [s for s in found["sanctions"] if not db.query_one(
+                "SELECT 1 AS x FROM screening_hits WHERE mmsi=? AND imo=? AND ref=?", (mmsi, imo, f"sanction:{s['source']}"))]
+            if not fresh:
+                continue
+            for s in fresh:
                 db.execute("INSERT INTO screening_hits(mmsi, imo, ref, first_seen) VALUES(?,?,?,?)",
-                           (mmsi, imo, key, db.now_iso()))
-                lat, lon, _ = _position(imo, mmsi)
-                text = f"{s['label']}: {s['program']}" + (f", с {s['listed_on']}" if s["listed_on"] else "")
-                incidents.record("sanction", mmsi, name=s["name"], lat=lat, lon=lon, text=text, source=s["label"],
-                                 extra=f"IMO {imo}")
-                db.notify("incident", "critical", f"{alerts.vessel_label(mmsi)}: в санкционном списке",
-                          f"{text}.\nИсточник: {s['url']}", mmsi)
-                hits += 1
+                           (mmsi, imo, f"sanction:{s['source']}", db.now_iso()))
+            lat, lon, _ = _position(imo, mmsi)
+            lines = [f"{s['label']}: {s['program']}" + (f", с {s['listed_on']}" if s["listed_on"] else "") for s in fresh]
+            incidents.record("sanction", mmsi, name=fresh[0]["name"], lat=lat, lon=lon, text="; ".join(lines)[:300],
+                             source=", ".join(s["label"] for s in fresh), extra=f"IMO {imo}")
+            db.notify("incident", "critical", f"{alerts.vessel_label(mmsi)}: в санкционных списках ({len(fresh)})",
+                      "\n".join(lines), mmsi)
+            hits += 1
         for d in found["detentions"]:
             key = f"detention:{d['detained_on']}"
             for mmsi in mmsis:
