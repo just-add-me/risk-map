@@ -245,3 +245,14 @@ def test_shipinfo_and_traffic():
     assert db.query_one("SELECT * FROM ais_state WHERE mmsi='538010472'") is None
     assert len(traffic.trail("538010472")) == 2         # точка трека + текущая позиция
     aisstream._tracked = None
+
+
+def test_traffic_snapshot():
+    from app.ais import traffic
+    traffic.update_position("273000099", 44.6, 33.5, 10.0, 90.0, None, "SNAP TEST", "A", 0)
+    traffic.update_static("273000099", ship_type=70, length=150)
+    assert traffic.save() >= 1
+    traffic._ships.clear()
+    assert traffic.load() >= 1
+    d = traffic.details(traffic.get("273000099"))
+    assert d["category"] == "cargo" and d["lat"] == 44.6 and d["nav_status"] == "Идёт под двигателем"

@@ -432,6 +432,17 @@ async def _circular_loop(stop: asyncio.Event):
             await asyncio.wait_for(stop.wait(), timeout=config.CIRCULAR_CHECK_HOURS * 3600)
 
 
+async def _traffic_snapshot_loop(stop: asyncio.Event):
+    """Раз в 5 минут сохраняем все суда на диск; при остановке — ещё раз."""
+    while not stop.is_set():
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=300)
+        try:
+            await asyncio.to_thread(traffic.save)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось сохранить снимок судов")
+
+
 async def _maintenance_loop(stop: asyncio.Event):
     while not stop.is_set():
         try:
@@ -450,13 +461,15 @@ async def lifespan(app):
     if not config.ADMIN_PASSWORD:
         log.warning("ADMIN_PASSWORD не задан — вход в панель невозможен. Укажите его в .env")
     stop = asyncio.Event()
+    await asyncio.to_thread(traffic.load)
     if config.AIS_MODE == "aisstream":
         from .ais import aisstream as ais_source
     else:
         from .ais import simulator as ais_source
     tasks = [asyncio.create_task(ais_source.run(stop)),
              asyncio.create_task(_circular_loop(stop)),
-             asyncio.create_task(_maintenance_loop(stop))]
+             asyncio.create_task(_maintenance_loop(stop)),
+             asyncio.create_task(_traffic_snapshot_loop(stop))]
     try:
         yield
     finally:
@@ -464,6 +477,11 @@ async def lifespan(app):
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            n = traffic.save()
+            log.info("Снимок судов сохранён при остановке: %d", n)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось сохранить снимок судов")
 
 
 routes = [

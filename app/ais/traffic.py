@@ -2,18 +2,28 @@
 
 Поток aisstream по всему миру — ~70–150 сообщений в секунду, за час набирается
 20–40 тыс. судов. Позиции старше TTL забываются, паспортные данные (тип,
-габариты, IMO) живут сутки: суда передают их раз в несколько минут.
+габариты, IMO) живут неделю: суда передают их редко, а меняются они почти никогда.
+
+Чтобы после перезапуска не ждать, пока слой наберётся заново, всё сохраняется
+на диск (data/traffic.json.gz) раз в 5 минут и при остановке, а при старте читается.
 """
 from __future__ import annotations
 
+import gzip
+import json
+import logging
 import threading
 import time
 from typing import Optional
 
+from .. import config
 from . import shipinfo
 
+log = logging.getLogger(__name__)
+SNAPSHOT_FILE = config.DATA_DIR / "traffic.json.gz"
+
 POSITION_TTL = 2 * 3600
-STATIC_TTL = 24 * 3600
+STATIC_TTL = 7 * 24 * 3600
 # короткий трек в памяти: точка не чаще раза в 10 минут, до 3 часов
 TRAIL_STEP = 600
 TRAIL_POINTS = 18
@@ -57,9 +67,48 @@ def _maybe_cleanup(now: float) -> None:
         return
     _last_cleanup = now
     with _lock:
-        for k in [k for k, s in _ships.items()
-                  if now - s.get("ts", 0) > POSITION_TTL and now - s.get("static_ts", 0) > STATIC_TTL]:
+        for k in [k for k, s in _ships.items() if _expired(s, now)]:
             del _ships[k]
+
+
+def _expired(s: dict, now: float) -> bool:
+    return now - s.get("ts", 0) > POSITION_TTL and now - s.get("static_ts", 0) > STATIC_TTL
+
+
+def save() -> int:
+    """Снимок на диск: сначала во временный файл, потом rename — файл никогда не бывает оборванным."""
+    now = time.time()
+    with _lock:
+        data = [dict(s) for s in _ships.values() if not _expired(s, now)]
+    tmp = SNAPSHOT_FILE.with_suffix(".tmp")
+    with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=5) as f:
+        json.dump({"saved": now, "ships": data}, f, separators=(",", ":"))
+    tmp.replace(SNAPSHOT_FILE)
+    return len(data)
+
+
+def load() -> int:
+    if not SNAPSHOT_FILE.exists():
+        return 0
+    try:
+        with gzip.open(SNAPSHOT_FILE, "rt", encoding="utf-8") as f:
+            snap = json.load(f)
+    except (OSError, ValueError) as exc:
+        log.warning("Снимок судов не прочитан: %s", exc)
+        return 0
+    now = time.time()
+    with _lock:
+        for s in snap.get("ships", []):
+            if _expired(s, now) or s["mmsi"] in _ships:
+                continue
+            s["trail"] = [tuple(p) for p in s.get("trail", [])]
+            if now - s.get("ts", 0) > POSITION_TTL:       # позиция устарела — оставляем только паспорт
+                for k in ("lat", "lon", "sog", "cog", "heading", "ts", "trail", "nav"):
+                    s.pop(k, None)
+            _ships[s["mmsi"]] = s
+        n = len(_ships)
+    log.info("Загружен снимок судов: %d (сохранён %d мин назад)", n, int((now - snap.get("saved", now)) / 60))
+    return n
 
 
 def get(mmsi: str) -> Optional[dict]:
