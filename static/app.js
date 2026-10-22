@@ -1158,8 +1158,14 @@ async function loadShipEvents(el) {
     el.querySelector(".sc-evn").textContent = items.length || "";
     box.classList.toggle("muted", !items.length);
     box.classList.toggle("feed-list", !!items.length);
-    box.innerHTML = items.length ? items.map((e, i) => shipEventRow(e, i)).join("")
-      : "Событий по этому судну пока нет: здесь появятся входы в зоны, срабатывания правил, аварийные сигналы, санкции, задержания и новости.";
+    // чужое судно: входы в зоны, правила, новости и подозрительное поведение отслеживаются только у судов флота
+    const own = allVessels().some((v) => v.mmsi === el.dataset.mmsi);
+    const note = own ? "" : `<div class="sc-evnote muted small">Судно не в вашем флоте — здесь только общие события:
+      аварийные сигналы, посадка на мель, задержания в портах, попадание в санкционные списки. Входы в зоны риска,
+      срабатывания правил, новости и подозрительное поведение появятся после добавления судна во флот.</div>`;
+    box.innerHTML = items.length ? items.map((e, i) => shipEventRow(e, i)).join("") + note
+      : own ? "Событий по этому судну пока нет: здесь появятся входы в зоны риска, срабатывания правил, аварийные сигналы, санкции, задержания и новости."
+      : note.replace("здесь только общие события", "событий пока нет. Для таких судов здесь видны только общие события");
     $$(".feed-item", box).forEach((row) => row.onclick = (ev) => {
       if (ev.target.closest("a")) return;
       const e = items[+row.dataset.i];

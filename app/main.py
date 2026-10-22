@@ -396,12 +396,16 @@ async def api_ship_events(request: Request):
     visible = access.mmsis(user)         # новости и санкции судна чужого флота не показываем
 
     def load() -> list[dict]:
+        # задержания и новые санкции записаны по IMO, если судно в тот момент не было видно в AIS
+        st = db.query_one("SELECT imo FROM ais_state WHERE mmsi=?", (mmsi,))
+        imo = str((traffic.get(mmsi) or {}).get("imo") or (st["imo"] if st else "") or "")
+        keys = (mmsi, f"IMO:{imo}") if imo else (mmsi, mmsi)
         out = [{"ts": r["last_seen"], "severity": incidents.KINDS.get(r["kind"], {}).get("severity", "info"),
                 "title": incidents.KINDS.get(r["kind"], {}).get("label", r["kind"]), "body": r["text"] or "",
                 "count": r["count"], "source": "incident", "kind": r["kind"], "outlet": r["source"],
                 "url": r["extra"] if str(r["extra"] or "").startswith("http") else None, "lat": r["lat"], "lon": r["lon"]}
-               for r in db.query("SELECT kind, text, last_seen, count, source, extra, lat, lon FROM incidents WHERE mmsi=? "
-                                 "ORDER BY last_seen DESC LIMIT 100", (mmsi,))
+               for r in db.query("SELECT kind, text, last_seen, count, source, extra, lat, lon FROM incidents WHERE mmsi IN (?, ?) "
+                                 "ORDER BY last_seen DESC LIMIT 100", keys)
                if r["kind"] not in incidents.PRIVATE_KINDS or mmsi in visible]
         # уведомления правила «Событие с судном» (rule_event) повторяют само происшествие — их не показываем
         for r in db.query(f"SELECT n.id, n.ts, n.kind, n.severity, n.title, n.body, n.zone_id, n.lat, n.lon FROM notifications n "
