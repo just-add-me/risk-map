@@ -225,8 +225,12 @@ def connect() -> sqlite3.Connection:
                 if col not in cols:
                     _conn.execute(f"ALTER TABLE ais_state ADD COLUMN {col} {typ}")
             # уведомление может быть адресовано одному пользователю (сработало его правило)
-            if "username" not in {r[1] for r in _conn.execute("PRAGMA table_info(notifications)")}:
+            ncols = {r[1] for r in _conn.execute("PRAGMA table_info(notifications)")}
+            if "username" not in ncols:
                 _conn.execute("ALTER TABLE notifications ADD COLUMN username TEXT")
+            for col in ("lat", "lon"):            # где произошло событие — чтобы показать на карте
+                if col not in ncols:
+                    _conn.execute(f"ALTER TABLE notifications ADD COLUMN {col} REAL")
             news_cols = {r[1] for r in _conn.execute("PRAGMA table_info(news)")}
             for col, typ in (("story", "TEXT"), ("incident_id", "INTEGER")):
                 if col not in news_cols:
@@ -309,10 +313,13 @@ def cleanup_notifications() -> int:
 
 
 def notify(kind: str, severity: str, title: str, body: str = "",
-           mmsi: Optional[str] = None, zone_id: Optional[str] = None, username: Optional[str] = None) -> int:
-    """username — адресат; без него уведомление видят все, кому доступно судно (или все, если судна нет)."""
+           mmsi: Optional[str] = None, zone_id: Optional[str] = None, username: Optional[str] = None,
+           lat: Optional[float] = None, lon: Optional[float] = None) -> int:
+    """username — адресат; без него уведомление видят все, кому доступно судно (или все, если судна нет).
+    lat/lon — где произошло событие (показывается на карте при нажатии на уведомление)."""
     cur = execute(
-        "INSERT INTO notifications(ts, kind, severity, title, body, mmsi, zone_id, username) VALUES(?,?,?,?,?,?,?,?)",
-        (now_iso(), kind, severity, title, body, mmsi, zone_id, username),
+        "INSERT INTO notifications(ts, kind, severity, title, body, mmsi, zone_id, username, lat, lon) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (now_iso(), kind, severity, title, body, mmsi, zone_id, username, lat, lon),
     )
     return int(cur.lastrowid or 0)

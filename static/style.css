@@ -500,7 +500,18 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .zone-emblem span { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%;
   background: radial-gradient(circle at 50% 40%, #1b2f38, #0b161c); border: 1.5px solid var(--c);
   box-shadow: 0 0 0 2px rgba(11, 22, 28, .7), 0 0 10px var(--c); cursor: pointer; transition: transform .15s; }
-.zone-emblem span svg .f { fill: var(--c); stroke: none; }
+.zone-emblem span svg .f { fill: var(--c); fill-opacity: .35; }
 .zone-emblem:hover span { transform: scale(1.15); }
 .zone-emblem.sel span { transform: scale(1.2); box-shadow: 0 0 0 2px rgba(11, 22, 28, .7), 0 0 16px var(--c), 0 0 4px #fff; }
 .zone-emblem.off span { opacity: .45; box-shadow: none; }
+
+/* ---------- место события на карте ---------- */
+.event-spot span { display: block; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--c);
+  box-shadow: 0 0 12px var(--c), inset 0 0 8px var(--c); position: relative; animation: ev-pulse 1.6s ease-out infinite; }
+.event-spot span::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
+  border-radius: 50%; background: var(--c); box-shadow: 0 0 6px var(--c); }
+@keyframes ev-pulse { 0% { transform: scale(.6); opacity: 1; } 100% { transform: scale(1.25); opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .event-spot span { animation: none; } }
+.ev-pop .fi-lines { margin-bottom: 8px; }
+.ev-pop .ev-open { width: 100%; }
+.fi-map { color: var(--accent); }

@@ -259,11 +259,16 @@ def _recipients(r: dict, via: list[int]) -> set[str]:
 
 
 def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str] = None,
-         title: Optional[str] = None, severity: Optional[str] = None) -> None:
+         title: Optional[str] = None, severity: Optional[str] = None,
+         at: Optional[tuple[Optional[float], Optional[float]]] = None) -> None:
+    """at — где произошло (lat, lon); по умолчанию — позиция судна в момент срабатывания."""
     title = f"{alerts.vessel_label(mmsi)}: {title or r['name']}"
     body = f"{detail}\nПравило «{r['name']}»: {describe(r)}."
+    if not at or at[0] is None:
+        pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
+        at = (pos.get("lat"), pos.get("lon"))
     for user in _recipients(r, via):
-        db.notify("rule", severity or r["severity"], title, body, mmsi, zone_id, username=user)
+        db.notify("rule", severity or r["severity"], title, body, mmsi, zone_id, username=user, lat=at[0], lon=at[1])
     db.execute("UPDATE rules SET last_fired=?, fired_count=fired_count+1 WHERE id=?", (db.now_iso(), r["id"]))
 
 
@@ -360,17 +365,17 @@ def _zone_rule(r: dict, mmsi: str, via: list[int], lat: float, lon: float) -> No
     if k == "zone_enter":
         for zid in sorted(cur_ids - prev):
             fire(r, mmsi, via, f"Позиция {lat:.4f}, {lon:.4f}." + alerts.zone_note(zid), zid,
-                 title=f"ВХОД в зону «{names.get(zid, zid)}»")
+                 title=f"ВХОД в зону «{names.get(zid, zid)}»", at=(lat, lon))
     elif k == "zone_exit":
         for zid in sorted(prev - cur_ids):
             dur = alerts.fmt_duration(st["since"]) if st.get("since") else ""
             fire(r, mmsi, via, f"Позиция {lat:.4f}, {lon:.4f}." + (f" Время в зоне: {dur}." if dur else ""), zid,
-                 title=f"ВЫХОД из зоны «{names.get(zid, zid)}»")
+                 title=f"ВЫХОД из зоны «{names.get(zid, zid)}»", at=(lat, lon))
     else:
         sog = (db.query_one("SELECT sog FROM ais_state WHERE mmsi=?", (mmsi,)) or {}).get("sog")
         for zid in sorted(cur_ids - prev - prev_in):    # только подход снаружи, а не выход из зоны
             fire(r, mmsi, via, f"До границы ≈ {cur[zid]:.0f} мор. миль{alerts.eta_text(cur[zid], sog)}."
-                 + alerts.zone_note(zid), zid, title=f"Подход к зоне «{names.get(zid, zid)}»")
+                 + alerts.zone_note(zid), zid, title=f"Подход к зоне «{names.get(zid, zid)}»", at=(lat, lon))
 
 
 def _nav_rule(r: dict, mmsi: str, via: list[int], nav: Optional[int]) -> None:
@@ -523,7 +528,8 @@ def event_group(kind: str) -> Optional[str]:
     return next((g for g, (_, kinds) in EVENT_GROUPS.items() if kind in kinds), None)
 
 
-def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str) -> None:
+def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str,
+                    lat: Optional[float] = None, lon: Optional[float] = None) -> None:
     """Происшествие с судном флота (из incidents.record, screening, news): правила vessel_event.
     Важность — самого события (санкции критичны, обычная новость — информация)."""
     group = event_group(kind)
@@ -532,7 +538,7 @@ def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str) 
     for r, via in rules_for(mmsi, ("vessel_event",)):
         if group in r["params"]["groups"]:
             _safe(lambda rr, v: fire(rr, mmsi, v, text or "Сообщение получено по AIS.", title=label[:1].upper() + label[1:],
-                                     severity=severity), r, via)
+                                     severity=severity, at=(lat, lon)), r, via)
 
 
 # --------------------------------------------------------------------------- порт назначения в зоне
@@ -555,7 +561,8 @@ def _dest_rules() -> None:
             _save(r["id"], mmsi, value)
             if st is not None and value != "-":       # первое наблюдение — только запоминаем
                 fire(r, mmsi, via, f"Пункт назначения «{a['destination']}» — {port['name']} ({port['country']})"
-                     f"{', ETA ' + a['eta'] if a['eta'] else ''}. Порт в зоне: {', '.join(zones.zone_name(z) for z in zs)}.")
+                     f"{', ETA ' + a['eta'] if a['eta'] else ''}. Порт в зоне: {', '.join(zones.zone_name(z) for z in zs)}.",
+                     zs[0], at=(port["lat"], port["lon"]))
 
 
 # --------------------------------------------------------------------------- незаявленный заход [журнал-заходов] начало

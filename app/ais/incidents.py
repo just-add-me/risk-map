@@ -118,7 +118,7 @@ def record(kind: str, mmsi: str, *, name: Optional[str] = None, lat: Optional[fl
         log.exception("Ошибка проверки правил для происшествия %s", iid)
     if tracked and not test:                 # судно флота: сообщают правила «Событие с судном»
         from .. import rules
-        rules.on_vessel_event(mmsi, kind, KINDS[kind]["severity"], KINDS[kind]["label"], text)
+        rules.on_vessel_event(mmsi, kind, KINDS[kind]["severity"], KINDS[kind]["label"], text, lat, lon)
     return iid
 
 

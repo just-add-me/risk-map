@@ -163,7 +163,7 @@ const LAYERS = {
   ibf: { label: "IBF/ITF — экипаж", hint: "Бонусы и права экипажа по коллективному договору IBF" },
   inl: { label: "INL (IWL) — навигационные ограничения", hint: "Лёд и полярные воды: заход только с согласия страховщика" },
 };
-// icon — эмблема в центре зоны: war — скрещённые мечи (военные риски), ice — снежинка (льды, INL)
+// icon — эмблема в центре зоны: war — скрещённые мечи (военные риски), ice — айсберг (льды, INL)
 const ZONE_TYPES = {
   country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e", icon: "war" },
   sea: { layer: "jwc", label: "Морской район", color: "#ff9440", icon: "war" },
@@ -176,10 +176,11 @@ const ZONE_TYPES = {
   inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4", icon: "ice" },
 };
 
-// Эмблемы зон — маленькие SVG: скрещённые мечи и снежинка
+// Эмблемы зон — маленькие SVG: скрещённые мечи и айсберг
 const ZONE_GLYPH = {
   war: `<path d="M5 19 19 5M19 19 5 5" /><path d="M4.5 14.5l5 5M19.5 14.5l-5 5" /><circle cx="3.6" cy="20.4" r="1.2" class="f"/><circle cx="20.4" cy="20.4" r="1.2" class="f"/>`,
-  ice: `<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" /><path d="M9.6 4.6 12 7l2.4-2.4M9.6 19.4 12 17l2.4 2.4M3.7 10.9l3.3.9-.9 3.3M20.3 10.9l-3.3.9.9 3.3M6.1 4.8l.9 3.3-3.3.9M17.9 19.2l-.9-3.3 3.3-.9" />`,
+  // айсберг: верхушка над водой, линия воды, большая подводная часть (бледнее)
+  ice: `<path d="M6.5 11.5 9.5 5.5l2 2 2.5-3.5 3.5 7.5" class="f" /><path d="M2.5 11.5h19" /><path d="M5 11.5l1.5 6 5 3 5.5-2.5 2-6.5" opacity=".55" />`,
 };
 function zoneGlyph(kind, color, size = 14) {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="2.1"
@@ -217,10 +218,11 @@ function zoneStyle(f) {
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
   const s = { color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
-    fillOpacity: { jwc: 0.07, ibf: 0.07, inl: 0.04 }[layer], glow: 1 };
+    // IBF лежит поверх JWC — без заливки (только граница и свечение), иначе полупрозрачные слои складываются в кашу
+    fillOpacity: { jwc: 0.07, ibf: 0, inl: 0.035 }[layer], glow: { jwc: 1, ibf: 0.8, inl: 0.7 }[layer] };
   if (t.dash) s.dashArray = t.dash;
   if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.02, glow: 0.35, opacity: 0.6 });   // вне сезона — бледнее
-  if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
+  if (isChanged(p)) Object.assign(s, { weight: s.weight + 0.6, dashArray: "7 4" });     // изменена: пунктир цветом самой зоны
   if (state.selectedZone === p.id) Object.assign(s, { weight: 2.4, dashArray: null, fillOpacity: 0.2, glow: 2.2 });
   return s;
 }
@@ -337,7 +339,7 @@ function renderZoneLayer() {
   if (document.body.classList.contains("drawing")) setMapInteractive(false);
 }
 
-// Эмблема зоны (мечи / снежинка) в её «визуальном центре» — одна на зону, как метка области в играх.
+// Эмблема зоны (мечи / айсберг) в её «визуальном центре» — одна на зону, как метка области в играх.
 // Только если зона на экране крупная, и без наложений: ближе EMBLEM_GAP пикселей остаётся одна (JWC и IBF важнее INL).
 const zoneEmblems = L.layerGroup().addTo(map);
 const EMBLEM_MIN_PX = 90, EMBLEM_GAP = 34;
@@ -1626,7 +1628,7 @@ function feedRow(x, i) {
     const t = splitTitle(n.title, n.mmsi);
     const lines = detailLines(first);
     return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}" data-i="${i}">
-      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span><span class="fi-time">${fmtTime(n.ts)}</span></div>
+      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span>${notifPoint(n) ? `<span class="fi-map" title="Нажмите — покажу на карте">◎ на карте</span>` : ""}<span class="fi-time">${fmtTime(n.ts)}</span></div>
       <div class="fi-event">${esc(t.event)}</div>
       ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b>` : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span></div>` : ""}
       ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
@@ -1772,8 +1774,45 @@ async function openNotification(n) {
     setUnread(Math.max(0, state.unread - 1));
     renderNotifications();
   }
-  if (n.mmsi) { switchTab("fleet"); selectVessel(n.mmsi, true); }
+  const at = notifPoint(n);
+  if (at) showEventSpot(n, at);
+  else if (n.mmsi) selectVessel(n.mmsi, true);
   else if (n.kind === "circular") openCirculars();
+}
+
+// Где произошло событие: точка из уведомления, у старых — «Позиция 31.8620, 34.6239» из текста
+function notifPoint(n) {
+  if (n.lat != null && n.lon != null) return [n.lat, n.lon];
+  const m = /Позиция (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)/.exec(n.body || "");
+  return m ? [+m[1], +m[2]] : null;
+}
+
+// Метка события на карте: пульсирующее кольцо, краткое описание, связанная зона подсвечена
+const eventSpot = L.layerGroup().addTo(map);
+function showEventSpot(n, at) {
+  eventSpot.clearLayers();
+  shipPanel.close();
+  const t = splitTitle(n.title, n.mmsi);
+  const [first] = (n.body || "").split("\n");
+  const color = { critical: "#ff5a4e", warning: "#f5b13d", info: "#4fc3d9" }[n.severity] || "#4fc3d9";
+  const html = `<div class="ev-pop"><div class="fi-meta"><span class="fi-src">${n.mmsi ? "мои суда" : "система"}</span><span class="fi-time">${fmtTime(n.ts)}</span></div>
+    <div class="fi-event">${esc(t.event)}</div>
+    ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b> ` : ""}<span class="muted">MMSI ${esc(t.mmsi)}</span></div>` : ""}
+    ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
+    <ul class="fi-lines">${detailLines(first).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+    ${n.mmsi ? `<button class="btn ghost ev-open" type="button">Открыть судно</button>` : ""}</div>`;
+  const m = L.marker(at, {
+    icon: L.divIcon({ className: "event-spot", iconSize: [34, 34], iconAnchor: [17, 17], html: `<span style="--c:${color}"></span>` }),
+    zIndexOffset: 3000, keyboard: false,
+  }).bindPopup(html, { minWidth: 260, maxWidth: 320, className: "ev-popup", offset: [0, -10] }).addTo(eventSpot);
+  m.on("popupopen", (e) => {
+    const b = e.popup.getElement()?.querySelector(".ev-open");
+    if (b) b.onclick = () => { eventSpot.clearLayers(); selectVessel(n.mmsi, true); };
+  });
+  m.on("popupclose", () => { eventSpot.clearLayers(); if (n.zone_id && state.selectedZone === n.zone_id) selectZone(null); });
+  if (n.zone_id) selectZone(n.zone_id);
+  map.flyTo(at, Math.max(map.getZoom(), 7), { duration: 0.8 });
+  setTimeout(() => m.openPopup(), 850);
 }
 
 /* ------------------------------------------------------------------ циркуляры */
