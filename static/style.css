@@ -451,3 +451,23 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .lg-btn.off { opacity: .38; }
 .lg-btn.off span { text-decoration: line-through; }
 .lg-title.lg-btn { display: block; }
+
+/* ---------- функции (вкл/выкл) ---------- */
+body.f-off-zone_log [data-feature="zone_log"], body.f-off-anomalies [data-feature="anomalies"] { display: none !important; }
+.feat-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.feat-row input { margin-top: 3px; }
+.feat-row > span { display: flex; flex-direction: column; gap: 3px; }
+
+/* ---------- журнал заходов в зоны ---------- */
+.log-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.log-filters select { flex: 1 1 120px; min-width: 0; }
+.log-summary { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.log-summary b { color: var(--text); } .log-summary .warn { color: var(--amber); }
+.log-xlsx { display: inline-block; margin-bottom: 10px; text-decoration: none; }
+.log-list { list-style: none; margin: 0; padding: 0; }
+.log-item { padding: 9px 10px; margin-bottom: 6px; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; }
+.log-item.open { border-left-color: var(--amber); }
+.log-item.late { border-left-color: var(--red); background: rgba(255, 90, 78, .06); }
+.log-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.log-decl { font-size: 12px; white-space: nowrap; color: var(--muted); }
+.log-item .zin { color: var(--amber); }

@@ -179,6 +179,18 @@ CREATE TABLE IF NOT EXISTS dest_alerts(          -- «идёт в порт в з
     mmsi TEXT NOT NULL, dest_key TEXT NOT NULL, created_at TEXT NOT NULL,
     PRIMARY KEY(mmsi, dest_key)
 );
+CREATE TABLE IF NOT EXISTS zone_visits(          -- журнал заходов в зоны (app/zone_log.py)
+    id INTEGER PRIMARY KEY, mmsi TEXT NOT NULL, zone_id TEXT NOT NULL, zone_name TEXT, layer TEXT,
+    entered_at TEXT NOT NULL, exited_at TEXT, entry_lat REAL, entry_lon REAL, exit_lat REAL, exit_lon REAL,
+    initial INTEGER NOT NULL DEFAULT 0,    -- судно было в зоне уже в момент начала отслеживания
+    declared INTEGER NOT NULL DEFAULT 0, declared_at TEXT, declared_by TEXT, note TEXT,
+    reminded INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_zone_visits_mmsi ON zone_visits(mmsi, entered_at);
+CREATE TABLE IF NOT EXISTS anomaly_state(        -- что уже замечено (app/anomalies.py), чтобы не повторять
+    mmsi TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY(mmsi, kind, key)
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT

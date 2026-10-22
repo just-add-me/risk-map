@@ -634,3 +634,42 @@ def test_destination_resolve(monkeypatch):
     assert dst.resolve_near("JEA", 51.0, 3.0) is None                  # слишком далеко — не угадываем
     dst._route_cached.cache_clear()
     dst._codes.clear(); dst._names.clear(); dst.resolve.cache_clear()
+
+
+def test_zone_log_and_features():
+    from app import config, features, zone_log
+    db.connect()
+    zones.set_active(FAKE_ZONES)
+    if not db.query_one("SELECT 1 FROM fleets WHERE id=1"):
+        db.execute("INSERT INTO fleets(id, name, owner, created_at) VALUES(1, 'Test', 'admin', ?)", (db.now_iso(),))
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(1, '273000777', 'LOG ONE', ?)", (db.now_iso(),))
+    zid = FAKE_ZONES["features"][0]["properties"]["id"]
+    zone_log.opened("273000777", zid, 1.0, 2.0, "2026-10-01T00:00:00+00:00")
+    zone_log.opened("273000777", zid, 1.0, 2.0)                      # повтор, пока открыт — не дублируется
+    zone_log.closed("273000777", zid, 1.5, 2.5, "2026-10-02T12:00:00+00:00")
+    rows = [r for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"]
+    assert len(rows) == 1 and rows[0]["hours"] == 36.0 and rows[0]["days"] == 2 and rows[0]["can_edit"]
+    zone_log.declare(config.ADMIN_USER, rows[0]["id"], True)
+    assert [r["declared"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"] == [1]
+    assert zone_log.xlsx(rows)[:2] == b"PK"
+    assert features.enabled("zone_log")
+    features.set_enabled("zone_log", False)
+    assert not features.enabled("zone_log") and zone_log.remind() == 0
+    features.set_enabled("zone_log", True)
+
+
+def test_anomaly_position_jump():
+    from app import anomalies, features
+    from app.ais import incidents
+    db.connect()
+    features.set_enabled("anomalies", True)
+    prev = {"lat": 40.0, "lon": 28.0, "ts": "2026-10-22T10:00:00+00:00"}
+    anomalies.on_position("273000778", prev, 40.0, 30.0, "2026-10-22T10:30:00+00:00")     # 92 мили за 30 мин
+    anomalies.on_position("273000778", prev, 40.05, 28.0, "2026-10-22T10:30:00+00:00")    # 3 мили — нормально
+    rows = db.query("SELECT kind, text FROM incidents WHERE mmsi='273000778'")
+    assert [r["kind"] for r in rows] == ["spoof"] and "92 миль" in rows[0]["text"]
+    features.set_enabled("anomalies", False)
+    anomalies.on_position("273000779", prev, 40.0, 30.0, "2026-10-22T10:30:00+00:00")
+    assert not db.query("SELECT 1 FROM incidents WHERE mmsi='273000779'")
+    features.set_enabled("anomalies", True)
+    assert "spoof" in incidents.ANOMALY_KINDS

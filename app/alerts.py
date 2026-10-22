@@ -132,6 +132,14 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
             body = f"До границы ≈ {dist:.0f} мор. миль{_eta_text(dist or 0, sog)}." + suffix
             created.append(db.notify("zone_near", "warning", title, body, mmsi, zid))
 
+        # журнал заходов (для заявок на дополнительную премию)
+        from . import zone_log
+        if cur == "inside":
+            zone_log.opened(mmsi, zid, lat, lon, now, initial=initial)
+        elif prev == "inside":
+            zone_log.closed(mmsi, zid, lat, lon, now,
+                            note="зона перестала действовать" if (reason or not zones.in_effect(zid)) else "")
+
         if cur is None:
             db.execute("DELETE FROM zone_state WHERE mmsi=? AND zone_id=?", (mmsi, zid))
         else:

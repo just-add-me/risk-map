@@ -24,7 +24,8 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import access, alerts, config, db, fleet_import, news, rules, screening, users, zones
+from . import (access, alerts, anomalies, config, db, features, fleet_import, news, rules, screening, users,
+               zone_log, zones)
 from .ais import destination, incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -259,6 +260,46 @@ async def api_traffic_ship(request: Request):
         f"SELECT f.name FROM ({access.VISIBLE_FLEETS_SQL}) f JOIN vessels v ON v.fleet_id=f.id WHERE v.mmsi=?",
         (user, user, user, mmsi))]
     return JSONResponse(d)
+
+
+@api
+async def api_features(request: Request):
+    """Переключатели функций: читать могут все, менять — только администратор."""
+    if request.method == "POST":
+        if _user(request) != config.ADMIN_USER:
+            return JSONResponse({"error": "Включать и выключать функции может только администратор"}, status_code=403)
+        body = await request.json()
+        try:
+            features.set_enabled(str(body.get("name")), bool(body.get("on")))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"features": features.all_states(), "admin": _user(request) == config.ADMIN_USER})
+
+
+@api
+async def api_zone_visits(request: Request):
+    """Журнал заходов в зоны: ?days=90&layer=jwc&fleet=1&format=xlsx; POST {id, declared, note} — отметка заявки."""
+    user = _user(request)
+    if request.method == "POST":
+        body = await request.json()
+        try:
+            zone_log.declare(user, int(body.get("id")), bool(body.get("declared")),
+                             body.get("note") if "note" in body else None)
+        except (ValueError, TypeError) as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True})
+    q = request.query_params
+    try:
+        days = max(1, min(int(q.get("days") or 90), 3650))
+        fleet_id = int(q["fleet"]) if q.get("fleet") else None
+    except ValueError:
+        return JSONResponse({"error": "Неверные параметры"}, status_code=400)
+    rows = await asyncio.to_thread(zone_log.visits, user, days, q.get("layer", ""), fleet_id)
+    if q.get("format") == "xlsx":
+        data = await asyncio.to_thread(zone_log.xlsx, rows)
+        return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": "attachment; filename=zone-visits.xlsx"})
+    return JSONResponse({"items": rows, "remind_hours": zone_log.REMIND_HOURS}, headers={"Cache-Control": "no-store"})
 
 
 WIDE_NM = 25.0
@@ -645,7 +686,8 @@ async def api_rules(request: Request):
         r = {**row, "params": json.loads(row["params"])}
         items.append({**r, "description": rules.describe(r), "target_name": _rule_target_name(r)})
     return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES,
-                         "incident_kinds": {k: v["label"] for k, v in inc.KINDS.items() if k not in inc.VESSEL_KINDS}})
+                         "incident_kinds": {k: v["label"] for k, v in inc.KINDS.items()
+                                            if k not in inc.VESSEL_KINDS and k not in inc.ANOMALY_KINDS}})
 
 
 @api
@@ -878,6 +920,11 @@ async def _maintenance_loop(stop: asyncio.Event):
             alerts.check_stale()
             incidents.cleanup()
             rules.periodic()
+            try:
+                await asyncio.to_thread(anomalies.check_fleet)
+                zone_log.remind()
+            except Exception:  # noqa: BLE001
+                log.exception("Ошибка проверки подозрительного поведения / журнала заходов")
             try:      # в потоке: первый раз скачивает и разбирает справочник портов (несколько секунд)
                 await asyncio.to_thread(destination.check_fleet)
             except Exception:  # noqa: BLE001 — справочник портов мог не скачаться
@@ -917,6 +964,10 @@ async def lifespan(app):
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=16, thread_name_prefix="work"))
     db.connect()
     zones.load_active()
+    try:
+        zone_log.backfill()
+    except Exception:  # noqa: BLE001
+        log.exception("Журнал заходов: не удалось восстановить историю")
     if not config.ADMIN_PASSWORD:
         log.warning("ADMIN_PASSWORD не задан — вход в панель невозможен. Укажите его в .env")
     stop = asyncio.Event()
@@ -953,6 +1004,8 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/incidents", api_incidents),
+    Route("/api/features", api_features, methods=["GET", "POST"]),
+    Route("/api/zone-visits", api_zone_visits, methods=["GET", "POST"]),
     Route("/api/screening", api_screening, methods=["GET", "POST"]),
     Route("/api/rules", api_rules, methods=["GET", "POST"]),
     Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),
