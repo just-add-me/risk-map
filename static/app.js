@@ -525,11 +525,18 @@ async function openPort(p) {
   try {
     const d = await api(`/api/ports/${p.id}`);
     popup.setContent(portCard(p, d));
+    const all = [...d.ships, ...(d.wide || [])];
     $$(".pc-ship", popup.getElement()).forEach((b) => b.onclick = () => {
-      const s = d.ships[+b.dataset.i];
+      const s = all[+b.dataset.i];
       openTrafficShip(s.mmsi, L.latLng(s.lat, s.lon));
     });
   } catch (e) { /* остаётся краткая карточка */ }
+}
+
+function shipState(s) {
+  if (s.nav_status === "Ошвартовано") return "у причала";
+  if (s.nav_status === "На якоре") return "на якоре";
+  return (s.sog || 0) >= 1 ? `идёт ${s.sog.toFixed(1)} уз` : "стоит";
 }
 
 // Карточка порта: страна, зоны риска, суда рядом (по данным AIS в радиусе 5 миль)
@@ -542,11 +549,15 @@ function portCard(p, d) {
   }).join("") || `<div class="zok">Вне зон риска</div>`;
   const cats = d ? Object.entries(d.by_category).sort((a, b) => b[1] - a[1]).map(([c, n]) =>
     `<span class="pc-cat"><i class="dot" style="background:${TRAFFIC_COLORS[c]}"></i>${esc(d.categories[c])}: ${n}</span>`).join("") : "";
-  const ships = d ? d.ships.map((s, i) => `
+  // суда рядом списком по расстоянию; data-i — индекс в общем списке [...ships, ...wide]
+  const row = (s, i) => `
     <button class="pc-ship" type="button" data-i="${i}">
-      ${flagImg(s.flag_iso)}<span class="sr-main"><b>${esc(s.name || "MMSI " + s.mmsi)}</b>
-      <span class="muted small">${esc(s.type_name)}${s.length ? ` · ${Math.round(s.length)} м` : ""}${s.nav_status ? ` · ${esc(s.nav_status)}` : ""}</span></span>
-      <span class="muted small">${s.distance_nm} миль</span></button>`).join("") : "";
+      ${flagImg(s.flag_iso)}<span class="sr-main"><b>${esc(s.name || "MMSI " + s.mmsi)}</b>${s.in_fleet ? ` <span class="tag">флот</span>` : ""}
+      <span class="muted small"><i class="dot" style="background:${TRAFFIC_COLORS[s.category] || TRAFFIC_COLORS.other}"></i> ${esc(s.type_name)}${
+        s.length ? ` · ${Math.round(s.length)} м` : ""} · ${shipState(s)}</span></span>
+      <span class="muted small nowrap">${s.distance_nm} миль</span></button>`;
+  const near = d ? d.ships.map(row).join("") : "";
+  const wide = d && d.wide?.length ? d.wide.map((s, i) => row(s, d.ships.length + i)).join("") : "";
   return `<div class="sc">
     <div class="sc-head"><svg width="26" height="26" viewBox="0 0 26 26"><rect x="3" y="3" width="20" height="20" rx="3"
       fill="${portColor(p)}"/><path d="M13 7v12M9 10h8M8 15a5 4 0 0 0 10 0" stroke="#0b1a22" stroke-width="2" fill="none"/></svg>
@@ -557,7 +568,9 @@ function portCard(p, d) {
       <div><span>У причала</span><b>${d.status.moored}</b></div>
       <div><span>На якоре</span><b>${d.status.anchored}</b></div></div>
       ${cats ? `<div class="pc-cats">${cats}</div>` : ""}
-      ${ships ? `<div class="pc-list"><div class="muted small pc-h">Крупнейшие суда рядом</div>${ships}</div>` : ""}`
+      ${near ? `<div class="pc-list"><div class="muted small pc-h">Суда рядом — ${d.ships.length}, ближние сверху</div>${near}</div>`
+        : `<div class="sc-foot">В 5 милях судов по AIS нет: порт может быть вне зоны береговых станций, или суда выключили AIS.</div>`}
+      ${wide ? `<div class="pc-list"><div class="muted small pc-h">Ближайшие в радиусе ${d.wide_nm} миль</div>${wide}</div>` : ""}`
     : `<div class="sc-foot">Загружаю суда рядом…</div>`}
     <div class="sc-foot">${p.lat.toFixed(4)}°, ${p.lon.toFixed(4)}° · суда в радиусе 5 миль по данным AIS</div>
     <div class="sc-links"><a href="https://www.google.com/maps/@${p.lat},${p.lon},13z/data=!3m1!1e3" target="_blank" rel="noopener">Спутниковый снимок</a></div>
@@ -738,11 +751,6 @@ function renderVessels() {
     }
     const label = esc(v.name || v.ais_name || v.mmsi);
     if (m.getTooltip()) m.setTooltipContent(label); else m.bindTooltip(label, { direction: "top", offset: [0, -8] });
-    if (m.getPopup()) { if (!m.isPopupOpen()) m.setPopupContent(vesselPopup(v)); }
-    else {
-      m.bindPopup(vesselPopup(v), { minWidth: 300, maxWidth: 320, className: "sc-popup" });
-      m.on("popupopen", (e) => hydrateCard(e.popup, `/api/track/${encodeURIComponent(v.mmsi)}`));
-    }
   }
   for (const [mmsi, m] of markers) if (!live.has(mmsi)) { vesselsLayer.removeLayer(m); markers.delete(mmsi); }
 }
@@ -765,8 +773,13 @@ async function selectVessel(mmsi, fly) {
   trackLayer.clearLayers();
   if (!v || !v.position) { toast("Позиция ещё не получена", "Ждём первое сообщение AIS от этого судна."); return; }
   if (fly) map.flyTo([v.position.lat, v.position.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
-  const m = markers.get(mmsi);
-  if (m && !m.isPopupOpen()) setTimeout(() => m.openPopup(), fly ? 850 : 0);     // путь судна рисует карточка
+  if (shipPanel.isOpen() && shipPanel.mmsi === mmsi) return;
+  setTimeout(() => openFleetCard(v), fly ? 850 : 0);
+}
+
+function openFleetCard(v) {
+  shipPanel.open(v.mmsi, [v.position.lat, v.position.lon], vesselPopup(v));
+  hydrateCard(shipPanel, `/api/track/${encodeURIComponent(v.mmsi)}`);
 }
 
 /* ------------------------------------------------------------------ карточка судна */
@@ -862,15 +875,9 @@ function screeningBlock(sc) {
 }
 
 // После открытия карточки: фото с Wikimedia Commons (если есть) и кнопка трека
-async function hydrateCard(popup, trackUrl) {
+async function hydrateCard(popup, trackUrl) {      // popup — панель карточки (shipPanel)
   const el = popup.getElement()?.querySelector(".sc");
   if (!el) return;
-  // карточка становится содержимым попапа как узел, а не строка: иначе popup.update() после
-  // загрузки фото пересобирает HTML и теряет фото и обработчики кнопок
-  popup.setContent(el);
-  // карточка не выше карты: иначе на невысоком экране верх уходит за край и не прокручивается
-  el.style.maxHeight = `${Math.max(240, map.getSize().y - 60)}px`;
-  fitPopup(popup);
   const btn = el.querySelector(".sc-track");
   btn.onclick = () => {
     const shown = map.hasLayer(pathLayer);
@@ -899,18 +906,47 @@ async function hydrateCard(popup, trackUrl) {
       box.querySelector(".sc-sil")?.remove();
       box.prepend(img);
       box.querySelector(".sc-credit").innerHTML = `<a href="${esc(photo.page)}" target="_blank" rel="noopener">© ${esc(photo.author || "Wikimedia Commons")}${photo.license ? `, ${esc(photo.license)}` : ""}</a>`;
-      fitPopup(popup);
     };
     img.src = photo.url;
   } catch { /* фото необязательно */ }
 }
 
-// Пересчитать размер попапа и сдвинуть карту, чтобы он целиком был виден (Leaflet делает это
-// только при открытии, а карточка меняет высоту позже — фото, ограничение по высоте карты)
-function fitPopup(popup) {
-  popup.update();
-  if (popup.isOpen() && popup._adjustPan) popup._adjustPan();
-}
+// Карточка судна — панель у края карты, а не всплывающее окно над судном: окно закрывало путь.
+// Методы как у L.Popup (getElement, getLatLng, once("remove")), чтобы карточке было всё равно.
+const shipPanel = {
+  el: $("#ship-panel"), body: $("#ship-panel .sp-body"), mmsi: null, latlng: null, handlers: [],
+  open(mmsi, latlng, content) {
+    this.close();
+    this.mmsi = mmsi;
+    this.latlng = L.latLng(latlng);
+    this.body.innerHTML = content;
+    this.el.hidden = false;
+    this.el.scrollTop = 0;
+    return this;
+  },
+  setContent(content) { this.body.innerHTML = content; return this; },
+  getElement() { return this.el.hidden ? null : this.el; },
+  getLatLng() { return this.latlng; },
+  isOpen() { return !this.el.hidden; },
+  once(ev, fn) { if (ev === "remove") this.handlers.push(fn); return this; },
+  close() {
+    if (this.el.hidden) return;
+    this.el.hidden = true;
+    this.body.innerHTML = "";
+    this.mmsi = null;
+    const hs = this.handlers;
+    this.handlers = [];
+    hs.forEach((fn) => fn());
+  },
+  // сколько места панель занимает у края карты: справа (широкий экран) или снизу (телефон)
+  padding() {
+    const m = map.getContainer().getBoundingClientRect(), r = this.el.getBoundingClientRect();
+    const bottom = r.width > m.width * 0.6;
+    return { paddingTopLeft: [40, 40], paddingBottomRight: bottom ? [40, m.bottom - r.top + 20] : [m.right - r.left + 20, 40] };
+  },
+};
+$("#ship-panel-close").onclick = () => shipPanel.close();
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shipPanel.isOpen()) shipPanel.close(); });
 
 // Путь судна в карточке: пройденный трек (сплошная линия) + типовой путь до порта назначения (пунктир).
 // Рисуется сам при открытии карточки, убирается при закрытии; кнопка в карточке прячет и показывает.
@@ -956,7 +992,10 @@ async function loadShipPath(el, popup, trackUrl) {
   const legend = [pts.length > 1 ? `<span><i class="lg-past"></i>пройдено${hours >= 1 ? ` за ${Math.round(hours)} ч` : ""}</span>` : "",
     r ? `<span><i class="lg-ahead${r.port_zones.length ? " risk" : ""}"></i>впереди${r.path === "sea" ? " (типовой маршрут)" : ""}</span>` : ""].join("");
   box.innerHTML = html + (legend ? `<div class="sc-legend">${legend}</div>` : "");
-  fitPopup(popup);
+  // весь путь — в свободной части карты, не под панелью; совсем короткий путь не приближаем сильнее 10
+  const bounds = L.latLngBounds([here]);
+  pathLayer.eachLayer((l) => bounds.extend(l.getBounds ? l.getBounds() : l.getLatLng()));
+  if (map.hasLayer(pathLayer)) map.fitBounds(bounds, { ...popup.padding(), maxZoom: Math.max(map.getZoom(), 10) });
 }
 
 // Новость — сюжет: одинаковые статьи разных изданий схлопнуты, count — сколько изданий написали
@@ -1092,10 +1131,10 @@ function renderTrafficCats() {
 }
 
 async function openTrafficShip(mmsi, latlng) {
-  const popup = L.popup({ minWidth: 300, maxWidth: 320, className: "sc-popup" }).setLatLng(latlng)
-    .setContent("Загружаю…").openOn(map);
+  const popup = shipPanel.open(mmsi, latlng, `<div class="sc-loading muted">Загружаю…</div>`);
   try {
     const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
+    if (shipPanel.mmsi !== mmsi) return;            // пока грузили, открыли другое судно
     const zs = s.zones || [];
     const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
       : state.fleets.some((f) => f.access !== "view") ? `<button class="btn" type="button" data-add-fleet>+ Добавить во флот</button>
@@ -1109,7 +1148,7 @@ async function openTrafficShip(mmsi, latlng) {
       try {
         await api(`/api/fleets/${fid}/vessels`, { json: { mmsi: s.mmsi, imo: s.imo || "", name: s.name || "" } });
         toast("Судно добавлено во флот", s.name || s.mmsi);
-        map.closePopup(popup);
+        shipPanel.close();
         await loadFleets();
         renderTraffic();
       } catch (e) { toast("Не удалось добавить", e.message, "critical"); }

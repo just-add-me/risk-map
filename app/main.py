@@ -261,9 +261,13 @@ async def api_traffic_ship(request: Request):
     return JSONResponse(d)
 
 
+WIDE_NM = 25.0
+
+
 @api
 async def api_port(request: Request):
-    """Карточка порта: страна, зоны, суда рядом (в радиусе 5 миль) по категориям и статусам."""
+    """Карточка порта: страна, зоны, суда рядом (в радиусе 5 миль) списком по расстоянию; если их
+    меньше пяти — ещё ближайшие в радиусе 25 миль."""
     pid = int(request.path_params["pid"])
     plist = await asyncio.to_thread(ports.with_zones)
     if not 0 <= pid < len(plist):
@@ -276,15 +280,21 @@ async def api_port(request: Request):
     status = {"moored": sum(1 for s in ships if s["nav_status"] == "Ошвартовано"),
               "anchored": sum(1 for s in ships if s["nav_status"] == "На якоре"),
               "moving": sum(1 for s in ships if (s["sog"] or 0) >= 1)}
-    ships.sort(key=lambda s: -(s["length"] or 0))
+    ships.sort(key=lambda s: s["distance_nm"])
+    # рядом почти никого (порт не виден береговым станциям AIS или суда выключили AIS) — ближайшие в 25 милях
+    wide = []
+    if len(ships) < 5:
+        wide = sorted(await asyncio.to_thread(traffic.near, p["lat"], p["lon"], WIDE_NM), key=lambda s: s["distance_nm"])
+        wide = [s for s in wide if s["distance_nm"] > 5.0][:30]
+    mine = await asyncio.to_thread(access.mmsis, _user(request))
+    keys = ("mmsi", "name", "type_name", "category", "length", "nav_status", "sog", "flag_iso", "distance_nm", "lat", "lon")
+    pack = lambda s: {**{k: s[k] for k in keys}, "in_fleet": s["mmsi"] in mine}  # noqa: E731
     zone_info = [{"id": z, "name": zones.zone_name(z), "layer": (zones.index().get(z).props.get("layer")
                                                                 if zones.index().get(z) else None)}
                  for z in p["zones"]]
     return JSONResponse({**p, "zones": zone_info, "ships_total": len(ships), "by_category": by_cat,
                          "status": status, "categories": shipinfo.CATEGORIES,
-                         "ships": [{k: s[k] for k in ("mmsi", "name", "type_name", "category", "length",
-                                                      "nav_status", "sog", "flag_iso", "distance_nm", "lat", "lon")}
-                                   for s in ships[:12]]})
+                         "ships": [pack(s) for s in ships[:150]], "wide": [pack(s) for s in wide], "wide_nm": WIDE_NM})
 
 
 @api
