@@ -30,6 +30,8 @@ COVER_NM, COVER_MIN = 30, 5
 STS_NM, STS_KN, STS_MINUTES, PORT_NM = 0.3, 1.5, 30, 10
 JUMP_KN, JUMP_MIN_NM = 50, 20
 BIG = {"tanker", "cargo"}
+CROWD = 3                    # столько и больше стоящих судов рядом — якорная стоянка или порт, а не встреча двоих
+MOORED = 5                   # навигационный статус AIS «ошвартовано»
 
 _sts_seen: dict[tuple[str, str], tuple[float, float]] = {}   # (судно, соседнее) → (впервые, последний раз рядом)
 
@@ -73,7 +75,13 @@ def on_position(mmsi: str, prev: Optional[dict], lat: float, lon: float, ts: str
 def check_fleet() -> int:
     """Раз в 10 минут: молчание AIS при хорошем покрытии, встречи в море, смена названия и MMSI."""
     from .layers import ports
-    port_pts = [(p["lat"], p["lon"]) for p in ports.load()]
+    # порты: Natural Earth (~1100) + UN/LOCODE (~12 500) — в одном Natural Earth нет даже Генуи
+    from .ais import destination
+    try:
+        destination._load()
+    except Exception:  # noqa: BLE001 — справочник не скачался: обойдёмся портами Natural Earth
+        log.warning("UN/LOCODE недоступен — порты только из Natural Earth")
+    port_pts = [(p["lat"], p["lon"]) for p in ports.load()] + [(p["lat"], p["lon"]) for p in destination._codes.values()]
     now = datetime.now(timezone.utc)
     found = 0
     rows = db.query("SELECT DISTINCT a.*, v.imo AS fleet_imo FROM vessels v JOIN ais_state a ON a.mmsi=v.mmsi "
@@ -94,9 +102,12 @@ def check_fleet() -> int:
                                  text=f"Нет сигнала AIS {silent_h:.0f} ч, хотя рядом ({COVER_NM} миль) сейчас видно "
                                       f"{len(others)} судов. Последняя позиция {r['lat']:.3f}, {r['lon']:.3f}.")
         # 2. встреча с другим судном в открытом море
-        elif silent_h < 1 and (r["sog"] or 0) < STS_KN and not in_port:
-            for s in traffic.near(r["lat"], r["lon"], STS_NM):
-                if s["mmsi"] == mmsi or (s["sog"] or 0) >= STS_KN or s["category"] not in BIG:
+        elif (silent_h < 1 and (r["sog"] or 0) < STS_KN and not in_port and r["nav"] != MOORED
+              and shipinfo.category(r["ship_type"]) in BIG):        # перегрузка с борта на борт — у танкеров и сухогрузов
+            around = [s for s in traffic.near(r["lat"], r["lon"], 1.0) if s["mmsi"] != mmsi and (s["sog"] or 0) < STS_KN]
+            # скопление — стоянка, а не встреча двоих
+            for s in (around if len(around) < CROWD else []):
+                if s["distance_nm"] > STS_NM or s["category"] not in BIG or s["nav_status"] == "Ошвартовано":
                     continue
                 key, t = (mmsi, s["mmsi"]), now.timestamp()
                 first, last = _sts_seen.get(key, (t, t))

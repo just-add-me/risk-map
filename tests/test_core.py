@@ -145,7 +145,7 @@ def test_simulator_route():
 def test_fleet_import():
     csv_data = "Vessel Name;IMO;MMSI\nNORDIC STAR;9123456;273111222\nNO MMSI;9234567;\n".encode()
     items = parse_file(csv_data, "fleet.csv")
-    assert items[0] == {"mmsi": "273111222", "imo": "9123456", "name": "NORDIC STAR"}
+    assert items[0] == {"mmsi": "273111222", "imo": "9123456", "name": "NORDIC STAR", "hin": ""}
     assert items[1]["mmsi"] == "" and items[1]["imo"] == "9234567"
     plain = parse_file(b"273111222\n273111333 OCEAN ONE\n", "list.txt")
     assert [i["mmsi"] for i in plain] == ["273111222", "273111333"] and plain[1]["name"] == "OCEAN ONE"
@@ -715,3 +715,34 @@ def test_news_single_word_name_needs_vessel_type():
     assert not news.relevant(ferry, "GALAXY", "9826902", None, "tanker")      # наш GALAXY — танкер
     yacht = {"title": "Superyacht Koru arrives in Auckland", "summary": "", "url": "u", "via": "google"}
     assert news.relevant(yacht, "KORU", "9857298", 125, "yacht")
+
+
+def test_sts_not_in_port_or_for_yacht(monkeypatch):            # [подозрительное-поведение] начало
+    from app import anomalies
+    from app.ais import traffic as tr
+    db.connect()
+    if not db.query_one("SELECT 1 FROM fleets WHERE id=1"):
+        db.execute("INSERT INTO fleets(id, name, owner, created_at) VALUES(1, 'Test', 'admin', ?)", (db.now_iso(),))
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(1, '273000881', 'STS YACHT', ?)", (db.now_iso(),))
+    db.execute("INSERT INTO ais_state(mmsi, lat, lon, sog, ts, nav, ship_type) VALUES('273000881', 10.0, -30.0, 0, ?, 0, 37)",
+               (db.now_iso(),))
+    other = {"mmsi": "273000882", "sog": 0, "category": "tanker", "distance_nm": 0.1, "nav_status": "На якоре",
+             "name": "X", "type_name": "Танкер"}
+    monkeypatch.setattr(tr, "near", lambda lat, lon, nm: [other])
+    from app.ais import destination
+    monkeypatch.setattr(destination, "_codes", {"XXGEN": {"code": "XXGEN", "lat": 44.4, "lon": 8.9}})   # без скачивания
+    from app.layers import ports
+    monkeypatch.setattr(ports, "_ports", [{"name": "Genova", "lat": 44.4, "lon": 8.9, "country": "Italy"}])
+    monkeypatch.setattr(anomalies, "_sts_seen", {("273000881", "273000882"): (0, 1e12)})
+    anomalies.check_fleet()
+    assert not db.query("SELECT 1 FROM incidents WHERE kind='sts' AND mmsi='273000881'")   # яхта — не перегрузка
+# [подозрительное-поведение] конец
+
+
+def test_hin_clean_and_import():
+    from app import fleet_import
+    assert fleet_import.clean_hin("FR-ABC12345D404") == "FRABC12345D404"
+    assert fleet_import.clean_hin("ABC 12345 D4 04") == "ABC12345D404"
+    assert fleet_import.clean_hin("123") == ""
+    items = fleet_import.parse_file("mmsi,imo,name,hin\n319225400,9857298,KORU,NL-ABC12345D404\n".encode(), "f.csv")
+    assert items[0]["hin"] == "NLABC12345D404"

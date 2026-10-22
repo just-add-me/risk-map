@@ -511,3 +511,4 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .ev-pop .fi-lines { margin-bottom: 8px; }
 .ev-pop .ev-open { width: 100%; }
 .fi-map { color: var(--accent); }
+.sc-hin { font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }

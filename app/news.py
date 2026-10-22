@@ -48,6 +48,9 @@ state: dict = {"running": False, "last_run": None, "last_error": None, "found": 
 _lock = threading.Lock()
 
 
+_blocked: set[str] = set()      # поисковики, ответившие «слишком часто» (429/503) в этом прогоне
+
+
 def _get(url: str) -> str:
     r = requests.get(url, timeout=30, headers={"User-Agent": config.HTTP_USER_AGENT})
     r.raise_for_status()
@@ -271,10 +274,17 @@ def check_vessel(v: dict, pause: float = PAUSE_S) -> int:
     known_urls = {r["url"] for r in db.query("SELECT url FROM news WHERE imo=?", (v["imo"],))}
     found: dict[str, dict] = {}
     for i, (source, url) in enumerate(_queries(v["name"], v["imo"])):
+        if source in _blocked:             # поисковик попросил не спешить — до следующего прогона его не трогаем
+            continue
         try:
             items = parse_rss(_get(url), source)
         except Exception as exc:  # noqa: BLE001 — один поисковик не должен ломать остальные
-            log.warning("Новости: %s не ответил для IMO %s: %s", source, v["imo"], exc)
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            if code in (429, 503):
+                _blocked.add(source)
+                log.warning("Новости: %s ограничил частоту запросов (%s) — пропускаем его до следующего прогона", source, code)
+            else:
+                log.warning("Новости: %s не ответил для IMO %s: %s", source, v["imo"], exc)
             state["last_error"] = f"{source}: {exc}"
             items = []
         for it in items:
@@ -353,6 +363,7 @@ def run() -> str:
     state["running"] = True
     state["last_error"] = None
     try:
+        _blocked.clear()
         fleet = _fleet()
         total = sum(check_vessel(v) for v in fleet)
         db.execute("DELETE FROM news WHERE found_at < ?",

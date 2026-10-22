@@ -19,7 +19,7 @@
     <span class="chip" id="chip-ais" title="Источник AIS">AIS</span>
   </div>
   <div class="ship-search">
-    <input type="search" id="ship-q" placeholder="Поиск судна: название, MMSI, IMO" autocomplete="off" aria-label="Поиск судна">
+    <input type="search" id="ship-q" placeholder="Поиск судна: название, MMSI, IMO, HIN" autocomplete="off" aria-label="Поиск судна">
     <div class="ship-results" id="ship-results" hidden></div>
   </div>
   <div class="top-actions">
@@ -99,6 +99,7 @@
             <label>MMSI<input name="mmsi" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>
             <label>IMO<input name="imo" inputmode="numeric" maxlength="10" placeholder="7 цифр"></label>
             <div class="span2 small muted">Достаточно MMSI или IMO. Если указан только IMO, MMSI найдётся по данным AIS.</div>
+            <label class="span2">HIN — номер корпуса яхты<input name="hin" maxlength="20" placeholder="Необязательно, например FR-ABC12345D404" autocomplete="off"></label>
             <div class="span2 small mmsi-check" id="mmsi-check" aria-live="polite"></div>
             <label class="span2">Название<input name="name" maxlength="80" placeholder="Необязательно"></label>
             <button class="btn span2" type="submit">Добавить</button>
@@ -106,7 +107,7 @@
           <div class="drop" id="drop">
             <input type="file" id="file-input" accept=".csv,.txt,.xlsx" hidden>
             <strong>Загрузить список</strong> — перетащите файл или <a href="#" id="pick-file">выберите</a><br>
-            <span class="muted">CSV, TXT или XLSX с колонками mmsi, imo, name</span>
+            <span class="muted">CSV, TXT или XLSX с колонками mmsi, imo, name и, если есть, hin</span>
           </div>
         </details>
         <details class="card" id="fleet-share" hidden>

@@ -10,6 +10,7 @@ import gzip
 import hashlib
 import hmac
 import json
+import re
 import logging
 import secrets
 import time
@@ -251,14 +252,17 @@ async def api_traffic(request: Request):
 async def api_ship_search(request: Request):
     """Поиск судна: сначала среди судов флотов, потом во всём потоке AIS."""
     q = request.query_params.get("q", "").strip()
+    # «IMO 9857298», «HIN: FR-ABC12345D404», «MMSI 319225400» — ищем по самому номеру
+    q = re.sub(r"^(IMO|HIN|CIN|MMSI)\s*[:#№]?\s*", "", q, flags=re.I).strip()
     if len(q) < 2:
         return JSONResponse({"items": []})
     like = f"%{q.upper()}%"
+    hin = re.sub(r"[^0-9A-Za-z]", "", q).upper()
     user = _user(request)
     fleet = db.query("SELECT DISTINCT v.mmsi FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi "
                      f"WHERE v.mmsi IN ({access.VISIBLE_MMSI_SQL}) AND (v.mmsi LIKE ? OR v.imo LIKE ? "
-                     "OR UPPER(v.name) LIKE ? OR UPPER(a.ais_name) LIKE ?) LIMIT 5",
-                     (user, user, f"{q}%", f"{q}%", like, like))
+                     "OR UPPER(v.name) LIKE ? OR UPPER(a.ais_name) LIKE ? OR (length(?) >= 4 AND v.hin LIKE ?)) LIMIT 5",
+                     (user, user, f"{q}%", f"{q}%", like, like, hin, f"%{hin}%"))
     fleet_mmsi = {r["mmsi"] for r in fleet}
     items = await asyncio.to_thread(traffic.search, q, 12)
     for it in items:
@@ -268,9 +272,9 @@ async def api_ship_search(request: Request):
             it["lat"], it["lon"] = pos.get("lat"), pos.get("lon")
     known = {it["mmsi"] for it in items}
     for m in fleet_mmsi - known:          # судно флота, которого ещё нет в потоке
-        v = db.query_one("SELECT v.mmsi, v.imo, COALESCE(v.name, a.ais_name) AS name, a.lat, a.lon, a.ship_type "
+        v = db.query_one("SELECT v.mmsi, v.imo, v.hin, COALESCE(v.name, a.ais_name) AS name, a.lat, a.lon, a.ship_type "
                          "FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi WHERE v.mmsi=?", (m,))
-        items.insert(0, {"mmsi": v["mmsi"], "imo": v["imo"], "name": v["name"], "lat": v["lat"], "lon": v["lon"],
+        items.insert(0, {"mmsi": v["mmsi"], "imo": v["imo"], "hin": v["hin"], "name": v["name"], "lat": v["lat"], "lon": v["lon"],
                          "category": shipinfo.category(v["ship_type"]), "type_name": shipinfo.type_name(v["ship_type"]),
                          "flag": shipinfo.flag(m), "flag_iso": shipinfo.flag_iso(m), "in_fleet": True})
     items.sort(key=lambda it: not it.get("in_fleet"))
@@ -446,6 +450,7 @@ def _vessel_dict(v: dict) -> dict:
         "nav_status": shipinfo.nav_status((traffic.get(v["mmsi"]) or {}).get("nav")),
         "length": st.get("length"), "beam": st.get("beam"), "draught": st.get("draught"), "eta": st.get("eta"),
         "screening": screening.lookup(v["imo"] or st.get("imo")),
+        "hin": v.get("hin"),
         "status": alerts.vessel_status(v["mmsi"]),
     }
 
@@ -522,7 +527,7 @@ async def api_users(request: Request):
     return JSONResponse({"users": [u for u in access.all_usernames() if u != me], "me": me})
 
 
-def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
+def _add_vessel(fid: int, mmsi: str, imo: str, name: str, hin: str = "") -> str:
     """Права проверяет вызывающий (access.require(..., "edit")).
 
     Без MMSI ищем судно по IMO в потоке AIS; не нашли — добавляем с временным номером IMO:…,
@@ -534,11 +539,13 @@ def _add_vessel(fid: int, mmsi: str, imo: str, name: str) -> str:
         raise ValueError("Укажите MMSI или IMO")
     if not mmsi:
         mmsi = traffic.find_imo(imo) or ingest.PENDING + imo
-    if db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND (mmsi=? OR (? <> '' AND imo=?))",
-                    (fid, mmsi, imo, imo)):
+    old = db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND (mmsi=? OR (? <> '' AND imo=?))", (fid, mmsi, imo, imo))
+    if old:
+        if hin:                                   # судно уже есть — допишем номер корпуса
+            db.execute("UPDATE vessels SET hin=? WHERE id=?", (hin, old["id"]))
         return "exists"
-    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, name, created_at) VALUES(?,?,?,?,?)",
-               (fid, mmsi, imo or None, name or None, db.now_iso()))
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, name, hin, created_at) VALUES(?,?,?,?,?,?)",
+               (fid, mmsi, imo or None, name or None, hin or None, db.now_iso()))
     if not mmsi.startswith(ingest.PENDING):
         ingest.backfill_from_traffic(mmsi)
     return "added"
@@ -604,7 +611,10 @@ async def api_vessel_add(request: Request):
         raise ValueError("IMO должен состоять из 7 цифр")
     if not mmsi and imo and not fleet_import.imo_valid(imo):
         raise ValueError("IMO не проходит проверку контрольной цифры — проверьте номер")
-    res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80])
+    hin = fleet_import.clean_hin(body.get("hin"))
+    if body.get("hin") and not hin:
+        raise ValueError("HIN — 12 знаков (латиница и цифры), в ЕС с кодом страны впереди, например FR-ABC12345D404")
+    res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80], hin)
     if res == "exists":
         raise ValueError("Это судно уже есть во флоте")
     await asyncio.to_thread(screening.screen_fleets)
@@ -629,7 +639,7 @@ async def api_vessel_upload(request: Request):
         if not it["mmsi"] and not it["imo"]:
             no_mmsi.append(it["name"] or "?")
             continue
-        r = _add_vessel(fid, it["mmsi"], it["imo"], it["name"])
+        r = _add_vessel(fid, it["mmsi"], it["imo"], it["name"], it.get("hin", ""))
         added += r == "added"
         exists += r == "exists"
         found = traffic.get(it["mmsi"]) if it["mmsi"] else traffic.find_imo(it["imo"])

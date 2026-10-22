@@ -14,6 +14,7 @@ HEADER_ALIASES = {
     "mmsi": {"mmsi", "ммси"},
     "imo": {"imo", "имо", "imo number", "imo no", "imo_no", "imo#"},
     "name": {"name", "vessel", "vessel name", "ship", "ship name", "название", "судно", "имя"},
+    "hin": {"hin", "cin", "hull id", "hull identification number", "hin/cin", "номер корпуса"},
 }
 
 
@@ -33,6 +34,13 @@ def clean_mmsi(v) -> str:
 def clean_imo(v) -> str:
     s = re.sub(r"\D", "", str(v or "").split(".")[0])
     return s if len(s) == 7 else ""
+
+
+def clean_hin(v) -> str:
+    """HIN (Hull Identification Number, маломерные суда и яхты; в ЕС — CIN): 12 знаков, в ЕС с кодом
+    страны впереди («FR-ABC12345D404»). В AIS его нет — хранится только у судов наших флотов."""
+    s = re.sub(r"[^0-9A-Za-z]", "", str(v or "")).upper()
+    return s if 12 <= len(s) <= 16 else ""
 
 
 def imo_valid(imo: str) -> bool:
@@ -98,5 +106,6 @@ def _normalize(items: list[dict]) -> list[dict]:
             "mmsi": clean_mmsi(it.get("mmsi")),
             "imo": clean_imo(it.get("imo")),
             "name": (it.get("name") or "").strip()[:80],
+            "hin": clean_hin(it.get("hin")),
         })
     return [o for o in out if o["mmsi"] or o["imo"] or o["name"]]

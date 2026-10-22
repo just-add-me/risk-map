@@ -952,7 +952,7 @@ function shipCard(d, zonesHtml, opts = {}) {
       <div><span>Осадка</span><b>${d.draught ? d.draught.toFixed(1) + " м" : "—"}</b></div>
       <div><span>Размеры</span><b>${size}</b></div>
       <div><span>Флаг</span><b>${esc(d.flag || "—")}</b></div>
-      <div><span>IMO / MMSI</span><b>${esc(d.imo || "—")}<br>${esc(d.mmsi)}</b></div>
+      <div><span>IMO / MMSI${d.hin ? " / HIN" : ""}</span><b>${esc(d.imo || "—")}<br>${esc(d.mmsi)}${d.hin ? `<br><span class="sc-hin">${esc(d.hin)}</span>` : ""}</b></div>
     </div>
     <div class="sc-foot">Обновлено: <b>${fmtAge(opts.ageS)}</b>${d.ais_class ? ` · AIS класс ${esc(d.ais_class)}` : ""}${d.callsign ? ` · позывной ${esc(d.callsign)}` : ""}</div>
     <div class="sc-links">Тоннаж, год постройки, владелец:
@@ -1767,7 +1767,7 @@ async function runShipSearch(q) {
     <button class="sr-item" type="button" data-i="${i}">
       ${flagImg(s.flag_iso, s.flag)}
       <span class="sr-main"><b>${esc(s.name || "Без названия")}</b>${s.in_fleet ? ` <span class="tag">во флоте</span>` : ""}
-        <span class="muted small">${esc(s.type_name || "")} · MMSI ${esc(s.mmsi)}${s.imo ? ` · IMO ${esc(s.imo)}` : ""}</span></span>
+        <span class="muted small">${esc(s.type_name || "")} · MMSI ${esc(s.mmsi)}${s.imo ? ` · IMO ${esc(s.imo)}` : ""}${s.hin ? ` · HIN ${esc(s.hin)}` : ""}</span></span>
       <span class="muted small">${s.lat != null ? fmtAge(s.age_s) : "нет позиции"}</span>
     </button>`).join("")
     : `<div class="sr-empty muted small">Не найдено. Судно может быть вне зоны покрытия береговых станций AIS.</div>`;
