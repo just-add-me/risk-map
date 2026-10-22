@@ -101,9 +101,11 @@ mapCanvas._updatePoly = function (layer, closed) {
     ctx.setLineDash([]);
     ctx.strokeStyle = o.color;
     ctx.lineJoin = "round";
+    // при приближении узкие 12-мильные полосы на экране тонкие — свечение сужаем, иначе полоса светится целиком
+    const z = this._map.getZoom(), k = z <= 5 ? 1 : Math.max(0.3, 1 - (z - 5) * 0.25);
     for (const [w, a] of GLOW) {
       ctx.globalAlpha = a * o.glow;
-      ctx.lineWidth = w;
+      ctx.lineWidth = w * k;
       ctx.stroke();
     }
     ctx.restore();
