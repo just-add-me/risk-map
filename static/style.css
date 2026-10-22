@@ -563,3 +563,5 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .tour-x:hover { color: var(--text); }
 .tour-nav { display: flex; justify-content: space-between; align-items: center; }
 @media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } }
+.lg-n { margin-left: auto; padding-left: 8px; font: 11px/1 var(--mono); font-style: normal; color: var(--muted); }
+.lg-btn.off .inc-dot { text-decoration: none; }

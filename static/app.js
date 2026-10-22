@@ -505,10 +505,17 @@ function renderLegend() {
       + state.fleets.map((f) => row(`fl:${f.id}`, SHIP_ICON(fleetColor(f.id)),
         f.name + (f.access === "owner" ? "" : ` (от ${f.owner})`), state.showFleet && !state.hiddenFleets.has(f.id))).join("");
   }
+  // происшествия — по типам, только те, что есть за выбранный период (сколько — справа)
+  const incOn = $("#inc-show").checked, counts = {};
+  (state.inc?.items || []).forEach((it) => { if (!it.test || $("#inc-tests").checked) counts[it.kind] = (counts[it.kind] || 0) + 1; });
+  const kinds = Object.entries(state.inc?.kinds || {}).filter(([k]) => counts[k] && INC_STYLE[k]);
+  html += head("incidents", "Происшествия", incOn, "Скрыть или показать все происшествия на карте");
+  html += kinds.map(([k, d]) => row(`inck:${k}`, `<span class="inc-dot" style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</span>`,
+    d.label, incOn && !state.inc.hidden.has(k)).replace("</span></button>", `</span><em class="lg-n">${counts[k]}</em></button>`)).join("")
+    || `<div class="lg-hint">За выбранный период происшествий нет</div>`;
   html += `<div class="lg-title">Прочее</div>`
     + row("ports", `<svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-5" y="-5" width="10" height="10" rx="3" fill="#8fa6b0"/></svg>`,
       "Порты (красный — в зоне JWC)", state.showPorts)
-    + row("incidents", `<span class="inc-dot" style="background:#ff3b30">!</span>`, "Происшествия", $("#inc-show").checked)
     + row("areas", `<i class="sw" style="border:1.5px dashed #fff;background:transparent"></i>`, "Мои области", $("#areas-show").checked);
   box.innerHTML = html;
 }
@@ -553,6 +560,11 @@ $("#legend-items").addEventListener("click", async (e) => {
     renderZoneFilters();
   } else if (kind === "incidents") {
     $("#inc-show").checked = !$("#inc-show").checked;
+    renderIncidents();
+  } else if (kind === "inck") {
+    const h = state.inc.hidden;
+    if (!$("#inc-show").checked) { $("#inc-show").checked = true; h.clear(); Object.keys(state.inc.kinds).forEach((k) => k !== val && h.add(k)); }
+    else if (h.has(val)) h.delete(val); else h.add(val);
     renderIncidents();
   } else if (kind === "areas") {
     $("#areas-show").checked = !$("#areas-show").checked;
@@ -1728,6 +1740,7 @@ async function loadIncidents(force = false) {
   state.inc.kinds = d.kinds;
   state.inc.loadedAt = Date.now();
   renderIncidents();
+  renderLegend();                  // типы происшествий и их число в легенде
   renderVessels();                 // пометка «тревожные новости» на значках судов флота
 }
 
@@ -1757,6 +1770,7 @@ function renderIncidents() {
   $$("#inc-kinds .fchip").forEach((b) => b.onclick = () => {
     if (inc.hidden.has(b.dataset.kind)) inc.hidden.delete(b.dataset.kind); else inc.hidden.add(b.dataset.kind);
     renderIncidents();
+    renderLegend();
   });
   const shown = inc.items.filter(incVisible);
   incidentsLayer.clearLayers();
