@@ -543,3 +543,18 @@ def test_display_geometry_drops_land():
     inland = {"type": "Feature", "properties": {"template": "inland_ukraine"}, "geometry": mapping(box(0, 0, 2, 2))}
     add_display(w, inland)
     assert "display" not in inland
+
+
+def test_news_relevance_and_risk():
+    from app import news
+    item = {"title": "Tanker SANAR 14 seized by navy in Gulf", "summary": "", "url": "u", "published": None}
+    assert news.relevant(item, "SANAR-14", "9313589")
+    assert news.risk_topics(item) == ["захват / задержание"]
+    other = {"title": "Sanar 14 restaurant opens downtown", "summary": "", "url": "u", "published": None}
+    assert not news.relevant(other, "SANAR-14", "9313589")
+    assert news.relevant({"title": "Report", "summary": "IMO 9313589 boarded", "url": "u"}, "", "9313589")
+    rss = """<rss><channel><item><title>Ship X hit by drone - Reuters</title><link>https://news.google.com/a</link>
+      <pubDate>Wed, 21 Oct 2026 10:00:00 GMT</pubDate><source url="https://reuters.com">Reuters</source>
+      <description>&lt;a&gt;Ship X&lt;/a&gt;</description></item></channel></rss>"""
+    it = news.parse_rss(rss, "google")[0]
+    assert it["title"] == "Ship X hit by drone" and it["outlet"] == "Reuters" and it["published"].day == 21

@@ -24,7 +24,7 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse, Redir
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import access, alerts, config, db, fleet_import, rules, screening, users, zones
+from . import access, alerts, config, db, fleet_import, news, rules, screening, users, zones
 from .ais import incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -306,21 +306,23 @@ async def api_incidents(request: Request):
 
 @api
 async def api_ship_events(request: Request):
-    """События одного судна для вкладки в карточке: происшествия из AIS, санкции, задержания
-    и уведомления (зоны, правила), которые видит этот пользователь. Новые сверху."""
+    """События одного судна для вкладки в карточке: происшествия из AIS, санкции, задержания, новости
+    и уведомления (зоны, правила), которые видит этот пользователь. Новые сверху. Уведомления о
+    происшествиях не повторяем — само происшествие уже в списке."""
     mmsi = request.path_params["mmsi"]
     user = _user(request)
 
     def load() -> list[dict]:
         out = [{"ts": r["last_seen"], "severity": incidents.KINDS.get(r["kind"], {}).get("severity", "info"),
                 "title": incidents.KINDS.get(r["kind"], {}).get("label", r["kind"]), "body": r["text"] or "",
-                "count": r["count"], "source": "incident"}
-               for r in db.query("SELECT kind, text, last_seen, count FROM incidents WHERE mmsi=? "
+                "count": r["count"], "source": "incident", "kind": r["kind"], "outlet": r["source"],
+                "url": r["extra"] if str(r["extra"] or "").startswith("http") else None}
+               for r in db.query("SELECT kind, text, last_seen, count, source, extra FROM incidents WHERE mmsi=? "
                                  "ORDER BY last_seen DESC LIMIT 100", (mmsi,))]
         out += [{"ts": r["ts"], "severity": r["severity"], "title": r["title"], "body": r["body"] or "",
                  "source": "notification"}
                 for r in db.query(f"SELECT n.ts, n.severity, n.title, n.body FROM notifications n "
-                                  f"WHERE n.mmsi=? AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
+                                  f"WHERE n.mmsi=? AND n.kind <> 'incident' AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
                                   (mmsi, user, user, user))]
         return sorted(out, key=lambda e: e["ts"], reverse=True)[:100]
     return JSONResponse({"items": await asyncio.to_thread(load)}, headers={"Cache-Control": "no-store"})
@@ -618,7 +620,7 @@ async def api_rules(request: Request):
         r = {**row, "params": json.loads(row["params"])}
         items.append({**r, "description": rules.describe(r), "target_name": _rule_target_name(r)})
     return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES,
-                         "incident_kinds": {k: v["label"] for k, v in inc.KINDS.items()}})
+                         "incident_kinds": {k: v["label"] for k, v in inc.KINDS.items() if k not in inc.VESSEL_KINDS}})
 
 
 @api
@@ -832,6 +834,18 @@ async def _screening_loop(stop: asyncio.Event):
             await asyncio.wait_for(stop.wait(), timeout=6 * 3600)
 
 
+async def _news_loop(stop: asyncio.Event):
+    """Новости о судах флота: раз в 6 часов (первый раз — через 3 минуты после запуска)."""
+    await asyncio.sleep(180)
+    while not stop.is_set():
+        try:
+            log.info("Новости о судах: %s", await asyncio.to_thread(news.run))
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка поиска новостей")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=news.INTERVAL_S)
+
+
 async def _maintenance_loop(stop: asyncio.Event):
     while not stop.is_set():
         try:
@@ -884,7 +898,8 @@ async def lifespan(app):
         from .ais import simulator as ais_source
     tasks = [asyncio.create_task(_supervise(name, fn, stop)) for name, fn in (
         ("приём AIS", ais_source.run), ("циркуляры и IBF", _circular_loop), ("обслуживание", _maintenance_loop),
-        ("снимок судов", _traffic_snapshot_loop), ("санкции и задержания", _screening_loop))]
+        ("снимок судов", _traffic_snapshot_loop), ("санкции и задержания", _screening_loop),
+        ("новости о судах", _news_loop))]
     try:
         yield
     finally:

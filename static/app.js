@@ -247,13 +247,15 @@ function shipIcon(level, cog, selected, badges = []) {
   });
 }
 
-// Пометки судна флота по спискам: санкции — всегда, задержание — пока не освобождено или за последние 30 дней
+// Пометки судна флота: санкции — всегда, задержание — пока не освобождено или 30 дней, тревожные новости — 7 дней
 function vesselBadges(v) {
   const sc = v.screening || {};
   const out = [];
   if (sc.sanctions?.length) out.push("sanction");
   const det = sc.detentions?.[0];
   if (det && (!det.released_on || Date.now() - Date.parse(det.detained_on) < 30 * 86400e3)) out.push("detention");
+  if ((state.inc?.items || []).some((it) => it.kind === "news_risk" && it.mmsi === v.mmsi
+      && Date.now() - Date.parse(it.last_seen) < 7 * 86400e3)) out.push("news_risk");
   return out;
 }
 
@@ -920,8 +922,9 @@ async function loadShipEvents(el) {
       <div><i class="dot" style="background:${SEV_COLORS[e.severity] || SEV_COLORS.info}"></i>
         <b>${esc(e.title)}</b>${e.count > 1 ? ` <span class="muted">×${e.count}</span>` : ""}</div>
       <div class="muted">${fmtTime(e.ts)}</div>
-      ${e.body ? `<div class="sc-ev-body">${esc(e.body)}</div>` : ""}</div>`).join("")
-      : "Событий по этому судну пока нет: здесь появятся входы в зоны, срабатывания правил, аварийные сигналы, санкции и задержания.";
+      ${e.body ? `<div class="sc-ev-body">${esc(e.body)}</div>` : ""}
+      ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.outlet || "Открыть статью")} ↗</a>` : ""}</div>`).join("")
+      : "Событий по этому судну пока нет: здесь появятся входы в зоны, срабатывания правил, аварийные сигналы, санкции, задержания и новости.";
   } catch (e) { box.textContent = `Не удалось загрузить события: ${e.message}`; }
 }
 
@@ -1316,6 +1319,7 @@ const INC_STYLE = {
   sar: { color: "#4dabf7", glyph: "✈" }, safety: { color: "#ffe066", glyph: "i" },
   sanction: { color: "#c084fc", glyph: "$" }, sanction_new: { color: "#a78bfa", glyph: "$" },
   detention: { color: "#fb923c", glyph: "⚓" },
+  news_risk: { color: "#f472b6", glyph: "N" }, news: { color: "#64748b", glyph: "N" },
 };
 const incidentsLayer = L.layerGroup().addTo(map);
 // «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
@@ -1340,13 +1344,15 @@ async function loadIncidents(force = false) {
   state.inc.kinds = d.kinds;
   state.inc.loadedAt = Date.now();
   renderIncidents();
+  renderVessels();                 // пометка «тревожные новости» на значках судов флота
 }
 
 function incPopup(it) {
   return `<h4>${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</h4>
     <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · ${fmtTime(it.ts)}${it.count > 1 ? ` · повторялось ${it.count} раз, последний ${ago(it.last_seen)}` : ""}</div>
     ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
-    ${it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
+    ${/^https?:\/\//.test(it.extra || "") ? `<p><a href="${esc(it.extra)}" target="_blank" rel="noopener">Открыть статью ↗</a></p>`
+      : it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
     <dl class="kv"><dt>MMSI</dt><dd>${esc(it.mmsi)}</dd>
       ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
       <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>`;
@@ -1383,9 +1389,11 @@ function renderIncidents() {
       <span class="inc-dot" style="background:${(INC_STYLE[it.kind] || INC_STYLE.safety).color}">${(INC_STYLE[it.kind] || INC_STYLE.safety).glyph}</span>
       <div><div class="inc-title">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
         <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · <span class="nowrap">${ago(it.last_seen)}</span>${it.lat == null ? " · без координат" : ""}</div>
-        ${it.text ? `<div class="small inc-text">«${esc(it.text)}»</div>` : ""}</div></li>`).join("")
+        ${it.text ? `<div class="small inc-text">«${esc(it.text)}»</div>` : ""}
+        ${/^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>` : ""}</div></li>`).join("")
     || `<li class="empty muted">За выбранный период ничего нет. Сообщения о происшествиях редкие — они появятся здесь, как только придут.</li>`;
-  $$("#inc-list .inc").forEach((el) => el.onclick = () => {
+  $$("#inc-list .inc").forEach((el) => el.onclick = (e) => {
+    if (e.target.closest("a")) return;           // ссылка на статью открывается сама
     const it = shown[+el.dataset.i];
     if (ownMarker(it)) { selectVessel(it.mmsi, true); return; }
     if (it.lat == null) return;

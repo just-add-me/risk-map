@@ -168,6 +168,11 @@ CREATE TABLE IF NOT EXISTS screening_hits(
     mmsi TEXT NOT NULL, imo TEXT NOT NULL, ref TEXT NOT NULL, first_seen TEXT NOT NULL,
     PRIMARY KEY(mmsi, imo, ref)
 );
+CREATE TABLE IF NOT EXISTS news(
+    imo TEXT NOT NULL, title_key TEXT NOT NULL, url TEXT, title TEXT, outlet TEXT,
+    published TEXT, found_at TEXT NOT NULL, topics TEXT,
+    PRIMARY KEY(imo, title_key)
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT

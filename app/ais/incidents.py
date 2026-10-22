@@ -7,7 +7,7 @@
 позиции и паспортные данные):
 * сообщения безопасности (SafetyBroadcastMessage, AddressedSafetyMessage) — текст от судна или станции;
 * поисково-спасательные самолёты и вертолёты (StandardSearchAndRescueAircraftReport).
-Санкции и задержания (app/screening.py) тоже записываются сюда.
+Санкции и задержания (app/screening.py) и новости о судах флота (app/news.py) тоже записываются сюда.
 
 Сообщения редкие, поэтому хранятся в базе (таблица incidents) 14 дней. Повторы одного и того
 же события не плодят записи: обновляются время, позиция и счётчик.
@@ -37,9 +37,11 @@ KINDS = {
     "sanction": {"label": "Санкции: судно вашего флота", "severity": "critical"},
     "sanction_new": {"label": "Новое судно в санкционном списке", "severity": "info"},
     "detention": {"label": "Задержание в порту", "severity": "warning"},
+    "news_risk": {"label": "Новости: тревожное", "severity": "warning"},
+    "news": {"label": "Новости о судне", "severity": "info"},
 }
 # События «про судно», а не «в точке»: на карте показываются там, где судно сейчас
-VESSEL_KINDS = {"sanction", "sanction_new", "detention"}
+VESSEL_KINDS = {"sanction", "sanction_new", "detention", "news", "news_risk"}
 DEVICE_PREFIX = {"970": "sart", "972": "mob", "974": "epirb"}
 NAV_KIND = {6: "aground", 2: "nuc", 14: "sart"}
 KEEP_DAYS = 14
