@@ -263,6 +263,9 @@ async def api_ship_search(request: Request):
     items = await asyncio.to_thread(traffic.search, q, 12)
     for it in items:
         it["in_fleet"] = it["mmsi"] in fleet_mmsi
+        if it["in_fleet"] and it.get("lat") is None:      # в живом потоке позиция устарела — берём последнюю известную
+            pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (it["mmsi"],)) or {}
+            it["lat"], it["lon"] = pos.get("lat"), pos.get("lon")
     known = {it["mmsi"] for it in items}
     for m in fleet_mmsi - known:          # судно флота, которого ещё нет в потоке
         v = db.query_one("SELECT v.mmsi, v.imo, COALESCE(v.name, a.ais_name) AS name, a.lat, a.lon, a.ship_type "
