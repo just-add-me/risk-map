@@ -741,7 +741,7 @@ function renderVessels() {
     if (m.getPopup()) { if (!m.isPopupOpen()) m.setPopupContent(vesselPopup(v)); }
     else {
       m.bindPopup(vesselPopup(v), { minWidth: 300, maxWidth: 320, className: "sc-popup" });
-      m.on("popupopen", (e) => hydrateCard(e.popup, () => selectVessel(v.mmsi, false)));
+      m.on("popupopen", (e) => hydrateCard(e.popup, `/api/track/${encodeURIComponent(v.mmsi)}`));
     }
   }
   for (const [mmsi, m] of markers) if (!live.has(mmsi)) { vesselsLayer.removeLayer(m); markers.delete(mmsi); }
@@ -766,12 +766,7 @@ async function selectVessel(mmsi, fly) {
   if (!v || !v.position) { toast("Позиция ещё не получена", "Ждём первое сообщение AIS от этого судна."); return; }
   if (fly) map.flyTo([v.position.lat, v.position.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
   const m = markers.get(mmsi);
-  if (m) setTimeout(() => m.openPopup(), fly ? 850 : 0);
-  try {
-    const t = await api(`/api/track/${encodeURIComponent(mmsi)}`);
-    const pts = t.points.map((p) => [p.lat, p.lon]);
-    if (pts.length > 1) L.polyline(pts, { color: "#4fc3d9", weight: 2, opacity: 0.8, dashArray: "2 6" }).addTo(trackLayer);
-  } catch { /* трек необязателен */ }
+  if (m && !m.isPopupOpen()) setTimeout(() => m.openPopup(), fly ? 850 : 0);     // путь судна рисует карточка
 }
 
 /* ------------------------------------------------------------------ карточка судна */
@@ -826,7 +821,7 @@ function shipCard(d, zonesHtml, opts = {}) {
     ${screeningBlock(d.screening)}
     <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
     <div class="sc-actions">${opts.actions ? `<div class="sc-row">${opts.actions}</div>` : ""}
-      <div class="sc-row"><button class="btn ghost sc-track" type="button">Показать трек</button>
+      <div class="sc-row"><button class="btn ghost sc-track" type="button">Скрыть путь</button>
       <a class="btn ghost" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div></div>
     <div class="sc-tabs"><button type="button" class="on" data-tab="info">Судно</button>
       <button type="button" data-tab="events">События <span class="sc-evn"></span></button></div>
@@ -867,7 +862,7 @@ function screeningBlock(sc) {
 }
 
 // После открытия карточки: фото с Wikimedia Commons (если есть) и кнопка трека
-async function hydrateCard(popup, onTrack) {
+async function hydrateCard(popup, trackUrl) {
   const el = popup.getElement()?.querySelector(".sc");
   if (!el) return;
   // карточка становится содержимым попапа как узел, а не строка: иначе popup.update() после
@@ -876,13 +871,18 @@ async function hydrateCard(popup, onTrack) {
   // карточка не выше карты: иначе на невысоком экране верх уходит за край и не прокручивается
   el.style.maxHeight = `${Math.max(240, map.getSize().y - 60)}px`;
   fitPopup(popup);
-  el.querySelector(".sc-track").onclick = onTrack;
+  const btn = el.querySelector(".sc-track");
+  btn.onclick = () => {
+    const shown = map.hasLayer(pathLayer);
+    if (shown) map.removeLayer(pathLayer); else pathLayer.addTo(map);
+    btn.textContent = shown ? "Показать путь" : "Скрыть путь";
+  };
   $$(".sc-tabs button", el).forEach((b) => b.onclick = () => {
     $$(".sc-tabs button", el).forEach((x) => x.classList.toggle("on", x === b));
     $$(".sc-pane", el).forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
   });
   loadShipEvents(el);
-  loadShipRoute(el, popup);
+  loadShipPath(el, popup, trackUrl);
   const imo = el.dataset.imo;
   if (!imo) return;
   try {
@@ -912,34 +912,51 @@ function fitPopup(popup) {
   if (popup.isOpen() && popup._adjustPan) popup._adjustPan();
 }
 
-// Пункт назначения: порт по коду UN/LOCODE или названию, типовой морской путь до него пунктиром, зоны в порту и по пути
-const routeLayer = L.layerGroup().addTo(map);
+// Путь судна в карточке: пройденный трек (сплошная линия) + типовой путь до порта назначения (пунктир).
+// Рисуется сам при открытии карточки, убирается при закрытии; кнопка в карточке прячет и показывает.
+const pathLayer = L.layerGroup().addTo(map);
+const PATH_PAST = "#4fc3d9";
 
-async function loadShipRoute(el, popup) {
+async function loadShipPath(el, popup, trackUrl) {
   const box = el.querySelector(".sc-dest");
-  try {
-    const { destination: dest, route: r } = await api(`/api/traffic/${encodeURIComponent(el.dataset.mmsi)}/route`);
-    if (!el.isConnected) return;
-    if (!r) {
-      if (dest) box.innerHTML = `<span class="muted small">Порт «${esc(dest)}» не распознан — судно указало его не кодом и не названием из справочника UN/LOCODE</span>`;
-      fitPopup(popup);
-      return;
-    }
-    const zl = (zs) => zs.map((z) => esc(z.name)).join(", ");
-    box.innerHTML = `<div class="small">→ <b>${esc(r.port)}</b> <span class="muted">(${esc(r.country)}, ${esc(r.code)})</span>${
+  const mmsi = el.dataset.mmsi;
+  pathLayer.clearLayers();
+  if (!map.hasLayer(pathLayer)) pathLayer.addTo(map);
+  popup.once("remove", () => { if (state.pathFor === mmsi) pathLayer.clearLayers(); });
+  state.pathFor = mmsi;
+  const [tr, rt] = await Promise.allSettled([api(trackUrl), api(`/api/traffic/${encodeURIComponent(mmsi)}/route`)]);
+  if (!el.isConnected || state.pathFor !== mmsi) return;
+  const here = popup.getLatLng();
+  // пройдено
+  const pts = (tr.status === "fulfilled" ? tr.value.points : []).map((p) => [p.lat, p.lon]);
+  const first = tr.status === "fulfilled" ? tr.value.points[0] : null;
+  const hours = first ? (first.age_s != null ? first.age_s / 3600 : (Date.now() - Date.parse(first.ts)) / 3600e3) : 0;
+  if (pts.length > 1) {
+    L.polyline([...pts, [here.lat, here.lng]], { color: PATH_PAST, weight: 2.5, opacity: 0.9, interactive: false }).addTo(pathLayer);
+    L.circleMarker(pts[0], { radius: 3, weight: 0, fillColor: PATH_PAST, fillOpacity: 1, interactive: false }).addTo(pathLayer);
+  }
+  // впереди
+  const { destination: dest, route: r } = rt.status === "fulfilled" ? rt.value : {};
+  const zl = (zs) => zs.map((z) => esc(z.name)).join(", ");
+  let html = "";
+  if (r) {
+    const color = r.port_zones.length ? "#ff5a4e" : "#e8f1f5";
+    if (r.line) L.polyline(r.line, { color, weight: 2, opacity: 0.8, dashArray: "6 7", interactive: false }).addTo(pathLayer);
+    L.circleMarker(r.line ? r.line[r.line.length - 1] : [r.lat, r.lon], { radius: 6, color, weight: 2, fillColor: "#0b1a22", fillOpacity: 1 })
+      .bindTooltip(`Пункт назначения: ${esc(r.port)}`, { direction: "top" }).addTo(pathLayer);
+    html = `<div class="small">→ <b>${esc(r.port)}</b> <span class="muted">(${esc(r.country)}, ${esc(r.code)})</span>${
       r.distance_nm != null ? ` · ${r.distance_nm.toLocaleString("ru-RU")} миль ${r.path === "sea" ? "по морю" : "по прямой"}` : ""}</div>
       ${r.port_zones.length ? `<div class="zin small">● Порт в зоне: ${zl(r.port_zones)}</div>` : `<div class="zok small">Порт вне зон риска</div>`}
       ${r.route_zones?.length ? `<div class="znr small" title="${r.path === "sea"
         ? "Типовой морской маршрут (searoute), а не план рейса — судно может идти иначе"
         : "Прямая линия: реальный путь обходит сушу"}">◌ ${r.path === "sea" ? "По пути" : "По прямой"} через: ${zl(r.route_zones)}</div>` : ""}`;
-    routeLayer.clearLayers();
-    const color = r.port_zones.length ? "#ff5a4e" : "#4fc3d9";
-    if (r.line) L.polyline(r.line, { color, weight: 1.5, opacity: 0.85, dashArray: "4 6", interactive: false }).addTo(routeLayer);
-    L.circleMarker(r.line ? r.line[r.line.length - 1] : [r.lat, r.lon], { radius: 6, color, weight: 2, fillColor: "#0b1a22", fillOpacity: 1 })
-      .bindTooltip(`Пункт назначения: ${esc(r.port)}`, { direction: "top" }).addTo(routeLayer);
-    popup.once("remove", () => routeLayer.clearLayers());
-    fitPopup(popup);
-  } catch { /* пункт назначения необязателен */ }
+  } else if (dest) {
+    html = `<span class="muted small">Порт «${esc(dest)}» не распознан — судно указало его не кодом и не названием из справочника UN/LOCODE</span>`;
+  }
+  const legend = [pts.length > 1 ? `<span><i class="lg-past"></i>пройдено${hours >= 1 ? ` за ${Math.round(hours)} ч` : ""}</span>` : "",
+    r ? `<span><i class="lg-ahead${r.port_zones.length ? " risk" : ""}"></i>впереди${r.path === "sea" ? " (типовой маршрут)" : ""}</span>` : ""].join("");
+  box.innerHTML = html + (legend ? `<div class="sc-legend">${legend}</div>` : "");
+  fitPopup(popup);
 }
 
 // Новость — сюжет: одинаковые статьи разных изданий схлопнуты, count — сколько изданий написали
@@ -973,14 +990,6 @@ function zoneLines(inside, near) {
     ...inside.map((z) => `<div class="zin">● В зоне: ${esc(z.name)}${z.since ? ` <span class="muted">с ${fmtTime(z.since)}</span>` : ""}</div>`),
     ...near.map((z) => `<div class="znr">◌ ${esc(z.name)}: ${Math.round(z.distance_nm)} миль</div>`),
   ].join("") || `<div class="zok">Вне зон риска</div>`;
-}
-
-function drawTrack(points, color = "#4fc3d9") {
-  trackLayer.clearLayers();
-  const pts = points.map((p) => [p.lat, p.lon]);
-  if (pts.length < 2) { toast("Трек пока короткий", "Точки копятся раз в 10 минут, пока судно передаёт AIS."); return; }
-  L.polyline(pts, { color, weight: 2, opacity: 0.9, dashArray: "2 6" }).addTo(trackLayer);
-  pts.slice(0, -1).forEach((ll) => L.circleMarker(ll, { radius: 2, weight: 0, fillColor: color, fillOpacity: 0.9 }).addTo(trackLayer));
 }
 
 /* ------------------------------------------------------------------ все суда (AIS) */
@@ -1093,7 +1102,7 @@ async function openTrafficShip(mmsi, latlng) {
         <select class="sc-fleet" title="В какой флот добавить">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>` : "";
     popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
       { actions, ageS: s.age_s }));
-    hydrateCard(popup, async () => drawTrack((await api(`/api/traffic/${encodeURIComponent(mmsi)}/track`)).points, "#f6b26b"));
+    hydrateCard(popup, `/api/traffic/${encodeURIComponent(mmsi)}/track`);
     const btn = popup.getElement()?.querySelector("[data-add-fleet]");
     if (btn) btn.onclick = async () => {
       const fid = +popup.getElement().querySelector(".sc-fleet").value;
