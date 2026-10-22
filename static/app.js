@@ -2327,3 +2327,93 @@ renderLegend();
   setInterval(() => { if (!document.hidden) refreshAll(false); }, 10000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(false); });
 })();
+
+
+/* ------------------------------------------------------------------ обучение */
+// Короткий тур по интерфейсу: затемнение, подсвеченная область и карточка в 1–2 предложения.
+const TOUR = [
+  { el: "#ship-q", title: "Поиск судна",
+    text: "Название, MMSI, IMO или HIN. Найдёт и суда, которые сейчас вне зоны покрытия AIS." },
+  { el: "#map", title: "Карта и зоны риска",
+    text: "Цветные области — зоны JWC, IBF и INL. Нажмите на зону или судно, чтобы открыть подробности." },
+  { el: "#legend", title: "Легенда",
+    text: "Что значат цвета. Точка у кормы судна: зелёная — вне зоны риска, жёлтая — приближается, красная — в зоне. Слои можно скрывать." },
+  { tab: "fleet", title: "Флот",
+    text: "Ваши суда. Добавьте по MMSI или IMO, или загрузите список файлом. Цвет флота — цвет его судов на карте." },
+  { tab: "rules", title: "Правила",
+    text: "О чём сообщать: вход в зону, санкции, задержания, пропажа AIS. Проще всего начать с готового набора." },
+  { tab: "events", title: "Лента",
+    text: "Всё, что случилось: с вашими судами и в мире. Событие покажет место на карте, название судна — его карточку." },
+  { tab: "log", title: "Журнал",
+    text: "Сколько суда были в зонах риска — с выгрузкой в Excel для страховщика." },
+  { el: "#chip-circular", title: "Источники зон",
+    text: "Действующий циркуляр JWC и списки IBF и INL. Сайт сам проверяет обновления." },
+];
+const tour = { i: 0, box: null };
+
+function tourTarget(step) {
+  if (step.tab) { switchTab(step.tab); return $("#sidebar"); }
+  return $(step.el);
+}
+
+function tourShow() {
+  const step = TOUR[tour.i];
+  const target = tourTarget(step);
+  if (!target) { tourGo(1); return; }
+  if (!tour.box) {
+    tour.box = document.createElement("div");
+    tour.box.className = "tour";
+    tour.box.innerHTML = `<div class="tour-spot"></div><div class="tour-card" role="dialog" aria-live="polite"></div>`;
+    tour.box.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-tour]");
+      if (b) tourGo(b.dataset.tour === "next" ? 1 : b.dataset.tour === "back" ? -1 : 0);
+      else if (e.target === tour.box) tourEnd();
+    });
+    document.body.appendChild(tour.box);
+  }
+  const last = tour.i === TOUR.length - 1;
+  tour.box.querySelector(".tour-card").innerHTML = `
+    <div class="tour-step">${tour.i + 1} из ${TOUR.length}</div>
+    <button class="tour-x" type="button" data-tour="end" aria-label="Закрыть">✕</button>
+    <h4>${esc(step.title)}</h4><p>${esc(step.text)}</p>
+    <div class="tour-nav">${tour.i ? `<button class="btn ghost" type="button" data-tour="back">Назад</button>` : `<span></span>`}
+      <button class="btn" type="button" data-tour="${last ? "end" : "next"}">${last ? "Готово" : "Далее"}</button></div>`;
+  tourPlace(target);
+  tour.box.querySelector(".tour-card .btn:last-child").focus();
+}
+
+// подсветка по размеру элемента, карточка — рядом, где больше места
+function tourPlace(target) {
+  const r = target.getBoundingClientRect(), pad = 6, vw = innerWidth, vh = innerHeight;
+  const spot = tour.box.querySelector(".tour-spot"), card = tour.box.querySelector(".tour-card");
+  Object.assign(spot.style, { left: `${r.left - pad}px`, top: `${r.top - pad}px`, width: `${r.width + pad * 2}px`, height: `${r.height + pad * 2}px` });
+  const cw = Math.min(320, vw - 32), ch = card.offsetHeight, gap = 14;
+  let x, y;
+  if (r.width > vw * 0.6 && r.height > vh * 0.6) { x = (vw - cw) / 2; y = vh - ch - 40; }   // большая область — карточка внизу по центру
+  else if (vh - r.bottom > ch + gap) { x = r.left; y = r.bottom + gap; }
+  else if (vw - r.right > cw + gap) { x = r.right + gap; y = r.top; }
+  else if (r.left > cw + gap) { x = r.left - cw - gap; y = r.top; }
+  else { x = r.left; y = r.top - ch - gap; }
+  card.style.width = `${cw}px`;
+  card.style.left = `${Math.max(16, Math.min(x, vw - cw - 16))}px`;
+  card.style.top = `${Math.max(16, Math.min(y, vh - ch - 16))}px`;
+}
+
+function tourGo(d) {
+  if (!d) { tourEnd(); return; }
+  tour.i = Math.max(0, Math.min(TOUR.length - 1, tour.i + d));
+  tourShow();
+}
+function tourEnd() {
+  tour.box?.remove();
+  tour.box = null;
+  switchTab("fleet");
+}
+$("#btn-tour").onclick = () => { tour.i = 0; shipPanel.close(); tourShow(); };
+document.addEventListener("keydown", (e) => {
+  if (!tour.box) return;
+  if (e.key === "Escape") tourEnd();
+  else if (e.key === "ArrowRight") tourGo(1);
+  else if (e.key === "ArrowLeft" && tour.i) tourGo(-1);
+});
+addEventListener("resize", () => { if (tour.box) tourPlace(tourTarget(TOUR[tour.i])); });

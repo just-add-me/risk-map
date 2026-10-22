@@ -542,3 +542,24 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .ship-link:hover { color: var(--accent); text-decoration-color: currentColor; }
 .sc-evnote { padding: 10px 2px 2px; line-height: 1.45; }
 .sc-note { margin: 8px 12px 0; padding: 7px 10px; border-radius: 6px; background: rgba(245,177,61,.12); color: var(--amber, #f5b13d); font-size: 12.5px; line-height: 1.4; }
+
+/* ---------- обучение ---------- */
+.tour-btn { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 6px; border-radius: 15px;
+  border: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; white-space: nowrap; }
+.tour-btn:hover { border-color: var(--accent); }
+.tour-btn span { width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 var(--font);
+  background: var(--accent); color: var(--bg); }
+.tour-btn b { font-weight: 500; font-size: 13px; }
+@media (max-width: 900px) { .tour-btn { padding: 0 5px; } .tour-btn b { display: none; } }
+.tour { position: fixed; inset: 0; z-index: 5000; }
+.tour-spot { position: fixed; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(3, 10, 14, .68); outline: 2px solid var(--accent);
+  pointer-events: none; transition: all .25s ease; }
+.tour-card { position: fixed; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45); transition: left .25s ease, top .25s ease; }
+.tour-card h4 { margin: 2px 24px 6px 0; font-size: 15px; }
+.tour-card p { margin: 0 0 12px; color: var(--text); line-height: 1.45; }
+.tour-step { font: 11px/1 var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.tour-x { position: absolute; top: 8px; right: 8px; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; }
+.tour-x:hover { color: var(--text); }
+.tour-nav { display: flex; justify-content: space-between; align-items: center; }
+@media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } }
