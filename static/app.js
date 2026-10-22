@@ -73,7 +73,7 @@ mapCanvas._updatePoly = function (layer, closed) {
   if (!parts.length) return;
   const W = this._map.getPixelWorldBounds().getSize().x;
   const x0 = this._map.latLngToLayerPoint([0, 180]).x;
-  const seam = (x) => { const d = (((x - x0) % W) + W) % W; return d < 1 || W - d < 1; };
+  const seam = (x) => { const d = (((x - x0) % W) + W) % W; return d <= 1.5 || W - d <= 1.5; };   // ±1 px округления
   const ctx = this._ctx;
   ctx.beginPath();
   parts.forEach((ring) => {

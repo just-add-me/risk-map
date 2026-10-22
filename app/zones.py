@@ -87,12 +87,10 @@ SEAM_SNAP = 0.12          # градусов: точки ближе к 180° с�
 def _seamless(geom: dict) -> dict:
     """Готовит контур к стыку на 180-м меридиане (карта рисует копии мира со сдвигом 360°).
 
-    Части за пределами ±180° переносятся на другую сторону, а точки у самого меридиана ставятся
-    ровно на него — тогда край по 180° на карте не обводится и шов не виден.
+    Части за пределами ±180° обрезаются, а точки у самого меридиана ставятся ровно на него —
+    тогда край по 180° на карте не обводится и шов не виден.
     """
-    from shapely import affinity
     from shapely.geometry import box, mapping, shape
-    from shapely.ops import unary_union
     from .geo.builder import polygonal
 
     def snap(c):
@@ -105,11 +103,9 @@ def _seamless(geom: dict) -> dict:
         g = shape(geom)
         minx, _, maxx, _ = g.bounds
         if minx < -180 or maxx > 180:
-            g = polygonal(unary_union([
-                g.intersection(box(-180, -90, 180, 90)),
-                affinity.translate(g.intersection(box(-540, -90, -180, 90)), xoff=360),
-                affinity.translate(g.intersection(box(180, -90, 540, 90)), xoff=-360)]))
-            geom = mapping(g)
+            # за ±180° выходит только 12-мильная полоса, построенная по суше с этой стороны; у другой
+            # стороны своя полоса, а перенос лёг бы на чужую сушу — поэтому просто обрезаем
+            geom = mapping(polygonal(g.intersection(box(-180, -90, 180, 90))))
         if minx > -180 + SEAM_SNAP and maxx < 180 - SEAM_SNAP:
             return geom
         geom = json.loads(json.dumps(geom))          # mapping() даёт кортежи
