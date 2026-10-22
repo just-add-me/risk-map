@@ -349,14 +349,19 @@ async def api_ship_events(request: Request):
         out = [{"ts": r["last_seen"], "severity": incidents.KINDS.get(r["kind"], {}).get("severity", "info"),
                 "title": incidents.KINDS.get(r["kind"], {}).get("label", r["kind"]), "body": r["text"] or "",
                 "count": r["count"], "source": "incident", "kind": r["kind"], "outlet": r["source"],
-                "url": r["extra"] if str(r["extra"] or "").startswith("http") else None}
-               for r in db.query("SELECT kind, text, last_seen, count, source, extra FROM incidents WHERE mmsi=? "
+                "url": r["extra"] if str(r["extra"] or "").startswith("http") else None, "lat": r["lat"], "lon": r["lon"]}
+               for r in db.query("SELECT kind, text, last_seen, count, source, extra, lat, lon FROM incidents WHERE mmsi=? "
                                  "ORDER BY last_seen DESC LIMIT 100", (mmsi,))]
-        out += [{"ts": r["ts"], "severity": r["severity"], "title": r["title"], "body": r["body"] or "",
-                 "source": "notification"}
-                for r in db.query(f"SELECT n.ts, n.severity, n.title, n.body FROM notifications n "
-                                  f"WHERE n.mmsi=? AND n.kind <> 'incident' AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
-                                  (mmsi, user, user, user))]
+        # уведомление правила «Событие с судном» повторяет само происшествие — его не показываем
+        seen = {e["body"].strip() for e in out if e["body"]}
+        for r in db.query(f"SELECT n.id, n.ts, n.kind, n.severity, n.title, n.body, n.zone_id, n.lat, n.lon FROM notifications n "
+                          f"WHERE n.mmsi=? AND n.kind <> 'incident' AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
+                          (mmsi, user, user, user)):
+            if (r["body"] or "").split("\n")[0].strip() in seen:
+                continue
+            out.append({"ts": r["ts"], "severity": r["severity"], "title": r["title"], "body": r["body"] or "",
+                        "source": "notification", "id": r["id"], "kind": r["kind"], "zone_id": r["zone_id"],
+                        "lat": r["lat"], "lon": r["lon"], "mmsi": mmsi})
         return sorted(out, key=lambda e: e["ts"], reverse=True)[:100]
     return JSONResponse({"items": await asyncio.to_thread(load)}, headers={"Cache-Control": "no-store"})
 

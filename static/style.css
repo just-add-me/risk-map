@@ -284,11 +284,8 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-tabs button { flex: 1; padding: 8px 6px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .sc-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
 .sc-evn { color: var(--accent); font-weight: 600; }
-.sc-events { padding: 8px 12px 10px; }
-.sc-ev { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
-.sc-ev:last-child { border-bottom: 0; }
-.sc-ev .dot { width: 8px; height: 8px; vertical-align: middle; margin-right: 4px; }
-.sc-ev-body { margin-top: 3px; white-space: pre-line; overflow-wrap: anywhere; }
+.sc-events { padding: 8px 10px 10px; }
+.sc-events.feed-list .feed-item { margin-bottom: 6px; }
 @media (max-height: 760px) { .sc-photo, .sc-photo img, .sc-photo .sc-sil { height: 100px; } }
 .sc-head { display: flex; gap: 10px; align-items: center; padding: 10px 28px 8px 12px; }
 .sc-flag { width: 30px; height: 20px; object-fit: cover; border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.15); flex: none; }

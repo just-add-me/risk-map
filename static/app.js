@@ -1123,14 +1123,41 @@ async function loadShipEvents(el) {
     if (!el.isConnected) return;
     el.querySelector(".sc-evn").textContent = items.length || "";
     box.classList.toggle("muted", !items.length);
-    box.innerHTML = items.length ? items.map((e) => `<div class="sc-ev">
-      <div><i class="dot" style="background:${SEV_COLORS[e.severity] || SEV_COLORS.info}"></i>
-        <b>${esc(e.title)}</b>${e.count > 1 ? ` <span class="muted">${isNews(e.kind) ? sourcesText(e.count) : `×${e.count}`}</span>` : ""}</div>
-      <div class="muted">${fmtTime(e.ts)}</div>
-      ${e.body ? `<div class="sc-ev-body">${esc(e.body)}</div>` : ""}
-      ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.outlet || "Открыть статью")} ↗</a>` : ""}</div>`).join("")
+    box.classList.toggle("feed-list", !!items.length);
+    box.innerHTML = items.length ? items.map((e, i) => shipEventRow(e, i)).join("")
       : "Событий по этому судну пока нет: здесь появятся входы в зоны, срабатывания правил, аварийные сигналы, санкции, задержания и новости.";
+    $$(".feed-item", box).forEach((row) => row.onclick = (ev) => {
+      if (ev.target.closest("a")) return;
+      const e = items[+row.dataset.i];
+      if (e.lat == null && !/Позиция/.test(e.body || "")) return;
+      showEventSpot({ ...e, mmsi: el.dataset.mmsi, title: e.source === "incident" ? e.title : e.title, ts: e.ts, body: e.body },
+        notifPoint(e), { keepPanel: true });
+    });
   } catch (e) { box.textContent = `Не удалось загрузить события: ${e.message}`; }
+}
+
+// Строка события в карточке судна — как в ленте, но без названия судна (карточка и так про него)
+function shipEventRow(e, i) {
+  const where = notifPoint(e) ? `<span class="fi-map" title="Нажмите — покажу на карте">◎ на карте</span>` : "";
+  if (e.source === "incident") {
+    const link = e.url ? `<div class="fi-link"><a class="small" href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.outlet || "Открыть статью")} ↗</a>${
+      isNews(e.kind) && e.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(e.count - 1)}</span>` : ""}</div>` : "";
+    return `<div class="feed-item ${e.severity} read" data-i="${i}">
+      <div class="fi-meta"><span class="fi-src">${isNews(e.kind) ? "новости" : "происшествие"}</span>${where}<span class="fi-time">${fmtTime(e.ts)}${
+        e.count > 1 && !isNews(e.kind) ? ` · ×${e.count}` : ""}</span></div>
+      <div class="fi-event">${esc(e.title)}</div>
+      ${e.body ? `<div class="fi-quote">${esc(e.body)}</div>` : ""}${link}</div>`;
+  }
+  const [first, ...rest] = (e.body || "").split("\n");
+  // название судна в начале заголовка не нужно — карточка и так про это судно («FARAHI2: идёт в порт…»)
+  const title = /\(MMSI \d+\): /.test(e.title || "") ? e.title : (e.title || "").replace(/^[^«:]+: /, "");
+  const t = splitTitle(title, /\(MMSI \d+\): /.test(title) ? e.mmsi || "x" : null);
+  return `<div class="feed-item ${e.severity} read" data-i="${i}">
+    <div class="fi-meta"><span class="fi-src">${SYSTEM_KINDS.has(e.kind) ? "система" : "правило"}</span>${where}<span class="fi-time">${fmtTime(e.ts)}</span></div>
+    <div class="fi-event">${esc(t.event)}</div>
+    ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
+    ${detailLines(first).length ? `<ul class="fi-lines">${detailLines(first).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+    ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^(Правило «[^»]*»).*$/s, "$1").replace(/\.$/, ""))}</div>` : ""}</div>`;
 }
 
 function zoneLines(inside, near) {
@@ -1817,9 +1844,9 @@ function notifPoint(n) {
 
 // Метка события на карте: пульсирующее кольцо, краткое описание, связанная зона подсвечена
 const eventSpot = L.layerGroup().addTo(map);
-function showEventSpot(n, at) {
+function showEventSpot(n, at, opts = {}) {
   eventSpot.clearLayers();
-  shipPanel.close();
+  if (!opts.keepPanel) shipPanel.close();
   const t = splitTitle(n.title, n.mmsi);
   const [first] = (n.body || "").split("\n");
   const color = { critical: "#ff5a4e", warning: "#f5b13d", info: "#4fc3d9" }[n.severity] || "#4fc3d9";
@@ -1839,8 +1866,13 @@ function showEventSpot(n, at) {
   });
   m.on("popupclose", () => { eventSpot.clearLayers(); if (n.zone_id && state.selectedZone === n.zone_id) selectZone(null); });
   if (n.zone_id) selectZone(n.zone_id);
-  map.flyTo(at, Math.max(map.getZoom(), 7), { duration: 0.8 });
-  setTimeout(() => m.openPopup(), 850);
+  if (opts.keepPanel && shipPanel.isOpen()) {        // карточка открыта — точка в свободной части карты
+    map.fitBounds(L.latLngBounds([at, at]), { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
+    setTimeout(() => m.openPopup(), 400);
+  } else {
+    map.flyTo(at, Math.max(map.getZoom(), 7), { duration: 0.8 });
+    setTimeout(() => m.openPopup(), 850);
+  }
 }
 
 /* ------------------------------------------------------------------ циркуляры */
