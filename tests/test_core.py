@@ -550,11 +550,57 @@ def test_news_relevance_and_risk():
     item = {"title": "Tanker SANAR 14 seized by navy in Gulf", "summary": "", "url": "u", "published": None}
     assert news.relevant(item, "SANAR-14", "9313589")
     assert news.risk_topics(item) == ["захват / задержание"]
-    other = {"title": "Sanar 14 restaurant opens downtown", "summary": "", "url": "u", "published": None}
+    # короткое название без упоминания в заголовке и без текста статьи — не засчитываем
+    other = {"title": "Restaurant opens downtown", "summary": "", "url": "u", "published": None, "via": "google"}
     assert not news.relevant(other, "SANAR-14", "9313589")
+    # упоминание только в тексте статьи: засчитываем, если текст удалось открыть и судно там есть
+    news_text = "The tanker Chemical Traveller was boarded by armed men, the crew is safe."
+    from unittest import mock
+    with mock.patch.object(news, "article_text", lambda url: news_text):
+        assert news.relevant({**other, "via": "bing"}, "CHEMICAL TRAVELLER", "9804851")
+        assert not news.relevant({**other, "via": "bing"}, "SANAR-14", "9313589")
+        assert not news.relevant(other, "CHEMICAL TRAVELLER", "9804851")       # Google: текст не открыть
     assert news.relevant({"title": "Report", "summary": "IMO 9313589 boarded", "url": "u"}, "", "9313589")
     rss = """<rss><channel><item><title>Ship X hit by drone - Reuters</title><link>https://news.google.com/a</link>
       <pubDate>Wed, 21 Oct 2026 10:00:00 GMT</pubDate><source url="https://reuters.com">Reuters</source>
       <description>&lt;a&gt;Ship X&lt;/a&gt;</description></item></channel></rss>"""
     it = news.parse_rss(rss, "google")[0]
     assert it["title"] == "Ship X hit by drone" and it["outlet"] == "Reuters" and it["published"].day == 21
+
+
+def test_news_same_story_and_rank():
+    from app import news
+    a = "Houthis attack tanker Chemical Traveller in Red Sea"
+    b = "Chemical Traveller tanker attacked by Houthis in the Red Sea, crew safe"
+    c = "Port fees rise in Rotterdam"
+    assert news.same_story(a, b, "CHEMICAL TRAVELLER")
+    assert not news.same_story(a, c, "CHEMICAL TRAVELLER")
+    assert news.outlet_rank("Reuters") > news.outlet_rank("Some Blog")
+
+
+def test_news_check_vessel_collapses_stories(monkeypatch):
+    from app import news
+    db.connect()
+    db.execute("DELETE FROM news")
+    db.execute("DELETE FROM incidents WHERE kind IN ('news', 'news_risk')")
+
+    def rss(*items):
+        body = "".join(f"<item><title>{t} - {o}</title><link>https://ex.com/{i}-{abs(hash(t))}</link>"
+                       f"<pubDate>Wed, 21 Oct 2026 10:00:00 GMT</pubDate><source>{o}</source>"
+                       f"<description>{t}</description></item>" for i, (t, o) in enumerate(items))
+        return f"<rss><channel>{body}</channel></rss>"
+
+    pages = {"google": rss(("Chemical Traveller tanker loads cargo in Antwerp", "Some Blog"))}
+    monkeypatch.setattr(news, "_get", lambda url: pages["google"] if "google" in url else "<rss><channel/></rss>")
+    v = {"imo": "9804851", "mmsi": "249066000", "name": "CHEMICAL TRAVELLER"}
+    assert news.check_vessel(v, pause=0) == 1
+    # второй прогон: то же событие у Reuters (лучшее издание) и у блога, плюс тревожная статья
+    pages["google"] = rss(("Chemical Traveller tanker loads cargo in Antwerp port", "Reuters"),
+                          ("Chemical Traveller tanker loads cargo at Antwerp terminal", "Other Blog"),
+                          ("Tanker Chemical Traveller seized off Oman", "Lloyd's List"))
+    assert news.check_vessel(v, pause=0) == 3
+    rows = db.query("SELECT kind, text, source, count FROM incidents WHERE mmsi='249066000' "
+                    "AND kind IN ('news', 'news_risk') ORDER BY id")
+    assert [(r["kind"], r["source"], r["count"]) for r in rows] == [("news", "Reuters", 3), ("news_risk", "Lloyd's List", 1)]
+    # повторный прогон с теми же статьями ничего не добавляет
+    assert news.check_vessel(v, pause=0) == 0

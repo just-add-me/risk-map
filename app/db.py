@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS screening_hits(
 CREATE TABLE IF NOT EXISTS news(
     imo TEXT NOT NULL, title_key TEXT NOT NULL, url TEXT, title TEXT, outlet TEXT,
     published TEXT, found_at TEXT NOT NULL, topics TEXT,
+    story TEXT,                    -- title_key первой статьи сюжета: одинаковые новости разных изданий
+    incident_id INTEGER,           -- запись в incidents, которая показывает сюжет
     PRIMARY KEY(imo, title_key)
 );
 CREATE TABLE IF NOT EXISTS kv(
@@ -205,6 +207,10 @@ def connect() -> sqlite3.Connection:
             # уведомление может быть адресовано одному пользователю (сработало его правило)
             if "username" not in {r[1] for r in _conn.execute("PRAGMA table_info(notifications)")}:
                 _conn.execute("ALTER TABLE notifications ADD COLUMN username TEXT")
+            news_cols = {r[1] for r in _conn.execute("PRAGMA table_info(news)")}
+            for col, typ in (("story", "TEXT"), ("incident_id", "INTEGER")):
+                if col not in news_cols:
+                    _conn.execute(f"ALTER TABLE news ADD COLUMN {col} {typ}")
             # индексы для выборки уведомлений пользователя (колонка username появляется только после миграции)
             _conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_mmsi ON notifications(mmsi)")
             _conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(username)")

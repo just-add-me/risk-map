@@ -910,6 +910,14 @@ function fitPopup(popup) {
   if (popup.isOpen() && popup._adjustPan) popup._adjustPan();
 }
 
+// Новость — сюжет: одинаковые статьи разных изданий схлопнуты, count — сколько изданий написали
+const isNews = (kind) => kind === "news" || kind === "news_risk";
+function sourcesText(n) {
+  const m10 = n % 10, m100 = n % 100;
+  const w = m10 === 1 && m100 !== 11 ? "источник" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "источника" : "источников";
+  return `${n} ${w}`;
+}
+
 // Вкладка «События» в карточке: происшествия AIS, санкции, задержания, уведомления по зонам и правилам
 async function loadShipEvents(el) {
   const box = el.querySelector(".sc-events");
@@ -920,7 +928,7 @@ async function loadShipEvents(el) {
     box.classList.toggle("muted", !items.length);
     box.innerHTML = items.length ? items.map((e) => `<div class="sc-ev">
       <div><i class="dot" style="background:${SEV_COLORS[e.severity] || SEV_COLORS.info}"></i>
-        <b>${esc(e.title)}</b>${e.count > 1 ? ` <span class="muted">×${e.count}</span>` : ""}</div>
+        <b>${esc(e.title)}</b>${e.count > 1 ? ` <span class="muted">${isNews(e.kind) ? sourcesText(e.count) : `×${e.count}`}</span>` : ""}</div>
       <div class="muted">${fmtTime(e.ts)}</div>
       ${e.body ? `<div class="sc-ev-body">${esc(e.body)}</div>` : ""}
       ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.outlet || "Открыть статью")} ↗</a>` : ""}</div>`).join("")
@@ -1349,7 +1357,8 @@ async function loadIncidents(force = false) {
 
 function incPopup(it) {
   return `<h4>${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</h4>
-    <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · ${fmtTime(it.ts)}${it.count > 1 ? ` · повторялось ${it.count} раз, последний ${ago(it.last_seen)}` : ""}</div>
+    <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · ${fmtTime(it.ts)}${it.count > 1 ? (isNews(it.kind) ? ` · ${sourcesText(it.count)}, последний ${ago(it.last_seen)}`
+      : ` · повторялось ${it.count} раз, последний ${ago(it.last_seen)}`) : ""}</div>
     ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
     ${/^https?:\/\//.test(it.extra || "") ? `<p><a href="${esc(it.extra)}" target="_blank" rel="noopener">Открыть статью ↗</a></p>`
       : it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
@@ -1390,7 +1399,8 @@ function renderIncidents() {
       <div><div class="inc-title">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
         <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · <span class="nowrap">${ago(it.last_seen)}</span>${it.lat == null ? " · без координат" : ""}</div>
         ${it.text ? `<div class="small inc-text">«${esc(it.text)}»</div>` : ""}
-        ${/^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>` : ""}</div></li>`).join("")
+        ${/^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
+          isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : ""}</div></li>`).join("")
     || `<li class="empty muted">За выбранный период ничего нет. Сообщения о происшествиях редкие — они появятся здесь, как только придут.</li>`;
   $$("#inc-list .inc").forEach((el) => el.onclick = (e) => {
     if (e.target.closest("a")) return;           // ссылка на статью открывается сама

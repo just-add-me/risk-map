@@ -1,12 +1,13 @@
 """Новости о судах флота из открытых источников (без языковой модели).
 
 Раз в 6 часов для каждого судна флота ищем статьи в RSS-поиске Google News и Bing News:
-по номеру IMO и по названию судна вместе с морскими словами. Статья засчитывается, только если
-в заголовке или описании есть IMO или название судна. Тревожные слова (захват, задержание,
-атака, пожар, санкции…) делают находку «тревожной»: она попадает в происшествия как news_risk
-и даёт уведомление. Остальные — news, видны в «Событиях» и в карточке судна без уведомления.
+по номеру IMO и по названию судна вместе с морскими словами. Упоминание судна в тексте статьи
+засчитывается (см. relevant). Одинаковые новости разных изданий схлопываются в один сюжет
+(same_story); показывается статья самого авторитетного издания, рядом — число источников.
+Тревожные слова (захват, задержание, атака, пожар, санкции…) делают сюжет «тревожным»: он
+попадает в происшествия как news_risk и даёт уведомление. Остальные — news, без уведомления.
 
-Найденные ссылки хранятся в таблице news, чтобы одна и та же статья не появлялась повторно.
+Найденные статьи хранятся в таблице news, чтобы одна и та же статья не появлялась повторно.
 """
 from __future__ import annotations
 
@@ -93,7 +94,9 @@ def _google(q: str) -> str:
 
 def _queries(name: str, imo: str) -> list[tuple[str, str]]:
     when = f" when:{MAX_AGE_DAYS}d"
-    q = [("google", _google(f'"IMO {imo}" OR "IMO: {imo}"' + when))]
+    imo_q = f'"IMO {imo}" OR "IMO: {imo}"'
+    q = [("google", _google(imo_q + when)),
+         ("bing", "https://www.bing.com/news/search?q=" + quote_plus(imo_q) + "&format=rss")]
     if name and len(name) >= 5:
         words = " (tanker OR vessel OR ship OR carrier OR cargo)"
         q.append(("google", _google(f'"{name}"' + words + when)))
@@ -101,21 +104,90 @@ def _queries(name: str, imo: str) -> list[tuple[str, str]]:
     return q
 
 
+def _name_re(name: str) -> re.Pattern:
+    """Название целиком, с любыми пробелами и дефисами между словами («SANAR-14» = «Sanar 14»)."""
+    return re.compile(r"(?<![\w])" + r"[\s\-]*".join(map(re.escape, re.split(r"[\s\-]+", name))) + r"(?![\w'’])",
+                      re.I)
+
+
+def mentions(text: str, name: str, imo: str) -> bool:
+    return imo in text or bool(name and len(name) >= 5 and _name_re(name).search(text)
+                               and re.search(rf"\b(?:{MARITIME})", text, re.I))
+
+
 def relevant(item: dict, name: str, imo: str) -> bool:
-    """Статья про это судно: в тексте IMO, либо название целиком и морские слова."""
-    blob = f"{item['title']} {item['summary']}"
-    if imo in blob:
+    """Статья про это судно: IMO или название в заголовке/описании, а иначе — в тексте самой статьи.
+
+    Текст открываем только по прямым ссылкам Bing. Ссылки Google ведут на их окно согласия на cookies,
+    а сам поиск Google по точной фразе неточен (на «EAGLE S» находит «Harry S. Truman») — поэтому
+    его находки без названия в заголовке или описании не засчитываем.
+    """
+    if mentions(f"{item['title']} {item['summary']}", name, imo):
         return True
-    if not name or len(name) < 5:
+    if item.get("via") != "bing":
         return False
-    pat = r"(?<![\w])" + r"[\s\-]*".join(map(re.escape, re.split(r"[\s\-]+", name))) + r"(?![\w])"
-    return bool(re.search(pat, blob, re.I)) and bool(re.search(rf"\b(?:{MARITIME})", blob, re.I))
+    text = article_text(item["url"])
+    return bool(text) and mentions(text, name, imo)
+
+
+def article_text(url: str) -> Optional[str]:
+    """Текст статьи по прямой ссылке (до 1,5 МБ). None — открыть не удалось."""
+    try:
+        with requests.get(url, timeout=15, stream=True, headers={"User-Agent": config.HTTP_USER_AGENT}) as r:
+            if r.status_code != 200 or "html" not in r.headers.get("content-type", ""):
+                return None
+            body = b""
+            for chunk in r.iter_content(65536):
+                body += chunk
+                if len(body) > 1_500_000:
+                    break
+        page = body.decode(r.encoding or "utf-8", errors="replace")
+        page = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", page)
+        return _clean(page)
+    except requests.RequestException:
+        return None
 
 
 def risk_topics(item: dict) -> list[str]:
     blob = f"{item['title']} {item['summary']}"
     # с начала слова: иначе «ceasefire» — пожар, а «bleak» — течь
     return [label for label, pat in RISK_WORDS.items() if re.search(rf"\b(?:{pat})", blob, re.I)]
+
+
+# --- одинаковые новости разных изданий -> один сюжет -----------------------------------
+# Данных о просмотрах у RSS нет, поэтому сюжет показываем статьёй самого авторитетного издания.
+OUTLET_RANK = [
+    (10, "reuters", "bloomberg", "associated press", "ap news", "financial times", "wall street journal"),
+    (9, "lloyd's list", "lloyds list", "tradewinds", "bbc", "new york times", "the guardian", "s&p global"),
+    (8, "maritime executive", "gcaptain", "splash247", "splash 247", "seatrade", "cnn", "al jazeera", "politico"),
+    (7, "safety4sea", "marine insight", "hellenic shipping", "offshore energy", "maritime bulletin", "argus",
+     "kpler", "windward", "the economist", "kyiv independent"),
+]
+STOP = set("the a an of to in on for and or with from by at as is are was were be has have after over into new "
+           "its his her their this that ship vessel tanker cargo carrier".split())
+
+
+def outlet_rank(outlet: str) -> int:
+    o = (outlet or "").lower()
+    return next((rank for rank, *names in OUTLET_RANK if any(n in o for n in names)), 3)
+
+
+def _tokens(title: str, name: str) -> set[str]:
+    skip = {w.lower() for w in re.split(r"[\s\-]+", name or "")}
+    return {w for w in re.findall(r"[\w']{3,}", title.lower()) if w not in STOP and w not in skip}
+
+
+def same_story(a: str, b: str, name: str) -> bool:
+    """Заголовки об одном событии: большая доля общих значимых слов."""
+    ta, tb = _tokens(a, name), _tokens(b, name)
+    if not ta or not tb:
+        return False
+    common = len(ta & tb)
+    return common / min(len(ta), len(tb)) >= 0.6 and common >= 2 or common / len(ta | tb) >= 0.45
+
+
+def _key(title: str) -> str:
+    return re.sub(r"\W+", " ", title.lower()).strip()[:300]
 
 
 def _fleet() -> list[dict]:
@@ -133,8 +205,10 @@ def _fleet() -> list[dict]:
 def check_vessel(v: dict, pause: float = PAUSE_S) -> int:
     """Ищет новости об одном судне; возвращает число новых статей."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
+    known = {r["title_key"] for r in db.query("SELECT title_key FROM news WHERE imo=?", (v["imo"],))}
+    known_urls = {r["url"] for r in db.query("SELECT url FROM news WHERE imo=?", (v["imo"],))}
     found: dict[str, dict] = {}
-    for source, url in _queries(v["name"], v["imo"]):
+    for i, (source, url) in enumerate(_queries(v["name"], v["imo"])):
         try:
             items = parse_rss(_get(url), source)
         except Exception as exc:  # noqa: BLE001 — один поисковик не должен ломать остальные
@@ -142,29 +216,68 @@ def check_vessel(v: dict, pause: float = PAUSE_S) -> int:
             state["last_error"] = f"{source}: {exc}"
             items = []
         for it in items:
+            it["query"] = "imo" if i < 2 else "name"
+            key = _key(it["title"])
+            if key in known or key in found or it["url"] in known_urls:
+                continue
             if it["published"] and it["published"] < cutoff:
                 continue
             if relevant(it, v["name"], v["imo"]):
-                key = re.sub(r"\W+", " ", it["title"].lower()).strip()
-                found.setdefault(key, it)
+                found[key] = it
         time.sleep(pause)
+    if not found:
+        return 0
     # первая проверка судна — без уведомлений: иначе разом придут статьи за прошлый месяц
-    first = not db.query_one("SELECT 1 FROM news WHERE imo=? LIMIT 1", (v["imo"],))
-    new = 0
-    for it in found.values():
-        cur = db.execute("INSERT OR IGNORE INTO news(imo, title_key, url, title, outlet, published, found_at, topics) "
-                         "VALUES(?,?,?,?,?,?,?,?)",
-                         (v["imo"], re.sub(r"\W+", " ", it["title"].lower()).strip()[:300], it["url"], it["title"],
-                          it["outlet"], it["published"].replace(microsecond=0).isoformat() if it["published"] else None,
-                          db.now_iso(), ", ".join(risk_topics(it))))
-        if not cur.rowcount:
-            continue
-        new += 1
-        topics = risk_topics(it)
+    first = not known
+    # сюжеты за последние 2 недели: новые статьи присоединяем к ним, если это то же событие
+    stories: dict[str, list[dict]] = {}
+    for r in db.query("SELECT * FROM news WHERE imo=? AND found_at > ?", (v["imo"], _ago(14))):
+        stories.setdefault(r["story"] or r["title_key"], []).append(r)
+    touched: set[str] = set()
+    for key, it in sorted(found.items(), key=lambda kv: -outlet_rank(kv[1]["outlet"])):
+        story = next((sk for sk, rows in stories.items()
+                      if any(same_story(it["title"], r["title"], v["name"]) for r in rows)), key)
+        row = {"imo": v["imo"], "title_key": key, "url": it["url"], "title": it["title"], "outlet": it["outlet"],
+               "published": it["published"].replace(microsecond=0).isoformat() if it["published"] else None,
+               "found_at": db.now_iso(), "topics": ", ".join(risk_topics(it)), "story": story, "incident_id": None}
+        db.execute("INSERT OR IGNORE INTO news(imo, title_key, url, title, outlet, published, found_at, topics, story) "
+                   "VALUES(?,?,?,?,?,?,?,?,?)", tuple(row[k] for k in ("imo", "title_key", "url", "title", "outlet",
+                                                                         "published", "found_at", "topics", "story")))
+        stories.setdefault(story, []).append(row)
+        touched.add(story)
+    for story in touched:
+        _sync_story(v, stories[story], notify=not first)
+    return len(found)
+
+
+def _ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+
+
+def _sync_story(v: dict, rows: list[dict], notify: bool) -> None:
+    """Одна запись в происшествиях на сюжет: статья самого авторитетного издания, счётчик — число
+    изданий. Если к спокойному сюжету добавилась тревожная статья — сюжет становится тревожным."""
+    best = max(rows, key=lambda r: (outlet_rank(r["outlet"]), -(datetime.fromisoformat(r["published"]).timestamp()
+                                                                 if r["published"] else 0)))
+    risky = any(r["topics"] for r in rows)
+    kind = "news_risk" if risky else "news"
+    iid = next((r["incident_id"] for r in rows if r.get("incident_id")), None)
+    old = db.query_one("SELECT kind FROM incidents WHERE id=?", (iid,)) if iid else None
+    if old:
+        db.execute("UPDATE incidents SET kind=?, text=?, source=?, extra=?, count=?, last_seen=? WHERE id=?",
+                   (kind, best["title"], best["outlet"] or "", best["url"], len(rows), db.now_iso(), iid))
+        if notify and kind == "news_risk" and old["kind"] != "news_risk":
+            db.notify("incident", "warning", f"{v['name'] or 'MMSI ' + v['mmsi']}: новости: тревожное",
+                      best["title"], v["mmsi"])
+    else:
         lat, lon = _position(v["mmsi"])
-        incidents.record("news_risk" if topics else "news", v["mmsi"], name=v["name"] or None, lat=lat, lon=lon,
-                         text=it["title"], source=it["outlet"] or it["via"], extra=it["url"], tracked=not first)
-    return new
+        iid = incidents.record(kind, v["mmsi"], name=v["name"] or None, lat=lat, lon=lon, text=best["title"],
+                               source=best["outlet"] or "", extra=best["url"], tracked=notify)
+        if iid and len(rows) > 1:
+            db.execute("UPDATE incidents SET count=? WHERE id=?", (len(rows), iid))
+    if iid:
+        db.execute("UPDATE news SET incident_id=? WHERE imo=? AND title_key IN (%s)" % ",".join("?" * len(rows)),
+                   (iid, v["imo"], *[r["title_key"] for r in rows]))
 
 
 def _position(mmsi: str) -> tuple[Optional[float], Optional[float]]:
