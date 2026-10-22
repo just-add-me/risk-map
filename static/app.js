@@ -1796,16 +1796,17 @@ function feedItems() {
   const f = state.feedFilter, unreadOnly = $("#n-unread-only").checked;
   const mine = new Set(allVessels().map((v) => v.mmsi));
   const out = [];
+  const starOnly = f === "starred";
   if (f !== "world") {
     for (const n of state.notifications) {
       const sys = SYSTEM_KINDS.has(n.kind) || !n.mmsi;
-      if ((f === "mine" && sys) || (f === "system" && !sys)) continue;
+      if ((f === "mine" && sys) || (f === "system" && !sys) || (starOnly && !n.starred)) continue;
       out.push({ type: "notif", ts: n.ts, n, sys });
     }
   }
-  if ((f === "all" || f === "world") && !unreadOnly) {
+  if ((f === "all" || f === "world" || starOnly) && !unreadOnly) {
     for (const it of state.inc?.items || []) {
-      if (!incVisible(it) || mine.has(it.mmsi)) continue;
+      if (starOnly ? !it.starred : (!incVisible(it) || mine.has(it.mmsi))) continue;
       out.push({ type: "inc", ts: it.last_seen, it });
     }
   }
@@ -1835,8 +1836,8 @@ function feedRow(x, i) {
     const [first, ...rest] = (n.body || "").split("\n");
     const t = splitTitle(n.title, n.mmsi);
     const lines = detailLines(first);
-    return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}" data-i="${i}">
-      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span>${notifPoint(n) ? `<span class="fi-map" title="Нажмите — покажу на карте">◎ на карте</span>` : ""}<span class="fi-time">${fmtTime(n.ts)}</span></div>
+    return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}${n.starred ? " starred" : ""}" data-i="${i}">
+      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span>${notifPoint(n) ? `<span class="fi-map" title="Нажмите — покажу на карте">◎ на карте</span>` : ""}<span class="fi-time">${fmtTime(n.ts)}</span>${feedActs(n.starred)}</div>
       <div class="fi-event">${esc(t.event)}</div>
       ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? shipLink(t.vessel, t.mmsi) : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span> ${n.mmsi ? fleetChips(n.mmsi) : ""}</div>` : ""}
       ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
@@ -1846,22 +1847,52 @@ function feedRow(x, i) {
   const it = x.it, st = INC_STYLE[it.kind] || INC_STYLE.safety;
   const link = /^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
     isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : "";
-  return `<li class="feed-item ${it.severity} read world" data-i="${i}">
+  return `<li class="feed-item ${it.severity} read world${it.starred ? " starred" : ""}" data-i="${i}">
     <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span><span class="fi-time">${fmtTime(it.last_seen)}${
-      it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span></div>
+      it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span>${feedActs(it.starred)}</div>
     <div class="fi-event">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
     <div class="fi-vessel">${it.name ? `${shipLink(it.name, it.mmsi)} ` : ""}<span class="muted">${shipIdText(it.mmsi)}</span></div>
     ${it.text ? `<div class="fi-quote">${esc(it.text)}</div>` : ""}${link ? `<div class="fi-link">${link}</div>` : ""}</li>`;
 }
 
+// «Важное» и «удалить из ленты» — личные отметки пользователя
+function feedActs(starred) {
+  return `<span class="fi-acts"><button type="button" class="fi-act fi-star${starred ? " on" : ""}" data-act="star"
+      title="${starred ? "Убрать из важного" : "Пометить важным"}" aria-pressed="${!!starred}">${starred ? "★" : "☆"}</button><button
+      type="button" class="fi-act" data-act="del" title="Удалить из моей ленты" aria-label="Удалить">✕</button></span>`;
+}
+async function feedMark(x, change) {
+  const key = x.type === "notif" ? `n:${x.n.id}` : `i:${x.it.id}`;
+  const r = await api("/api/feed/mark", { json: { items: [key], ...change } });
+  if ("starred" in change) (x.n || x.it).starred = change.starred;
+  if (change.hidden) {
+    if (x.n) state.notifications = state.notifications.filter((n) => n !== x.n);
+    else { state.inc.items = state.inc.items.filter((it) => it !== x.it); renderIncidents(); }
+    setUnread(r.unread);
+    toast("Удалено из ленты", "Нажмите здесь, чтобы вернуть", "info", async () => {
+      const back = await api("/api/feed/mark", { json: { items: [key], hidden: false } });
+      setUnread(back.unread);
+      await Promise.all([loadNotifications(), loadIncidents(true)]);
+    });
+  }
+  renderFeed();
+}
+
 function renderFeed() {
   const items = feedItems();
   const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Правила».",
-    world: "Происшествий в мире за выбранный период нет.", system: "Системных сообщений нет." }[state.feedFilter];
+    world: "Происшествий в мире за выбранный период нет.", system: "Системных сообщений нет.",
+    starred: "Важного пока нет. Нажмите ☆ на карточке события, чтобы оно попало сюда." }[state.feedFilter];
   $("#feed-list").innerHTML = items.map(feedRow).join("") || `<li class="empty muted">${empty}</li>`;
   $$("#feed-list .feed-item").forEach((el) => el.onclick = (e) => {
     if (e.target.closest("a")) return;           // ссылка на статью открывается сама
     const x = items[+el.dataset.i];
+    const act = e.target.closest("[data-act]");
+    if (act) {
+      feedMark(x, act.dataset.act === "star" ? { starred: !(x.n || x.it).starred } : { hidden: true })
+        .catch((err) => toast("Не получилось", err.message, "critical"));
+      return;
+    }
     if (x.type === "notif") { openNotification(x.n); return; }
     const it = x.it;
     if (it.lat == null) return;
@@ -1874,7 +1905,7 @@ function renderFeed() {
 $$("#panel-events [data-feed]").forEach((b) => b.onclick = () => {
   state.feedFilter = b.dataset.feed;
   $$("#panel-events [data-feed]").forEach((x) => x.classList.toggle("on", x === b));
-  if (state.feedFilter === "world" || state.feedFilter === "all") loadIncidents(true).catch(() => {});
+  if (state.feedFilter !== "mine" && state.feedFilter !== "system") loadIncidents(true).catch(() => {});
   renderFeed();
 });
 function renderScreeningStatus(sc) {

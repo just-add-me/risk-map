@@ -792,3 +792,28 @@ def test_registry_keeps_ships_out_of_coverage():
     assert registry.find_imo("9123451") == "636099999"
     assert registry.search("regtest")[0]["mmsi"] == "636099999"
     assert registry.search("9123451")[0]["name"] == "REGTEST STAR"
+
+
+def test_feed_read_star_hide_per_user():
+    """«Прочитано» не откатывается после перезагрузки ленты; «важное» и «удалено» — у каждого пользователя свои."""
+    import os
+    import pytest
+    pytest.importorskip("httpx")                             # TestClient нужен httpx; в образе приложения его нет
+    from starlette.testclient import TestClient
+    from app import config, db, main
+    os.environ.setdefault("ADMIN_PASSWORD", "x")
+    config.ADMIN_PASSWORD = config.ADMIN_PASSWORD or "x"
+    nid = db.notify("system", "info", "Проверка ленты", "тест")
+    c = TestClient(main.app, base_url="https://testserver")      # cookie сессии — только по https
+    c.post("/login", data={"username": config.ADMIN_USER, "password": config.ADMIN_PASSWORD})
+    get = lambda: {n["id"]: n for n in c.get("/api/notifications").json()["items"]}  # noqa: E731
+    assert get()[nid]["is_read"] == 0
+    c.post("/api/notifications/read", json={"ids": [nid]})
+    assert get()[nid]["is_read"] == 1                       # раньше здесь снова был 0
+    c.post("/api/feed/mark", json={"items": [f"n:{nid}"], "starred": True})
+    assert get()[nid]["starred"] is True
+    r = c.post("/api/feed/mark", json={"items": [f"n:{nid}"], "hidden": True})
+    assert r.status_code == 200 and nid not in get()
+    c.post("/api/feed/mark", json={"items": [f"n:{nid}"], "hidden": False})
+    assert get()[nid]["starred"] is True                    # вернули — звёздочка на месте
+    assert c.post("/api/feed/mark", json={"items": ["x:1"], "hidden": True}).status_code == 400

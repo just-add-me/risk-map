@@ -575,3 +575,15 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 @media (max-width: 900px) { #chip-clock { display: none; } }
 .tour-card p.tour-ex { margin-top: -4px; padding: 7px 10px; border-left: 2px solid var(--accent); background: rgba(79,195,217,.08); border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text); }
 .tour-ex b { color: var(--accent); font-weight: 600; }
+
+/* важное и удаление в ленте */
+.fi-acts { display: inline-flex; gap: 2px; margin-left: 4px; }
+.fi-act { background: none; border: 0; padding: 0 4px; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; opacity: .45; }
+.feed-item:hover .fi-act, .fi-act:focus-visible { opacity: 1; }
+.fi-act:hover { color: var(--text); }
+.fi-act[data-act=del]:hover { color: var(--red); }
+.fi-star.on { color: #ffd166; opacity: 1; }
+.feed-item.starred { box-shadow: inset 0 0 0 1px rgba(255, 209, 102, .45); }
+.feed-item.read:not(.world) > .fi-meta { opacity: 1; }
+.feed-item.read:not(.world) > .fi-meta > :not(.fi-acts) { opacity: .55; }
+@media (hover: none) { .fi-act { opacity: .8; } }

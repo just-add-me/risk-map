@@ -60,12 +60,18 @@ def _user(request: Request) -> str:
 NOTIF_VISIBLE = (f"(CASE WHEN n.username IS NOT NULL THEN n.username = ? "
                  f"ELSE (n.mmsi IS NULL OR n.mmsi IN ({access.VISIBLE_MMSI_SQL})) END)")
 NOTIF_UNREAD = "NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.username=? AND r.notification_id=n.id)"
+# пользователь удалил уведомление из своей ленты
+NOTIF_SHOWN = "NOT EXISTS (SELECT 1 FROM feed_marks m WHERE m.username=? AND m.item='n:'||n.id AND m.hidden=1)"
 
 
 def _unread(user: str) -> int:
-    row = db.query_one(f"SELECT COUNT(*) AS n FROM notifications n WHERE {NOTIF_VISIBLE} AND {NOTIF_UNREAD}",
-                       (user, user, user, user))
+    row = db.query_one(f"SELECT COUNT(*) AS n FROM notifications n WHERE {NOTIF_VISIBLE} AND {NOTIF_UNREAD} AND {NOTIF_SHOWN}",
+                       (user, user, user, user, user))
     return row["n"] if row else 0
+
+
+def _marks(user: str) -> dict[str, dict]:
+    return {r["item"]: r for r in db.query("SELECT item, starred, hidden FROM feed_marks WHERE username=?", (user,))}
 
 
 def _authed(request: Request) -> bool:
@@ -404,8 +410,12 @@ async def api_screening(request: Request):
 async def api_incidents(request: Request):
     days = int(request.query_params.get("days", 7) or 7)
     mine = await asyncio.to_thread(access.mmsis, _user(request))
+    marks = _marks(_user(request))
     items = [i for i in await asyncio.to_thread(incidents.recent, days)
-             if i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine]     # чужие флоты не раскрываем
+             if (i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine)     # чужие флоты не раскрываем
+             and not marks.get(f"i:{i['id']}", {}).get("hidden")]                   # удалено из своей ленты
+    for i in items:
+        i["starred"] = bool(marks.get(f"i:{i['id']}", {}).get("starred"))
     return JSONResponse({"items": items, "kinds": incidents.KINDS}, headers={"Cache-Control": "no-store"})
 
 
@@ -861,11 +871,15 @@ async def api_notifications(request: Request):
     limit = min(int(request.query_params.get("limit", 200) or 200), 500)
     only_unread = request.query_params.get("unread") == "1"
     user = _user(request)
-    sql = (f"SELECT n.*, CASE WHEN {NOTIF_UNREAD} THEN 0 ELSE 1 END AS is_read FROM notifications n "
-           f"WHERE n.id > ? AND {NOTIF_VISIBLE}" + (f" AND {NOTIF_UNREAD}" if only_unread else ""))
-    params = [user, after, user, user, user] + ([user] if only_unread else [])
+    # своё «прочитано» — под другим именем: в таблице есть старая общая колонка is_read, она бы его перекрыла
+    sql = (f"SELECT n.*, CASE WHEN {NOTIF_UNREAD} THEN 0 ELSE 1 END AS user_read FROM notifications n "
+           f"WHERE n.id > ? AND {NOTIF_VISIBLE} AND {NOTIF_SHOWN}" + (f" AND {NOTIF_UNREAD}" if only_unread else ""))
+    params = [user, after, user, user, user, user] + ([user] if only_unread else [])
     rows = db.query(sql + " ORDER BY n.id DESC LIMIT ?", (*params, limit))
+    marks = _marks(user)
     for r in rows:
+        r["is_read"] = r.pop("user_read")
+        r["starred"] = bool(marks.get(f"n:{r['id']}", {}).get("starred"))
         r["zone_name"] = zones.zone_name(r["zone_id"]) if r["zone_id"] else None
     return JSONResponse({"items": rows, "unread": _unread(user)})
 
@@ -921,6 +935,24 @@ async def api_notifications_read(request: Request):
         for i in ids:
             db.execute("INSERT OR IGNORE INTO notification_reads(username, notification_id) VALUES(?,?)", (user, i))
     return JSONResponse({"ok": True})
+
+
+@api
+async def api_feed_mark(request: Request):
+    """Личные отметки в ленте: {"items": ["n:12", "i:5"], "starred": true} или {"hidden": true} (удалить из своей ленты)."""
+    body = await request.json()
+    user = _user(request)
+    items = [str(x) for x in body.get("items", [])][:200]
+    if not items or not all(re.fullmatch(r"[ni]:\d+", x) for x in items):
+        raise ValueError("Не указано, какие события отметить")
+    for field in ("starred", "hidden"):
+        if field in body:
+            for it in items:
+                db.execute(f"INSERT INTO feed_marks(username, item, {field}) VALUES(?,?,?) "
+                           f"ON CONFLICT(username, item) DO UPDATE SET {field}=excluded.{field}",
+                           (user, it, int(bool(body[field]))))
+    db.execute("DELETE FROM feed_marks WHERE username=? AND starred=0 AND hidden=0", (user,))
+    return JSONResponse({"ok": True, "unread": _unread(user)})
 
 
 # --------------------------------------------------------------------------- API: циркуляры
@@ -1181,6 +1213,7 @@ routes = [
     Route("/api/track/{mmsi}", api_track),
     Route("/api/notifications", api_notifications),
     Route("/api/notifications/read", api_notifications_read, methods=["POST"]),
+    Route("/api/feed/mark", api_feed_mark, methods=["POST"]),
     Route("/api/notifications/export", api_notifications_export),
     Route("/api/circulars", api_circulars),
     Route("/api/circulars/check", api_circular_check, methods=["POST"]),

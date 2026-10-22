@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS notification_reads(
     notification_id INTEGER NOT NULL,
     PRIMARY KEY(username, notification_id)
 );
+-- личные отметки в ленте: «важное» и «удалено из моей ленты»; item = n:<id уведомления> или i:<id происшествия>
+CREATE TABLE IF NOT EXISTS feed_marks(
+    username TEXT NOT NULL,
+    item TEXT NOT NULL,
+    starred INTEGER NOT NULL DEFAULT 0,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(username, item)
+);
 CREATE TABLE IF NOT EXISTS vessels(
     id INTEGER PRIMARY KEY,
     fleet_id INTEGER NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
@@ -313,6 +321,9 @@ def cleanup_notifications() -> int:
     n = execute("DELETE FROM notifications WHERE ts < ?", (cutoff,)).rowcount
     if n:
         execute("DELETE FROM notification_reads WHERE notification_id NOT IN (SELECT id FROM notifications)")
+    # отметки «важное»/«удалено» у событий, которых уже нет
+    execute("DELETE FROM feed_marks WHERE (item LIKE 'n:%' AND CAST(substr(item, 3) AS INTEGER) NOT IN (SELECT id FROM notifications)) "
+            "OR (item LIKE 'i:%' AND CAST(substr(item, 3) AS INTEGER) NOT IN (SELECT id FROM incidents))")
     return n
 
 
