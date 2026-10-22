@@ -760,3 +760,18 @@ def test_rule_presets():
     assert all(r["added"] for r in {p["id"]: p for p in rules.preset_state("presetuser")}["war"]["rules"])
     for pid in rules.PRESETS:                                              # все наборы проходят проверку параметров
         rules.add_preset("presetuser", pid)
+
+
+def test_private_incidents_not_leaked():
+    """Санкции и новости судна из чужого флота не видны другим пользователям."""
+    from app import access, users
+    from app.ais import incidents
+    db.connect()
+    users.add("spyuser", "pw")
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Чужой', 'admin', ?)", (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(?, '273000991', 'SECRET', ?)", (fid, db.now_iso()))
+    incidents.record("news_risk", "273000991", name="SECRET", text="Tanker SECRET seized")
+    mine = access.mmsis("spyuser")
+    seen = [i for i in incidents.recent(7) if i["mmsi"] == "273000991"
+            and (i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine)]
+    assert seen == []

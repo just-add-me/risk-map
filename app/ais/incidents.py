@@ -34,7 +34,7 @@ KINDS = {
     "nuc": {"label": "Судно не управляется", "severity": "warning"},
     "sar": {"label": "Поисково-спасательный самолёт / вертолёт", "severity": "info"},
     "safety": {"label": "Сообщение о безопасности", "severity": "info"},
-    "sanction": {"label": "Санкции: судно вашего флота", "severity": "critical"},
+    "sanction": {"label": "Судно флота в санкционных списках", "severity": "critical"},
     "sanction_new": {"label": "Новое судно в санкционном списке", "severity": "info"},
     "detention": {"label": "Задержание в порту", "severity": "warning"},
     "news_risk": {"label": "Новости: тревожное", "severity": "warning"},
@@ -46,6 +46,10 @@ KINDS = {
 }
 # Подозрительное поведение (app/anomalies.py) — только суда флотов, правило «рядом с судном» не нужно  [подозрительное-поведение]
 ANOMALY_KINDS = {"dark", "sts", "spoof", "identity"}    # [подозрительное-поведение]
+# Заводятся только потому, что судно в чьём-то флоте: видны лишь тем, кто видит этот флот, — иначе
+# по ленте «в мире» можно было бы понять, какие суда отслеживают другие пользователи
+PRIVATE_KINDS = {"sanction", "news", "news_risk"}
+PRIVATE_KINDS |= ANOMALY_KINDS                         # [подозрительное-поведение]
 # События «про судно», а не «в точке»: на карте показываются там, где судно сейчас
 VESSEL_KINDS = {"sanction", "sanction_new", "detention", "news", "news_risk"}
 DEVICE_PREFIX = {"970": "sart", "972": "mob", "974": "epirb"}

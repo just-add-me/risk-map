@@ -373,8 +373,10 @@ async def api_screening(request: Request):
 @api
 async def api_incidents(request: Request):
     days = int(request.query_params.get("days", 7) or 7)
-    return JSONResponse({"items": await asyncio.to_thread(incidents.recent, days), "kinds": incidents.KINDS},
-                        headers={"Cache-Control": "no-store"})
+    mine = await asyncio.to_thread(access.mmsis, _user(request))
+    items = [i for i in await asyncio.to_thread(incidents.recent, days)
+             if i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine]     # чужие флоты не раскрываем
+    return JSONResponse({"items": items, "kinds": incidents.KINDS}, headers={"Cache-Control": "no-store"})
 
 
 @api
@@ -384,6 +386,7 @@ async def api_ship_events(request: Request):
     происшествиях не повторяем — само происшествие уже в списке."""
     mmsi = request.path_params["mmsi"]
     user = _user(request)
+    visible = access.mmsis(user)         # новости и санкции судна чужого флота не показываем
 
     def load() -> list[dict]:
         out = [{"ts": r["last_seen"], "severity": incidents.KINDS.get(r["kind"], {}).get("severity", "info"),
@@ -391,7 +394,8 @@ async def api_ship_events(request: Request):
                 "count": r["count"], "source": "incident", "kind": r["kind"], "outlet": r["source"],
                 "url": r["extra"] if str(r["extra"] or "").startswith("http") else None, "lat": r["lat"], "lon": r["lon"]}
                for r in db.query("SELECT kind, text, last_seen, count, source, extra, lat, lon FROM incidents WHERE mmsi=? "
-                                 "ORDER BY last_seen DESC LIMIT 100", (mmsi,))]
+                                 "ORDER BY last_seen DESC LIMIT 100", (mmsi,))
+               if r["kind"] not in incidents.PRIVATE_KINDS or mmsi in visible]
         # уведомления правила «Событие с судном» (rule_event) повторяют само происшествие — их не показываем
         for r in db.query(f"SELECT n.id, n.ts, n.kind, n.severity, n.title, n.body, n.zone_id, n.lat, n.lon FROM notifications n "
                           f"WHERE n.mmsi=? AND n.kind NOT IN ('incident', 'rule_event') AND {NOTIF_VISIBLE} "
