@@ -1,4 +1,4 @@
-/* WarRisk Monitor — интерфейс. Без сборщиков и фреймворков: просто Leaflet + fetch. */
+/* FleetRisk — интерфейс. Без сборщиков и фреймворков: просто Leaflet + fetch. */
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -1779,7 +1779,27 @@ function incPopup(it) {
       : it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
     <dl class="kv"><dt>${/^IMO:/.test(it.mmsi) ? "IMO" : "MMSI"}</dt><dd>${esc(it.mmsi.replace(/^IMO:/, ""))}</dd>
       ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
-      <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>`;
+      <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>
+    ${popActs(it.starred)}`;
+}
+
+// «Важное» и «Удалить» в окне события на карте — те же отметки, что на карточке в ленте
+function popActs(starred) {
+  return `<div class="pop-acts"><button type="button" class="btn ghost${starred ? " on" : ""}" data-pop="star">${starred ? "★ Важное" : "☆ Важное"}</button>
+    <button type="button" class="btn ghost" data-pop="del">✕ Удалить</button></div>`;
+}
+function bindPopActs(popup, x, refresh) {
+  const el = popup.getElement();
+  if (!el) return;
+  el.querySelector("[data-pop=star]")?.addEventListener("click", async () => {
+    const item = x.n || x.it;
+    await feedMark(x, { starred: !item.starred }).catch((e) => toast("Не получилось", e.message, "critical"));
+    refresh();
+  });
+  el.querySelector("[data-pop=del]")?.addEventListener("click", () => {
+    map.closePopup();
+    feedMark(x, { hidden: true }).catch((e) => toast("Не получилось", e.message, "critical"));
+  });
 }
 
 function renderIncidents() {
@@ -1809,7 +1829,12 @@ function renderIncidents() {
         .get(it.id)
         .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
-        .on("popupopen", () => markIncRead(it))
+        .on("popupopen", (e) => {
+          markIncRead(it);
+          const m = e.target;
+          const bind = () => bindPopActs(m.getPopup(), { type: "inc", it }, () => { m.setPopupContent(incPopup(it)); bind(); });
+          bind();
+        })
         .on("popupclose", () => {
           if (inc.peek === it.id) inc.peek = null;
           if (!inc.showRead) setTimeout(renderIncidents, 0);      // просмотренное убираем с карты
@@ -2078,7 +2103,7 @@ function setUnread(n) {
   $("#bell-count").textContent = n > 99 ? "99+" : n;
   $("#tab-alert-count").hidden = !n;
   $("#tab-alert-count").textContent = n;
-  document.title = n ? `(${n}) WarRisk Monitor` : "WarRisk Monitor";
+  document.title = n ? `(${n}) FleetRisk` : "FleetRisk";
 }
 
 function renderNotifications() { renderFeed(); }
@@ -2116,7 +2141,7 @@ function showEventSpot(n, at, opts = {}) {
     ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `${shipLink(t.vessel, t.mmsi)} ` : ""}<span class="muted">MMSI ${esc(t.mmsi)}</span> ${n.mmsi ? fleetChips(n.mmsi) : ""}</div>` : ""}
     ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
     <ul class="fi-lines">${detailLines(first).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
-    ${n.mmsi ? `<button class="btn ghost ev-open" type="button">Открыть судно</button>` : ""}</div>`;
+    ${n.mmsi ? `<button class="btn ghost ev-open" type="button">Открыть судно</button>` : ""}${popActs(n.starred)}</div>`;
   const m = L.marker(at, {
     icon: L.divIcon({ className: "event-spot", iconSize: [34, 34], iconAnchor: [17, 17], html: `<span style="--c:${color}"></span>` }),
     zIndexOffset: 3000, keyboard: false,
@@ -2124,6 +2149,10 @@ function showEventSpot(n, at, opts = {}) {
   m.on("popupopen", (e) => {
     const b = e.popup.getElement()?.querySelector(".ev-open");
     if (b) b.onclick = () => { eventSpot.clearLayers(); selectVessel(n.mmsi, true); };
+    bindPopActs(e.popup, { type: "notif", n }, () => {
+      const btn = e.popup.getElement()?.querySelector("[data-pop=star]");
+      if (btn) { btn.textContent = n.starred ? "★ Важное" : "☆ Важное"; btn.classList.toggle("on", !!n.starred); }
+    });
   });
   m.on("popupclose", () => { eventSpot.clearLayers(); if (n.zone_id && state.selectedZone === n.zone_id) selectZone(null); });
   if (n.zone_id) selectZone(n.zone_id);

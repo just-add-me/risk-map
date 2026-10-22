@@ -593,3 +593,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .trash-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .feed-item.trash > .trash-row { opacity: 1; }
 .trash-note { padding: 0 2px 8px; list-style: none; }
+.pop-acts { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pop-acts .btn { flex: 1; padding: 5px 8px; font-size: 12.5px; }
+.pop-acts .btn.on { color: #ffd166; border-color: rgba(255, 209, 102, .5); }
+.pop-acts [data-pop=del]:hover { color: var(--red); border-color: var(--red); }
