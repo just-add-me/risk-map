@@ -78,6 +78,10 @@
         <div class="z-types-row" id="traffic-cats"></div>
       </div>
       <div class="row">
+        <div class="fleet-color-wrap">
+          <button class="fleet-color" id="fleet-color" type="button" title="Цвет флота на карте" aria-label="Цвет флота"></button>
+          <div class="fleet-palette" id="fleet-palette" hidden></div>
+        </div>
         <select id="fleet-select" aria-label="Флот"></select>
         <button class="btn ghost" id="btn-fleet-new" title="Новый флот">+ Флот</button>
       </div>
@@ -177,6 +181,11 @@
         <div class="row"><button class="btn" type="submit" id="btn-rule-save">Сохранить</button>
           <button class="text-btn" type="button" id="btn-rule-cancel">Отмена</button></div>
       </form>
+      <details class="card presets" id="rule-presets">
+        <summary>Готовые наборы правил</summary>
+        <p class="muted small">Добавьте набор под свою задачу — правила появятся в списке ниже, их можно поменять или удалить.</p>
+        <div id="preset-list"></div>
+      </details>
       <h3 class="sub-h">Правила уведомлений</h3>
       <p class="muted small" style="margin-top:0">Всё, о чём сообщает колокольчик и что попадает в «Ленту» по вашим
         судам, задаётся здесь. Стандартные правила можно изменить, выключить или удалить.</p>

@@ -746,3 +746,17 @@ def test_hin_clean_and_import():
     assert fleet_import.clean_hin("123") == ""
     items = fleet_import.parse_file("mmsi,imo,name,hin\n319225400,9857298,KORU,NL-ABC12345D404\n".encode(), "f.csv")
     assert items[0]["hin"] == "NLABC12345D404"
+
+
+def test_rule_presets():
+    from app import rules, users
+    db.connect()
+    users.add("presetuser", "pw")
+    st = {p["id"]: p for p in rules.preset_state("presetuser")}
+    assert set(st) >= {"war", "crew", "compliance", "safety", "ice", "ports"}
+    n = rules.add_preset("presetuser", "war")
+    assert n == len(rules.PRESETS["war"]["rules"])
+    assert rules.add_preset("presetuser", "war") == 0                     # повторно — без дублей
+    assert all(r["added"] for r in {p["id"]: p for p in rules.preset_state("presetuser")}["war"]["rules"])
+    for pid in rules.PRESETS:                                              # все наборы проходят проверку параметров
+        rules.add_preset("presetuser", pid)

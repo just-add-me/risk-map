@@ -294,8 +294,9 @@ function bindZone(f, layer) {
 
 // Цвет флота: кольцо вокруг значка судна, плашка в ленте, пункт легенды. Не красный/жёлтый/зелёный —
 // эти цвета у статуса судна (в зоне / рядом / вне зон).
-const FLEET_COLORS = ["#4dabf7", "#b197fc", "#f783ac", "#3bc9db", "#e9ecef", "#e8a87c", "#748ffc", "#c0eb75"];
-const fleetColor = (fid) => FLEET_COLORS[(+fid || 0) % FLEET_COLORS.length];
+const FLEET_COLORS = ["#4dabf7", "#748ffc", "#b197fc", "#da77f2", "#f783ac", "#3bc9db", "#f1f3f5", "#e8a87c", "#a9746e", "#868e96"];
+// цвет, выбранный владельцем флота (fleets.color), иначе — из палитры по номеру флота
+const fleetColor = (fid) => state.fleets.find((f) => f.id === +fid)?.color || FLEET_COLORS[(+fid || 0) % FLEET_COLORS.length];
 const fleetsOf = (mmsi) => state.fleets.filter((f) => f.vessels.some((v) => v.mmsi === mmsi));
 state.hiddenFleets = new Set();
 function fleetChips(mmsi) {
@@ -799,7 +800,12 @@ function renderFleet() {
   sel.innerHTML = state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)} (${f.vessels.length})${
     f.access === "owner" ? "" : ` · от ${esc(f.owner)}${f.access === "view" ? ", просмотр" : ""}`}</option>`).join("");
   sel.value = state.fleetId ?? "";
-  sel.style.borderLeft = state.fleetId != null ? `4px solid ${fleetColor(state.fleetId)}` : "";
+  const fc = $("#fleet-color"), cur = currentFleet();
+  fc.hidden = !cur;
+  if (cur) {
+    fc.style.setProperty("--fc", fleetColor(cur.id));
+    fc.title = cur.access === "owner" ? "Цвет флота на карте — нажмите, чтобы выбрать" : `Цвет флота (меняет владелец, ${cur.owner})`;
+  }
   const empty = !state.fleets.length;
   $("#fleet-empty").hidden = !empty;
   $("#fleet-body").hidden = empty;
@@ -1345,6 +1351,7 @@ function renderRules() {
       <div class="ri-actions"><button class="text-btn ri-edit" type="button">Изменить</button>
         <button class="text-btn danger ri-del" type="button" title="Удалить">✕</button></div>
     </li>`).join("") || `<li class="empty muted">Правил пока нет. Нажмите «+ Новое правило».</li>`;
+  renderPresets();
   const miss = state.rules.meta?.defaults_missing || 0;
   $("#btn-rules-defaults").hidden = !miss;
   $("#btn-rules-defaults").textContent = `Вернуть стандартные правила (${miss})`;
@@ -1449,6 +1456,50 @@ async function openRuleForm(r = null) {
 }
 $("#rule-kind").onchange = (e) => renderRuleParams(e.target.value);
 $("#btn-rule-new").onclick = () => openRuleForm();
+// Палитра цвета флота
+$("#fleet-color").onclick = (e) => {
+  e.stopPropagation();
+  const f = currentFleet(), pal = $("#fleet-palette");
+  if (!f || f.access !== "owner") { toast("Цвет флота", "Менять цвет может владелец флота"); return; }
+  if (!pal.hidden) { pal.hidden = true; return; }
+  pal.innerHTML = FLEET_COLORS.map((c) => `<button type="button" class="pal-sw${fleetColor(f.id) === c ? " on" : ""}" data-c="${c}"
+    style="--c:${c}" title="${c}"></button>`).join("");
+  pal.hidden = false;
+  $$(".pal-sw", pal).forEach((b) => b.onclick = async () => {
+    pal.hidden = true;
+    try {
+      await api(`/api/fleets/${f.id}`, { method: "PATCH", json: { color: b.dataset.c } });
+      f.color = b.dataset.c;
+      renderFleet(); renderVessels(); renderLegend(); renderFeed();
+    } catch (err) { toast("Не удалось", err.message, "critical"); }
+  });
+};
+document.addEventListener("click", (e) => { if (!e.target.closest(".fleet-color-wrap")) $("#fleet-palette").hidden = true; });
+
+// Готовые наборы правил
+function renderPresets() {
+  const meta = state.rules.meta;
+  if (!meta?.presets) return;
+  const box = $("#preset-list");
+  box.innerHTML = meta.presets.map((p) => {
+    const left = p.rules.filter((r) => !r.added).length;
+    return `<div class="preset">
+      <div class="preset-head"><b>${esc(p.title)}</b>
+        <button class="btn ${left ? "" : "ghost"}" type="button" data-preset="${p.id}" ${left ? "" : "disabled"}>${left ? (left === p.rules.length ? "Добавить" : `Добавить ещё ${left}`) : "Добавлено"}</button></div>
+      <div class="muted small">${esc(p.hint)}</div>
+      <ul class="preset-rules">${p.rules.map((r) => `<li class="${r.added ? "on" : ""}">${r.added ? "✓" : "+"} ${esc(r.name)}</li>`).join("")}</ul>
+    </div>`;
+  }).join("");
+  $$("[data-preset]", box).forEach((b) => b.onclick = async () => {
+    const { added } = await api("/api/rules/preset", { json: { id: b.dataset.preset } });
+    toast("Набор добавлен", `Новых правил: ${added}`);
+    await loadRules();
+  });
+  // правил нет — наборы раскрыты; есть — свёрнуты (раскрыть можно самому)
+  if (!state.rules.presetsTouched) $("#rule-presets").open = !state.rules.items.length;
+}
+$("#rule-presets").addEventListener("toggle", () => { state.rules.presetsTouched = true; });
+
 $("#btn-rules-defaults").onclick = async () => {
   const { added } = await api("/api/rules/defaults", { method: "POST" });
   toast("Стандартные правила", added ? `Добавлено: ${added}` : "Все на месте");

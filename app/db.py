@@ -231,6 +231,8 @@ def connect() -> sqlite3.Connection:
             for col in ("lat", "lon"):            # где произошло событие — чтобы показать на карте
                 if col not in ncols:
                     _conn.execute(f"ALTER TABLE notifications ADD COLUMN {col} REAL")
+            if "color" not in {r[1] for r in _conn.execute("PRAGMA table_info(fleets)")}:   # цвет флота на карте
+                _conn.execute("ALTER TABLE fleets ADD COLUMN color TEXT")
             if "hin" not in {r[1] for r in _conn.execute("PRAGMA table_info(vessels)")}:    # номер корпуса (яхты)
                 _conn.execute("ALTER TABLE vessels ADD COLUMN hin TEXT")
             news_cols = {r[1] for r in _conn.execute("PRAGMA table_info(news)")}

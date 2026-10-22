@@ -574,6 +574,59 @@ DEFAULTS = [
 ]
 
 
+# Готовые наборы правил («Правила» → «Готовые наборы»): один клик — несколько правил под задачу
+PRESETS = {
+    "war": {"title": "Военные риски (JWC)", "hint": "Для страхования военных рисков корпуса: заходы в районы JWC и порты в них.",
+            "rules": [("JWC: вход в зону", "zone_enter", {"scope": "layer:jwc"}, "critical"),
+                      ("JWC: подход ближе 50 миль", "zone_near", {"scope": "layer:jwc", "distance_nm": 50}, "warning"),
+                      ("JWC: выход из зоны", "zone_exit", {"scope": "layer:jwc"}, "info"),
+                      ("JWC: порт назначения в зоне", "dest_zone", {"scope": "layer:jwc"}, "warning")]},
+    "crew": {"title": "Экипаж (IBF/ITF)", "hint": "Для начислений экипажу по соглашению IBF: районы военных действий и риска.",
+             "rules": [("IBF: вход в зону", "zone_enter", {"scope": "layer:ibf"}, "warning"),
+                       ("IBF: выход из зоны", "zone_exit", {"scope": "layer:ibf"}, "info"),
+                       ("IBF: порт назначения в зоне", "dest_zone", {"scope": "layer:ibf"}, "info")]},
+    "compliance": {"title": "Санкции и комплаенс", "hint": "Санкционные списки, задержания, тревожные новости и признаки теневого флота.",
+                   "rules": [("Санкции, задержания, подозрительное поведение", "vessel_event",
+                              {"groups": ["sanction", "detention", "news_risk", "anomaly"]}, "critical"),
+                             ("AIS выключен дольше 12 ч", "ais_lost", {"hours": 12}, "warning")]},
+    "safety": {"title": "Аварии и безопасность", "hint": "Сигналы бедствия, посадка на мель, происшествия поблизости.",
+               "rules": [("Авария с судном", "vessel_event", {"groups": ["distress", "status"]}, "critical"),
+                         ("Происшествие в 30 милях", "incident", {"radius_nm": 30, "kinds": ["distress", "sart", "mob", "epirb"]}, "warning"),
+                         ("Судно не управляется или на мели", "nav_status", {"statuses": [2, 6]}, "critical")]},
+    "ice": {"title": "Лёд и навигационные ограничения (INL)", "hint": "Выход за пределы навигации, разрешённой страховкой корпуса.",
+            "rules": [("INL: вход в район", "zone_enter", {"scope": "layer:inl"}, "warning"),
+                      ("INL: подход ближе 30 миль", "zone_near", {"scope": "layer:inl", "distance_nm": 30}, "info")]},
+    "ports": {"title": "Порты и рейсы", "hint": "Заходы в порт, выходы и смена пункта назначения или ETA.",
+              "rules": [("Заход в порт", "port_arrival", {"port_id": "any"}, "info"),
+                        ("Выход из порта", "port_departure", {"port_id": "any"}, "info"),
+                        ("Сменился пункт назначения или ETA", "destination", {"eta": True}, "info")]},
+}
+
+
+def preset_state(user: str) -> list[dict]:
+    have = {(r["kind"], r["name"]) for r in db.query("SELECT kind, name FROM rules WHERE owner=?", (user,))}
+    return [{"id": pid, "title": p["title"], "hint": p["hint"],
+             "rules": [{"name": n, "kind": k, "added": (k, n) in have} for n, k, _, _ in p["rules"]]}
+            for pid, p in PRESETS.items()]
+
+
+def add_preset(user: str, pid: str) -> int:
+    """Добавляет правила набора, которых у пользователя ещё нет (по виду и названию). Возвращает, сколько добавлено."""
+    if pid not in PRESETS:
+        raise ValueError("Нет такого набора")
+    have = {(r["kind"], r["name"]) for r in db.query("SELECT kind, name FROM rules WHERE owner=?", (user,))}
+    added = 0
+    for name, kind, params, severity in PRESETS[pid]["rules"]:
+        if (kind, name) in have or kind not in KINDS:
+            continue
+        cur = db.execute("INSERT INTO rules(owner, name, enabled, kind, target_type, target, params, audience, severity, "
+                         "created_at) VALUES(?,?,1,?,'all',NULL,?,'me',?,?)",
+                         (user, name, kind, json.dumps(validate(kind, params, user)), severity, db.now_iso()))
+        _quiet_start(_load(db.query_one("SELECT * FROM rules WHERE id=?", (cur.lastrowid,))))
+        added += 1
+    return added
+
+
 def ensure_defaults(user: str, force: bool = False) -> int:
     """Стандартные правила пользователя: создаются один раз (удалённые не возвращаются сами);
     force=True — «Вернуть стандартные»: добавить те, которых сейчас нет. Возвращает, сколько добавлено."""

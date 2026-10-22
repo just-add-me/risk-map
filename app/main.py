@@ -493,6 +493,13 @@ async def api_fleet_update(request: Request):
         ingest.cleanup_trails()
         return JSONResponse({"ok": True})
     body = await request.json()
+    if "color" in body:                       # цвет флота: кольцо вокруг судов на карте, плашки в ленте
+        color = str(body.get("color") or "")
+        if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError("Цвет — в виде #RRGGBB")
+        db.execute("UPDATE fleets SET color=? WHERE id=?", (color or None, fid))
+        if "name" not in body:
+            return JSONResponse({"ok": True})
     name = str(body.get("name", "")).strip()[:80]
     if not name:
         raise ValueError("Укажите название флота")
@@ -730,7 +737,14 @@ async def api_rules(request: Request):
     kinds = {k: v for k, v in kinds.items() if k not in inc.ANOMALY_KINDS}       # [подозрительное-поведение]
     return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES, "incident_kinds": kinds,
                          "event_groups": {g: label for g, (label, _) in rules.EVENT_GROUPS.items()},
-                         "defaults_missing": missing})
+                         "defaults_missing": missing, "presets": rules.preset_state(user)})
+
+
+@api
+async def api_rules_preset(request: Request):
+    """Добавить готовый набор правил (те, которых ещё нет)."""
+    body = await request.json()
+    return JSONResponse({"ok": True, "added": rules.add_preset(_user(request), str(body.get("id", "")))})
 
 
 @api
@@ -1098,6 +1112,7 @@ routes = [
     Route("/api/rules", api_rules, methods=["GET", "POST"]),
     Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),
     Route("/api/rules/defaults", api_rules_defaults, methods=["POST"]),
+    Route("/api/rules/preset", api_rules_preset, methods=["POST"]),
     Route("/api/areas", api_areas, methods=["GET", "POST"]),
     Route("/api/areas/{aid:int}", api_area, methods=["PATCH", "DELETE"]),
     Route("/api/ports/{pid:int}", api_port),

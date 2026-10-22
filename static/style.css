@@ -514,9 +514,28 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-hin { font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
 
 /* ---------- цвет флота ---------- */
-.ship-ring { position: absolute; inset: -4px; border: 2px solid; border-radius: 50%; opacity: .95;
+.ship-ring { position: absolute; inset: -5px; border: 2.5px solid; border-radius: 50%; opacity: .95;
   box-shadow: 0 0 4px rgba(0, 0, 0, .6); pointer-events: none; }
 .ring-sw { display: inline-block; width: 12px; height: 12px; border: 2px solid; border-radius: 50%; flex: none; }
 .fleet-chip { display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px 0 0; padding: 1px 7px 1px 5px; font-size: 11px;
   border-radius: 10px; border: 1px solid var(--fc); color: var(--text); background: rgba(255, 255, 255, .04); white-space: nowrap; }
 .fleet-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--fc); }
+
+/* ---------- цвет флота: кнопка и палитра ---------- */
+.fleet-color-wrap { position: relative; flex: none; }
+.fleet-color { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--fc, #4dabf7); cursor: pointer;
+  background: radial-gradient(circle, var(--fc, #4dabf7) 0 38%, transparent 40%); box-shadow: 0 0 10px var(--fc, transparent); }
+.fleet-palette { position: absolute; z-index: 1200; top: 40px; left: 0; display: grid; grid-template-columns: repeat(5, 28px); gap: 8px;
+  padding: 10px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .5); }
+.pal-sw { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--c); cursor: pointer;
+  background: radial-gradient(circle, var(--c) 0 38%, transparent 40%); }
+.pal-sw.on, .pal-sw:hover { box-shadow: 0 0 0 2px #fff, 0 0 10px var(--c); }
+
+/* ---------- готовые наборы правил ---------- */
+.presets summary { cursor: pointer; font-weight: 600; }
+.preset { padding: 10px 0; border-top: 1px solid var(--line); }
+.preset:first-child { border-top: 0; }
+.preset-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 3px; }
+.preset-head .btn { padding: 4px 10px; font-size: 12.5px; white-space: nowrap; }
+.preset-rules { list-style: none; margin: 5px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+.preset-rules li.on { color: var(--green); }
