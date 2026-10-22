@@ -512,3 +512,12 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .ev-pop .ev-open { width: 100%; }
 .fi-map { color: var(--accent); }
 .sc-hin { font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
+
+/* ---------- цвет флота ---------- */
+.ship-ring { position: absolute; inset: -4px; border: 2px solid; border-radius: 50%; opacity: .95;
+  box-shadow: 0 0 4px rgba(0, 0, 0, .6); pointer-events: none; }
+.ship-icon { position: relative; }
+.ring-sw { display: inline-block; width: 12px; height: 12px; border: 2px solid; border-radius: 50%; flex: none; }
+.fleet-chip { display: inline-flex; align-items: center; gap: 4px; margin: 2px 4px 0 0; padding: 1px 7px 1px 5px; font-size: 11px;
+  border-radius: 10px; border: 1px solid var(--fc); color: var(--text); background: rgba(255, 255, 255, .04); white-space: nowrap; }
+.fleet-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--fc); }

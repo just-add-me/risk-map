@@ -292,14 +292,24 @@ function bindZone(f, layer) {
   layer.on("popupclose", () => { if (state.selectedZone === f.properties.id) selectZone(null); });
 }
 
-// badges — пометки на значке судна (санкции, задержание): едут вместе с судном
-function shipIcon(level, cog, selected, badges = []) {
+// Цвет флота: кольцо вокруг значка судна, плашка в ленте, пункт легенды. Не красный/жёлтый/зелёный —
+// эти цвета у статуса судна (в зоне / рядом / вне зон).
+const FLEET_COLORS = ["#4dabf7", "#b197fc", "#f783ac", "#3bc9db", "#e9ecef", "#e8a87c", "#748ffc", "#c0eb75"];
+const fleetColor = (fid) => FLEET_COLORS[(+fid || 0) % FLEET_COLORS.length];
+const fleetsOf = (mmsi) => state.fleets.filter((f) => f.vessels.some((v) => v.mmsi === mmsi));
+state.hiddenFleets = new Set();
+function fleetChips(mmsi) {
+  return fleetsOf(mmsi).map((f) => `<span class="fleet-chip" style="--fc:${fleetColor(f.id)}">${esc(f.name)}</span>`).join("");
+}
+
+// badges — пометки на значке судна (санкции, задержание): едут вместе с судном; ring — цвет флота
+function shipIcon(level, cog, selected, badges = [], ring = null) {
   const color = { inside: "#ff5a4e", near: "#f5b13d", safe: "#4fd18b" }[level] || "#7f9aa6";
   const size = selected ? 26 : 20;
   const rot = Number.isFinite(cog) ? cog : 0;
   return L.divIcon({
     className: "ship-icon", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-    html: `<svg width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${rot}deg)">
+    html: `${ring ? `<span class="ship-ring" style="border-color:${ring}"></span>` : ""}<svg width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${rot}deg)">
       <path d="M10 1 16 18 10 14 4 18z" fill="${color}" stroke="${selected ? "#fff" : "#0b1a22"}" stroke-width="${selected ? 1.6 : 1}"/></svg>
       ${badges.length ? `<span class="ship-badges">${badges.map((k) =>
         `<i style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</i>`).join("")}</span>` : ""}`,
@@ -485,6 +495,11 @@ function renderLegend() {
   html += head("fleet", "Суда флота", state.showFleet);
   html += [["safe", "Вне зон"], ["near", "Приближается"], ["inside", "В зоне"]].map(([lvl, label]) =>
     row(`lvl:${lvl}`, `<i class="dot s-${lvl}"></i>`, label, state.showFleet && state.fleetLevels.has(lvl))).join("");
+  if (state.fleets.length > 1) {                    // флоты — цвет кольца вокруг значка судна
+    html += `<div class="lg-title">Флоты (кольцо вокруг судна)</div>`
+      + state.fleets.map((f) => row(`fl:${f.id}`, `<i class="ring-sw" style="border-color:${fleetColor(f.id)}"></i>`,
+        f.name + (f.access === "owner" ? "" : ` (от ${f.owner})`), state.showFleet && !state.hiddenFleets.has(f.id))).join("");
+  }
   html += `<div class="lg-title">Прочее</div>`
     + row("ports", `<svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-5" y="-5" width="10" height="10" rx="3" fill="#8fa6b0"/></svg>`,
       "Порты (красный — в зоне JWC)", state.showPorts)
@@ -516,6 +531,11 @@ $("#legend-items").addEventListener("click", async (e) => {
     await loadTraffic().catch(() => {});
   } else if (kind === "fleet") {
     state.showFleet = !state.showFleet;
+    renderVessels();
+  } else if (kind === "fl") {
+    state.showFleet = true;
+    const id = +val;
+    if (state.hiddenFleets.has(id)) state.hiddenFleets.delete(id); else state.hiddenFleets.add(id);
     renderVessels();
   } else if (kind === "lvl") {
     state.showFleet = true;
@@ -734,6 +754,7 @@ async function loadFleets() {
   }
   renderFleet();
   renderVessels();
+  renderLegend();                                   // список флотов в легенде
   if (state.inc?.items.length) renderIncidents();     // санкции судов флота — пометкой на их значках
 }
 
@@ -778,6 +799,7 @@ function renderFleet() {
   sel.innerHTML = state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)} (${f.vessels.length})${
     f.access === "owner" ? "" : ` · от ${esc(f.owner)}${f.access === "view" ? ", просмотр" : ""}`}</option>`).join("");
   sel.value = state.fleetId ?? "";
+  sel.style.borderLeft = state.fleetId != null ? `4px solid ${fleetColor(state.fleetId)}` : "";
   const empty = !state.fleets.length;
   $("#fleet-empty").hidden = !empty;
   $("#fleet-body").hidden = empty;
@@ -838,10 +860,12 @@ function renderVessels() {
   const live = new Set();
   for (const v of allVessels()) {
     if (!v.position || !state.showFleet || !state.fleetLevels.has(v.status.level)) continue;
+    const fl = fleetsOf(v.mmsi).filter((f) => !state.hiddenFleets.has(f.id));
+    if (!fl.length) continue;                       // все флоты судна скрыты в легенде
     live.add(v.mmsi);
     const ll = [v.position.lat, v.position.lon];
     const sel = v.mmsi === state.selectedMmsi;
-    const icon = shipIcon(v.status.level, v.position.cog ?? v.position.heading, sel, vesselBadges(v));
+    const icon = shipIcon(v.status.level, v.position.cog ?? v.position.heading, sel, vesselBadges(v), fleetColor(fl[0].id));
     let m = markers.get(v.mmsi);
     if (!m) {
       m = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(vesselsLayer);
@@ -863,7 +887,7 @@ function vesselPopup(v) {
   const d = { ...v, sog: p?.sog, cog: p?.cog };
   const fleets = state.fleets.filter((f) => f.vessels.some((x) => x.mmsi === v.mmsi)).map((f) => f.name);
   return shipCard(d, zoneLines(v.status.inside, v.status.near), {
-    ageS, actions: `<span class="sc-tag">Флот: ${esc(fleets.join(", "))}</span>`,
+    ageS, actions: `<span class="sc-tag">Флот: ${fleetChips(v.mmsi) || esc(fleets.join(", "))}</span>`,
   });
 }
 
@@ -1685,7 +1709,7 @@ function feedRow(x, i) {
     return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}" data-i="${i}">
       <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span>${notifPoint(n) ? `<span class="fi-map" title="Нажмите — покажу на карте">◎ на карте</span>` : ""}<span class="fi-time">${fmtTime(n.ts)}</span></div>
       <div class="fi-event">${esc(t.event)}</div>
-      ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b>` : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span></div>` : ""}
+      ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b>` : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span> ${n.mmsi ? fleetChips(n.mmsi) : ""}</div>` : ""}
       ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
       ${lines.length ? `<ul class="fi-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
       ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^(Правило «[^»]*»).*$/s, "$1").replace(/\.$/, ""))}</div>` : ""}</li>`;
@@ -1852,7 +1876,7 @@ function showEventSpot(n, at, opts = {}) {
   const color = { critical: "#ff5a4e", warning: "#f5b13d", info: "#4fc3d9" }[n.severity] || "#4fc3d9";
   const html = `<div class="ev-pop"><div class="fi-meta"><span class="fi-src">${n.mmsi ? "мои суда" : "система"}</span><span class="fi-time">${fmtTime(n.ts)}</span></div>
     <div class="fi-event">${esc(t.event)}</div>
-    ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b> ` : ""}<span class="muted">MMSI ${esc(t.mmsi)}</span></div>` : ""}
+    ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b> ` : ""}<span class="muted">MMSI ${esc(t.mmsi)}</span> ${n.mmsi ? fleetChips(n.mmsi) : ""}</div>` : ""}
     ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
     <ul class="fi-lines">${detailLines(first).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
     ${n.mmsi ? `<button class="btn ghost ev-open" type="button">Открыть судно</button>` : ""}</div>`;
