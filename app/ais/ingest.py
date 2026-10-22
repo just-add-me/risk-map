@@ -73,11 +73,11 @@ def position(mmsi: str, lat: float, lon: float, sog: Optional[float] = None, cog
     ts = ts or db.now_iso()
     prev = db.query_one("SELECT lat, lon, ts FROM ais_state WHERE mmsi=?", (mmsi,))
     first = prev is None or prev.get("lat") is None
-    from .. import anomalies           # скачок позиции (подозрительное поведение)
-    try:
-        anomalies.on_position(mmsi, prev, lat, lon, ts)
-    except Exception:  # noqa: BLE001
-        log.exception("Ошибка проверки скачка позиции %s", mmsi)
+    from .. import anomalies           # скачок позиции                   [подозрительное-поведение]
+    try:                                                                   # [подозрительное-поведение]
+        anomalies.on_position(mmsi, prev, lat, lon, ts)                    # [подозрительное-поведение]
+    except Exception:  # noqa: BLE001                                       [подозрительное-поведение]
+        log.exception("Ошибка проверки скачка позиции %s", mmsi)          # [подозрительное-поведение]
 
     db.execute(
         "INSERT INTO ais_state(mmsi, lat, lon, sog, cog, heading, ts, source, ais_name, nav, stale_notified) "
@@ -141,5 +141,5 @@ def cleanup_trails() -> None:
     db.execute("DELETE FROM ais_state WHERE mmsi NOT IN (SELECT mmsi FROM vessels)")
     db.execute("DELETE FROM zone_state WHERE mmsi NOT IN (SELECT mmsi FROM vessels)")
     db.execute("DELETE FROM positions WHERE mmsi NOT IN (SELECT mmsi FROM vessels)")
-    from .. import zone_log
-    zone_log.close_removed()
+    from .. import zone_log            # [журнал-заходов]
+    zone_log.close_removed()           # [журнал-заходов]

@@ -39,13 +39,13 @@ KINDS = {
     "detention": {"label": "Задержание в порту", "severity": "warning"},
     "news_risk": {"label": "Новости: тревожное", "severity": "warning"},
     "news": {"label": "Новости о судне", "severity": "info"},
-    "dark": {"label": "Пропал AIS при хорошем покрытии", "severity": "warning"},
-    "sts": {"label": "Встреча с судном в открытом море", "severity": "warning"},
-    "spoof": {"label": "Скачок позиции", "severity": "warning"},
-    "identity": {"label": "Смена названия или MMSI", "severity": "warning"},
+    "dark": {"label": "Пропал AIS при хорошем покрытии", "severity": "warning"},      # [подозрительное-поведение]
+    "sts": {"label": "Встреча с судном в открытом море", "severity": "warning"},      # [подозрительное-поведение]
+    "spoof": {"label": "Скачок позиции", "severity": "warning"},                       # [подозрительное-поведение]
+    "identity": {"label": "Смена названия или MMSI", "severity": "warning"},           # [подозрительное-поведение]
 }
-# Подозрительное поведение (app/anomalies.py) — только суда флотов, правило «рядом с судном» не нужно
-ANOMALY_KINDS = {"dark", "sts", "spoof", "identity"}
+# Подозрительное поведение (app/anomalies.py) — только суда флотов, правило «рядом с судном» не нужно  [подозрительное-поведение]
+ANOMALY_KINDS = {"dark", "sts", "spoof", "identity"}    # [подозрительное-поведение]
 # События «про судно», а не «в точке»: на карте показываются там, где судно сейчас
 VESSEL_KINDS = {"sanction", "sanction_new", "detention", "news", "news_risk"}
 DEVICE_PREFIX = {"970": "sart", "972": "mob", "974": "epirb"}

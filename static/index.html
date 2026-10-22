@@ -27,26 +27,12 @@
       <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 22a2.5 2.5 0 0 0 2.5-2.5h-5A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.8V3a1.5 1.5 0 0 0-3 0v1.2A7 7 0 0 0 5 11v5l-2 2v1h18v-1z" fill="currentColor"/></svg>
       <span class="badge" id="bell-count" hidden>0</span>
     </button>
-    <button class="icon-btn" id="btn-features" title="Функции: включить и выключить" aria-label="Функции">
-      <svg viewBox="0 0 24 24" width="19" height="19"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.7 7.7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.7 7.7 0 0 0 1.7 1L11 21h4l.4-2.9a7.7 7.7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" fill="currentColor" transform="translate(-1 0)"/></svg>
-    </button>
     <form method="post" action="/logout"><button class="text-btn" title="Выйти">Выйти</button></form>
   </div>
 </header>
 
 
 <!-- Источники зон: открывается кнопкой с номером циркуляра в шапке -->
-<div class="modal" id="feat-modal" hidden>
-  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="feat-title">
-    <div class="modal-head"><h2 id="feat-title">Функции</h2>
-      <button class="icon-btn" type="button" id="feat-close" aria-label="Закрыть">✕</button></div>
-    <div class="modal-body">
-      <p class="muted small" id="feat-hint" style="margin-top:0">Выключенная функция пропадает из интерфейса и не шлёт
-        уведомлений. Накопленные данные сохраняются — после включения всё на месте.</p>
-      <div id="feat-list"></div>
-    </div>
-  </div>
-</div>
 <div class="modal" id="circ-modal" hidden>
   <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="circ-title">
     <div class="modal-head"><h2 id="circ-title">Источники зон</h2>
@@ -81,7 +67,8 @@
       <button class="tab" data-tab="zones">Зоны</button>
       <button class="tab" data-tab="rules">Правила</button>
       <button class="tab" data-tab="events">События <span class="tab-count" id="tab-alert-count" hidden></span></button>
-      <button class="tab" data-tab="log" data-feature="zone_log">Журнал <span class="tab-count" id="tab-log-count" hidden></span></button>
+      <!-- [журнал-заходов] -->
+      <button class="tab" data-tab="log">Журнал <span class="tab-count" id="tab-log-count" hidden></span></button>
     </nav>
 
     <!-- ФЛОТ -->
@@ -235,8 +222,8 @@
     </div>
     </section>
 
-    <!-- ЖУРНАЛ ЗАХОДОВ В ЗОНЫ (функция zone_log) -->
-    <section class="panel" id="panel-log" data-feature="zone_log">
+    <!-- [журнал-заходов] начало: журнал заходов в зоны -->
+    <section class="panel" id="panel-log">
       <p class="muted small" style="margin-top:0">Заходы судов ваших флотов в зоны — для заявок страховщику на
         дополнительную премию. Отметьте «Заявлено», когда заход сообщён. Если судно в зоне JWC дольше
         <span id="log-remind-h">6</span> ч, а заход не заявлен, придёт напоминание.</p>
@@ -252,6 +239,7 @@
       <a class="btn ghost log-xlsx" id="log-xlsx" href="#" download>Скачать Excel</a>
       <ul class="log-list" id="log-list"></ul>
     </section>
+    <!-- [журнал-заходов] конец -->
   </aside>
 
   <main class="map-wrap">

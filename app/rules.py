@@ -415,9 +415,10 @@ def on_static(mmsi: str, destination: Optional[str], eta: Optional[str]) -> None
 def on_incident(inc: dict) -> None:
     from .ais import incidents
     # санкции, задержания и новости — про само судно, а не событие в точке: «рядом с судном» не бывает
-    if (inc.get("lat") is None or inc.get("test") or inc["kind"] in incidents.VESSEL_KINDS
-            or inc["kind"] in incidents.ANOMALY_KINDS):
+    if inc.get("lat") is None or inc.get("test") or inc["kind"] in incidents.VESSEL_KINDS:
         return
+    if inc["kind"] in incidents.ANOMALY_KINDS:      # [подозрительное-поведение]
+        return                                       # [подозрительное-поведение]
     for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='incident'"):
         r = _load(row)
         if inc["kind"] not in r["params"]["kinds"]:

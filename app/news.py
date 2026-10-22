@@ -37,7 +37,7 @@ KEEP_DAYS = 180              # сколько помнить уже показа
 MARITIME = r"ship|vessel|tanker|carrier|cargo|bulk|container|freighter|imo|port|crew|seafarer|maritime|sailor|судн|танкер"
 RISK_WORDS = {
     "захват / задержание": r"seiz|detain|detention|arrest|impound|hijack|boarded|captur",
-    "нападение": r"attack|missile|drone|strike|pirat|gunfire|shot at|explosi",
+    "нападение": r"attack|missile|drone|(?<!counter[- ])strike|pirat|gunfire|shot at|explosi",
     "авария": r"fire|blaze|collision|collid|aground|grounding|sank|sink|capsiz|disabled|engine failure|leak|spill",
     "санкции": r"sanction|blacklist|shadow fleet|dark fleet|ofac|embargo|spoofing",
     "экипаж": r"abandon|stranded|unpaid|crew (?:missing|killed|injured|dead)|kidnap",
@@ -122,14 +122,19 @@ def mentions(text: str, name: str, imo: str) -> bool:
     if not name or len(re.sub(r"\W", "", name)) < 4:
         return False
     nm = _name_re(name).pattern
-    vw = rf"(?<!\bto )(?:{VESSEL_WORDS})\b"            # «to ship oil» — глагол, а не судно
-    near = rf"\b{vw}\W+(?:[\w’'\-]+\W+){{0,4}}?({nm})|({nm})\W+(?:[\w’'\-]+\W+){{0,4}}?{vw}"
-    quoted = rf"[\"“”«'‘]({nm})[\"“”»'’]"
     single = len(re.split(r"[\s\-]+", name.strip())) == 1
+    gap = 1 if single else 4          # однословное («Energy», «Koru») — почти вплотную к «судовому» слову
+    vw = rf"(?<!\bto )(?:{VESSEL_WORDS})\b"            # «to ship oil» — глагол, а не судно
+    near = rf"\b{vw}\W+(?:[\w’'\-]+\W+){{0,{gap}}}?({nm})|({nm})\W+(?:[\w’'\-]+\W+){{0,{gap}}}?{vw}"
+    quoted = rf"[\"“”«'‘]({nm})[\"“”»'’]"
     for pat in (quoted, near):
         for m in re.finditer(pat, text, re.I):
-            start = next(m.start(g) for g in range(1, (m.re.groups or 0) + 1) if m.group(g))
-            # однословное название сразу после слова с заглавной — часть чужого названия («Century Dream»)
+            g = next(g for g in range(1, (m.re.groups or 0) + 1) if m.group(g))
+            found, start = m.group(g), m.start(g)
+            # однословное название — имя собственное: с заглавной («ship energy-saving» — не судно Energy)
+            if single and not found[:1].isupper():
+                continue
+            # …и не хвост чужого названия («Century Dream»)
             prev = re.search(r"([A-Za-zА-Яа-яЁё]+)\W{1,2}$", text[max(0, start - 30):start])
             if single and prev and prev.group(1)[0].isupper() and not re.fullmatch(VESSEL_WORDS, prev.group(1), re.I):
                 continue
@@ -137,14 +142,30 @@ def mentions(text: str, name: str, imo: str) -> bool:
     return False
 
 
-def relevant(item: dict, name: str, imo: str) -> bool:
+def _lengths_m(text: str) -> list[float]:
+    """Длины судов в тексте: «134m», «80-metre», «305-foot», «236 ft»."""
+    out = [float(x) for x in re.findall(r"\b(\d{2,3}(?:[.,]\d)?)\s?-?(?:m|metres?|meters?)\b", text, re.I)]
+    out += [float(x) * 0.3048 for x in re.findall(r"\b(\d{2,3})\s?-?(?:foot|feet|ft)\b", text, re.I)]
+    return out
+
+
+def length_conflict(text: str, length: Optional[float]) -> bool:
+    """В заголовке указана длина, и ни одна не похожа на нашу (±15 %) — это судно-тёзка («50m Koru» ≠ 125 м)."""
+    ls = _lengths_m(text)
+    return bool(length and ls and not any(abs(x - length) <= 0.15 * length for x in ls))
+
+
+def relevant(item: dict, name: str, imo: str, length: Optional[float] = None) -> bool:
     """Статья про это судно: IMO или название в заголовке/описании, а иначе — в тексте самой статьи.
 
     Текст открываем только по прямым ссылкам Bing. Ссылки Google ведут на их окно согласия на cookies,
     а сам поиск Google по точной фразе неточен (на «EAGLE S» находит «Harry S. Truman») — поэтому
     его находки без названия в заголовке или описании не засчитываем.
     """
-    if mentions(f"{item['title']} {item['summary']}", name, imo):
+    blob = f"{item['title']} {item['summary']}"
+    if imo not in blob and length_conflict(item["title"], length):
+        return False
+    if mentions(blob, name, imo):
         return True
     if item.get("via") != "bing":
         return False
@@ -215,12 +236,12 @@ def _key(title: str) -> str:
 def _fleet() -> list[dict]:
     """Суда флотов с IMO: название (из флота или AIS), IMO, MMSI."""
     seen, out = set(), []
-    for r in db.query("SELECT v.mmsi, COALESCE(v.imo, a.imo) AS imo, COALESCE(NULLIF(v.name, ''), a.ais_name) AS name "
-                      "FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi"):
+    for r in db.query("SELECT v.mmsi, COALESCE(v.imo, a.imo) AS imo, COALESCE(NULLIF(v.name, ''), a.ais_name) AS name, "
+                      "a.length FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi"):
         imo = str(r["imo"] or "")
         if fleet_import.imo_valid(imo) and imo not in seen:
             seen.add(imo)
-            out.append({"imo": imo, "mmsi": r["mmsi"], "name": (r["name"] or "").strip()})
+            out.append({"imo": imo, "mmsi": r["mmsi"], "name": (r["name"] or "").strip(), "length": r["length"]})
     return out
 
 
@@ -244,7 +265,7 @@ def check_vessel(v: dict, pause: float = PAUSE_S) -> int:
                 continue
             if it["published"] and it["published"] < cutoff:
                 continue
-            if relevant(it, v["name"], v["imo"]):
+            if relevant(it, v["name"], v["imo"], v.get("length")):
                 found[key] = it
         time.sleep(pause)
     if not found:

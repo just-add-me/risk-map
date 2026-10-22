@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from . import config, db, zones
+from . import zone_log    # [журнал-заходов]
 
 log = logging.getLogger(__name__)
 
@@ -132,13 +133,7 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
             body = f"До границы ≈ {dist:.0f} мор. миль{_eta_text(dist or 0, sog)}." + suffix
             created.append(db.notify("zone_near", "warning", title, body, mmsi, zid))
 
-        # журнал заходов (для заявок на дополнительную премию)
-        from . import zone_log
-        if cur == "inside":
-            zone_log.opened(mmsi, zid, lat, lon, now, initial=initial)
-        elif prev == "inside":
-            zone_log.closed(mmsi, zid, lat, lon, now,
-                            note="зона перестала действовать" if (reason or not zones.in_effect(zid)) else "")
+        zone_log.on_change(mmsi, zid, prev, cur, lat, lon, now, initial, bool(reason) or not zones.in_effect(zid))  # [журнал-заходов]
 
         if cur is None:
             db.execute("DELETE FROM zone_state WHERE mmsi=? AND zone_id=?", (mmsi, zid))

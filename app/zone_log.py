@@ -4,8 +4,9 @@
 заявлен ли заход (отмечают пользователи с правом редактировать флот). Записи ведёт
 alerts.process при входе и выходе. Старые заходы восстанавливаются один раз из истории
 уведомлений (backfill). Напоминание — если судно в зоне JWC больше REMIND_HOURS, а заход не заявлен.
-Видимость журнала в интерфейсе включается переключателем features «zone_log»; записи ведутся всегда,
-чтобы после включения история была полной.
+Функция отдельная: всё, что её подключает, помечено меткой [журнал-заходов] — чтобы удалить функцию,
+удалите этот файл и отмеченные строки (поиск: grep -rn "[журнал-заходов]" app static tests), а в базе —
+таблицу zone_visits.
 """
 from __future__ import annotations
 
@@ -15,11 +16,25 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from . import access, alerts, db, features, zones
+from . import access, db, zones
 
 log = logging.getLogger(__name__)
 
 REMIND_HOURS = 6
+
+
+def _label(mmsi: str) -> str:
+    from .alerts import vessel_label
+    return vessel_label(mmsi)
+
+
+def on_change(mmsi: str, zone_id: str, prev: Optional[str], cur: Optional[str], lat: float, lon: float, ts: str,
+              initial: bool, ended: bool) -> None:
+    """Вызывается из alerts.process при смене статуса судна в зоне."""
+    if cur == "inside":
+        opened(mmsi, zone_id, lat, lon, ts, initial=initial)
+    elif prev == "inside":
+        closed(mmsi, zone_id, lat, lon, ts, note="зона перестала действовать" if ended else "")
 
 
 def _layer(zone_id: str) -> Optional[str]:
@@ -91,7 +106,7 @@ def visits(user: str, days: int = 90, layer: str = "", fleet_id: Optional[int] =
         if layer and (r["layer"] or "") != layer:
             continue
         h = _hours(r["entered_at"], r["exited_at"])
-        r.update(vessel=alerts.vessel_label(r["mmsi"]), hours=round(h, 1), days=math.ceil(h / 24) if h else 0,
+        r.update(vessel=_label(r["mmsi"]), hours=round(h, 1), days=math.ceil(h / 24) if h else 0,
                  open=r["exited_at"] is None, can_edit=r["mmsi"] in editable)
     return [r for r in rows if not layer or (r["layer"] or "") == layer]
 
@@ -113,14 +128,12 @@ def declare(user: str, vid: int, declared: bool, note: Optional[str] = None) -> 
 
 def remind() -> int:
     """Судно больше REMIND_HOURS в зоне JWC, заход не заявлен — одно напоминание на заход."""
-    if not features.enabled("zone_log"):
-        return 0
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=REMIND_HOURS)).replace(microsecond=0).isoformat()
     n = 0
     for r in db.query("SELECT * FROM zone_visits WHERE exited_at IS NULL AND declared=0 AND reminded=0 "
                       "AND layer='jwc' AND entered_at < ?", (cutoff,)):
         db.execute("UPDATE zone_visits SET reminded=1 WHERE id=?", (r["id"],))
-        db.notify("zone_log", "warning", f"{alerts.vessel_label(r['mmsi'])}: заход в «{r['zone_name']}» не заявлен",
+        db.notify("zone_log", "warning", f"{_label(r['mmsi'])}: заход в «{r['zone_name']}» не заявлен",
                   f"Судно в зоне с {r['entered_at'][:16].replace('T', ' ')} UTC "
                   f"({_hours(r['entered_at'], None):.0f} ч). Отметьте заявку в журнале заходов.", r["mmsi"], r["zone_id"])
         n += 1

@@ -8,8 +8,10 @@
 * spoof — скачок позиции: чтобы оказаться в новой точке, судну пришлось бы идти быстрее JUMP_KN;
 * identity — судно сменило название в AIS, или его IMO теперь передаёт другой MMSI (смена флага).
 
-Всё записывается в происшествия (kinds dark/sts/spoof/identity) с уведомлением. Проверки идут,
-только когда включена функция «anomalies» (features.py).
+Всё записывается в происшествия (kinds dark/sts/spoof/identity) с уведомлением.
+Функция отдельная: всё, что её подключает, помечено меткой [подозрительное-поведение] — чтобы удалить функцию,
+удалите этот файл и отмеченные строки (поиск: grep -rn "[подозрительное-поведение]" app static tests), а в базе —
+таблицу anomaly_state и записи incidents с этими видами.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import db, features
+from . import db
 from .ais import incidents, shipinfo, traffic
 
 log = logging.getLogger(__name__)
@@ -52,7 +54,7 @@ def _name(mmsi: str) -> Optional[str]:
 
 def on_position(mmsi: str, prev: Optional[dict], lat: float, lon: float, ts: str) -> None:
     """Скачок позиции у судна флота (вызывается из ingest.position до записи новой позиции)."""
-    if not prev or prev.get("lat") is None or not prev.get("ts") or not features.enabled("anomalies"):
+    if not prev or prev.get("lat") is None or not prev.get("ts"):
         return
     try:
         hours = (datetime.fromisoformat(ts) - datetime.fromisoformat(prev["ts"])).total_seconds() / 3600
@@ -70,8 +72,6 @@ def on_position(mmsi: str, prev: Optional[dict], lat: float, lon: float, ts: str
 
 def check_fleet() -> int:
     """Раз в 10 минут: молчание AIS при хорошем покрытии, встречи в море, смена названия и MMSI."""
-    if not features.enabled("anomalies"):
-        return 0
     from .layers import ports
     port_pts = [(p["lat"], p["lon"]) for p in ports.load()]
     now = datetime.now(timezone.utc)

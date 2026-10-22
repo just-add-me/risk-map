@@ -1409,11 +1409,9 @@ const INC_STYLE = {
   sanction: { color: "#c084fc", glyph: "$" }, sanction_new: { color: "#a78bfa", glyph: "$" },
   detention: { color: "#fb923c", glyph: "⚓" },
   news_risk: { color: "#f472b6", glyph: "N" }, news: { color: "#64748b", glyph: "N" },
-  dark: { color: "#a78bfa", glyph: "◐" }, sts: { color: "#f59e0b", glyph: "⇄" },
-  spoof: { color: "#ef4444", glyph: "⌁" }, identity: { color: "#38bdf8", glyph: "ID" },
+  dark: { color: "#a78bfa", glyph: "◐" }, sts: { color: "#f59e0b", glyph: "⇄" },         // [подозрительное-поведение]
+  spoof: { color: "#ef4444", glyph: "⌁" }, identity: { color: "#38bdf8", glyph: "ID" },  // [подозрительное-поведение]
 };
-// подозрительное поведение — показываем, только если функция «anomalies» включена
-const ANOMALY_KINDS = new Set(["dark", "sts", "spoof", "identity"]);
 const incidentsLayer = L.layerGroup().addTo(map);
 // «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
 state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0 };
@@ -1426,7 +1424,6 @@ function incIcon(it) {
 }
 
 function incVisible(it) {
-  if (ANOMALY_KINDS.has(it.kind) && !featureOn("anomalies")) return false;
   return !state.inc.hidden.has(it.kind) && (it.test ? $("#inc-tests").checked : true);
 }
 
@@ -1459,8 +1456,7 @@ function renderIncidents() {
   inc.items.forEach((it) => { if (!it.test || $("#inc-tests").checked) counts[it.kind] = (counts[it.kind] || 0) + 1; });
   // текстовые сообщения о безопасности и спасательную авиацию aisstream не передаёт (проверено 21.10.2026) —
   // показываем эти типы, только если такие события всё же появятся
-  $("#inc-kinds").innerHTML = Object.entries(inc.kinds).filter(([k]) => (!["safety", "sar"].includes(k) || counts[k])
-      && (!ANOMALY_KINDS.has(k) || featureOn("anomalies")))
+  $("#inc-kinds").innerHTML = Object.entries(inc.kinds).filter(([k]) => !["safety", "sar"].includes(k) || counts[k])
     .map(([k, d]) => `
     <button class="fchip ${inc.hidden.has(k) ? "" : "on"}" data-kind="${k}">
       <span class="inc-dot" style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</span>${esc(d.label)}
@@ -1706,57 +1702,14 @@ async function refreshAll(forceZones = false) {
   try {
     // статус нужен, чтобы понять, изменились ли зоны; остальное грузим параллельно, а не по очереди
     await loadStatus();
-    await Promise.all([loadZones(forceZones), loadFleets(), loadNotifications(), loadIncidents().catch(() => {}),
-      loadFeatures().catch(() => {})]);
-    if (featureOn("zone_log")) loadZoneLog().catch(() => {});
+    await Promise.all([loadZones(forceZones), loadFleets(), loadNotifications(), loadIncidents().catch(() => {})]);
+    loadZoneLog().catch(() => {});                                 // [журнал-заходов]
     await loadTraffic();                         // после флотов: суда флотов рисуются отдельно
     if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
 }
 
-/* ------------------------------------------------------------------ функции: включить и выключить */
-state.features = {};
-const featureOn = (name) => state.features[name]?.on !== false;
-
-async function loadFeatures() {
-  const d = await api("/api/features");
-  state.features = d.features;
-  state.featuresAdmin = d.admin;
-  applyFeatures();
-}
-
-// выключенная функция: её вкладки и блоки (data-feature) скрыты
-function applyFeatures() {
-  for (const [name, f] of Object.entries(state.features)) document.body.classList.toggle(`f-off-${name}`, !f.on);
-  if (!featureOn("zone_log") && $("#panel-log").classList.contains("active")) switchTab("fleet");
-  if (state.inc?.items.length) renderIncidents();
-}
-
-function renderFeatures() {
-  $("#feat-list").innerHTML = Object.entries(state.features).map(([name, f]) => `
-    <label class="feat-row"><input type="checkbox" data-name="${name}" ${f.on ? "checked" : ""} ${state.featuresAdmin ? "" : "disabled"}>
-      <span><b>${esc(f.label)}</b><span class="muted small">${esc(f.hint)}</span></span></label>`).join("")
-    + (state.featuresAdmin ? "" : `<p class="muted small">Менять может только администратор.</p>`);
-  $$("#feat-list input").forEach((cb) => cb.onchange = async () => {
-    try {
-      const d = await api("/api/features", { json: { name: cb.dataset.name, on: cb.checked } });
-      state.features = d.features;
-      applyFeatures();
-      if (cb.dataset.name === "zone_log" && cb.checked) loadZoneLog().catch(() => {});
-      toast(cb.checked ? "Функция включена" : "Функция выключена", state.features[cb.dataset.name].label);
-    } catch (e) { cb.checked = !cb.checked; toast("Не удалось", e.message, "critical"); }
-  });
-}
-$("#btn-features").onclick = async () => {
-  await loadFeatures().catch(() => {});
-  renderFeatures();
-  $("#feat-modal").hidden = false;
-  $("#feat-close").focus();
-};
-$("#feat-close").onclick = () => { $("#feat-modal").hidden = true; };
-$("#feat-modal").onclick = (e) => { if (e.target.id === "feat-modal") $("#feat-modal").hidden = true; };
-
-/* ------------------------------------------------------------------ журнал заходов в зоны */
+/* ------------------------------------------------------------------ журнал заходов в зоны [журнал-заходов] начало */
 function logQuery() {
   const q = new URLSearchParams({ days: $("#log-days").value, layer: $("#log-layer").value });
   if ($("#log-fleet").value) q.set("fleet", $("#log-fleet").value);
@@ -1799,13 +1752,14 @@ async function loadZoneLog() {
   });
 }
 ["#log-fleet", "#log-layer", "#log-days"].forEach((id) => $(id).onchange = () => loadZoneLog().catch(() => {}));
+/* [журнал-заходов] конец */
 
 /* ------------------------------------------------------------------ события UI */
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
   if (name === "rules") loadRules().catch((e) => toast("Ошибка", e.message, "critical"));
-  if (name === "log") loadZoneLog().catch((e) => toast("Ошибка", e.message, "critical"));
+  if (name === "log") loadZoneLog().catch((e) => toast("Ошибка", e.message, "critical"));   // [журнал-заходов]
 }
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
 

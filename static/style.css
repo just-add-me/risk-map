@@ -452,13 +452,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .lg-btn.off span { text-decoration: line-through; }
 .lg-title.lg-btn { display: block; }
 
-/* ---------- функции (вкл/выкл) ---------- */
-body.f-off-zone_log [data-feature="zone_log"], body.f-off-anomalies [data-feature="anomalies"] { display: none !important; }
-.feat-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
-.feat-row input { margin-top: 3px; }
-.feat-row > span { display: flex; flex-direction: column; gap: 3px; }
-
-/* ---------- журнал заходов в зоны ---------- */
+/* ---------- журнал заходов в зоны [журнал-заходов] начало ---------- */
 .log-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .log-filters select { flex: 1 1 120px; min-width: 0; }
 .log-summary { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
@@ -471,3 +465,4 @@ body.f-off-zone_log [data-feature="zone_log"], body.f-off-anomalies [data-featur
 .log-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .log-decl { font-size: 12px; white-space: nowrap; color: var(--muted); }
 .log-item .zin { color: var(--amber); }
+/* [журнал-заходов] конец */
