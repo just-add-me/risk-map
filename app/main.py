@@ -267,6 +267,9 @@ async def api_ship_search(request: Request):
     items = await asyncio.to_thread(traffic.search, q, 12)
     for it in items:
         it["in_fleet"] = it["mmsi"] in fleet_mmsi
+        if it["in_fleet"]:                                 # HIN есть только у судов флотов (в AIS его нет)
+            h = db.query_one("SELECT hin FROM vessels WHERE mmsi=? AND hin IS NOT NULL LIMIT 1", (it["mmsi"],))
+            it["hin"] = h["hin"] if h else None
         if it["in_fleet"] and it.get("lat") is None:      # в живом потоке позиция устарела — берём последнюю известную
             pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (it["mmsi"],)) or {}
             it["lat"], it["lon"] = pos.get("lat"), pos.get("lon")
@@ -616,6 +619,8 @@ async def api_vessel_add(request: Request):
         raise ValueError("HIN — 12 знаков (латиница и цифры), в ЕС с кодом страны впереди, например FR-ABC12345D404")
     res = _add_vessel(fid, mmsi, imo, str(body.get("name", "")).strip()[:80], hin)
     if res == "exists":
+        if hin:                               # судно уже было — дописали ему номер корпуса
+            return JSONResponse({"ok": True, "hin_saved": True, "check": _vessel_check(mmsi, imo)})
         raise ValueError("Это судно уже есть во флоте")
     await asyncio.to_thread(screening.screen_fleets)
     return JSONResponse({"ok": True, "check": _vessel_check(mmsi, imo)})

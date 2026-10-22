@@ -2094,6 +2094,7 @@ $("#form-vessel").onsubmit = async (e) => {
     e.target.reset();
     $("#mmsi-check").innerHTML = "";
     const c = r.check || {};
+    if (r.hin_saved) { toast("HIN сохранён", `Судно уже было во флоте — дописан номер корпуса ${fd.hin}`); await loadFleets(); return; }
     if (c.found) {
       toast(`Добавлено: ${c.name || fd.mmsi || "IMO " + fd.imo}${c.by_imo ? ` (MMSI ${c.mmsi} найден по IMO)` : ""}`, [c.type_name, c.flag, c.has_position ? `позиция ${fmtAge(c.age_s)}` : "позиции пока нет",
         ...c.warnings].filter(Boolean).join(" · "), c.warnings.length ? "warning" : "info");
