@@ -553,7 +553,7 @@ def _dest_rules() -> None:
             if st is not None and st["value"] == value:
                 continue
             _save(r["id"], mmsi, value)
-            if value != "-":
+            if st is not None and value != "-":       # первое наблюдение — только запоминаем
                 fire(r, mmsi, via, f"Пункт назначения «{a['destination']}» — {port['name']} ({port['country']})"
                      f"{', ETA ' + a['eta'] if a['eta'] else ''}. Порт в зоне: {', '.join(zones.zone_name(z) for z in zs)}.")
 
