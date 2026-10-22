@@ -272,8 +272,11 @@ async def api_zone_visits(request: Request):
     if request.method == "POST":
         body = await request.json()
         try:
-            zone_log.declare(user, int(body.get("id")), bool(body.get("declared")),
-                             body.get("note") if "note" in body else None)
+            if "vessel_skip" in body:          # «заявки не нужны» для всех заходов судна (или отмена)
+                n = zone_log.set_vessel_skip(user, str(body.get("mmsi")), bool(body["vessel_skip"]))
+                return JSONResponse({"ok": True, "updated": n})
+            zone_log.mark(user, int(body.get("id")), str(body.get("status") or "unmarked"),
+                          body.get("note") if "note" in body else None)
         except (ValueError, TypeError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse({"ok": True})
@@ -288,7 +291,10 @@ async def api_zone_visits(request: Request):
         data = await asyncio.to_thread(zone_log.xlsx, rows)
         return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": "attachment; filename=zone-visits.xlsx"})
-    return JSONResponse({"items": rows, "remind_hours": zone_log.REMIND_HOURS}, headers={"Cache-Control": "no-store"})
+    skip = sorted(zone_log.skip_vessels() & access.mmsis(user))
+    return JSONResponse({"items": rows, "remind_hours": zone_log.REMIND_HOURS,
+                         "skip_vessels": [{"mmsi": x, "name": alerts.vessel_label(x)} for x in skip]},
+                        headers={"Cache-Control": "no-store"})
 # [журнал-заходов] конец
 
 

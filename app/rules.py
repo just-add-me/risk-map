@@ -48,7 +48,7 @@ KINDS = {
     "incident": "Происшествие рядом",
     "vessel_event": "Событие с судном",
     "dest_zone": "Порт назначения в зоне риска",
-    "visit_undeclared": "Заход в зону не заявлен",        # [журнал-заходов]
+    "visit_undeclared": "Заход без отметки о заявке",     # [журнал-заходов]
 }
 # Группы событий с судном (правило vessel_event): группа → (название, виды происшествий)
 EVENT_GROUPS = {
@@ -167,7 +167,7 @@ def describe(r: dict) -> str:
         return "порт назначения лежит в " + scope_name(p["scope"], r["owner"])
     if k == "visit_undeclared":                                                               # [журнал-заходов] начало
         lay = {"any": "любой зоне", "jwc": "зоне JWC", "ibf": "зоне IBF", "inl": "районе INL"}[p["layer"]]
-        return f"в {lay} дольше {p['hours']:g} ч, а заход не отмечен «заявлено»"         # [журнал-заходов] конец
+        return f"в {lay} дольше {p['hours']:g} ч, а у захода нет отметки (заявлено / не требуется)"   # [журнал-заходов] конец
     if k == "incident":
         from .ais import incidents
         return (f"в {p['radius_nm']:g} милях: "
@@ -581,8 +581,9 @@ def _visit_rules() -> None:
                     continue
                 _save(r["id"], key, "fired", fired=1)
                 fire(r, mmsi, via, f"Судно в зоне «{v['zone_name']}» с {v['entered_at'][:16].replace('T', ' ')} UTC "
-                     f"({hours:.0f} ч). Отметьте заявку во вкладке «Журнал».", v["zone_id"],
-                     title=f"Заход в зону не заявлен «{v['zone_name']}»")
+                     f"({hours:.0f} ч). Отметьте во вкладке «Журнал», заявлен ли заход страховщику "
+                     f"(или что заявка не требуется).", v["zone_id"],
+                     title=f"Отметьте заявку на заход «{v['zone_name']}»")
 # [журнал-заходов] конец
 
 
@@ -594,7 +595,7 @@ DEFAULTS = [
     ("Нет сигнала AIS", "ais_lost", {"hours": 24}, "warning"),
     ("Событие с судном", "vessel_event", {"groups": list(EVENT_GROUPS)}, "warning"),
     ("Порт назначения в зоне риска", "dest_zone", {"scope": "layer:any"}, "warning"),
-    ("Заход в зону не заявлен", "visit_undeclared", {"hours": 6, "layer": "jwc"}, "warning"),   # [журнал-заходов]
+    ("Заход без отметки о заявке", "visit_undeclared", {"hours": 6, "layer": "jwc"}, "warning"),   # [журнал-заходов]
 ]
 
 

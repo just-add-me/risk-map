@@ -660,8 +660,13 @@ def test_zone_log():
     zone_log.closed("273000777", zid, 1.5, 2.5, "2026-10-02T12:00:00+00:00")
     rows = [r for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"]
     assert len(rows) == 1 and rows[0]["hours"] == 36.0 and rows[0]["days"] == 2 and rows[0]["can_edit"]
-    zone_log.declare(config.ADMIN_USER, rows[0]["id"], True)
-    assert [r["declared"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"] == [1]
+    assert rows[0]["status"] == "unmarked"                     # заявлен ли заход — не знаем
+    zone_log.mark(config.ADMIN_USER, rows[0]["id"], "declared")
+    assert [r["status"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"] == ["declared"]
+    zone_log.set_vessel_skip(config.ADMIN_USER, "273000777", True)   # годовое покрытие: заявки не нужны
+    zone_log.opened("273000777", zid, 1.0, 2.0)
+    assert [r["status"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"][0] == "not_required"
+    zone_log.set_vessel_skip(config.ADMIN_USER, "273000777", False)
     assert zone_log.xlsx(rows)[:2] == b"PK"
 
 
