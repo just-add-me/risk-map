@@ -264,7 +264,17 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 /* ---------- карточка судна ---------- */
 .sc-popup .leaflet-popup-content { margin: 0; width: 310px !important; }
 .sc-popup .leaflet-popup-content-wrapper { padding: 0; overflow: hidden; }
-.sc { font-size: 13px; }
+.sc { font-size: 13px; overflow-y: auto; }
+.sc-tabs { display: flex; border-bottom: 1px solid var(--line); }
+.sc-tabs button { flex: 1; padding: 8px 6px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.sc-tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.sc-evn { color: var(--accent); font-weight: 600; }
+.sc-events { padding: 8px 12px 10px; }
+.sc-ev { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.sc-ev:last-child { border-bottom: 0; }
+.sc-ev .dot { width: 8px; height: 8px; vertical-align: middle; margin-right: 4px; }
+.sc-ev-body { margin-top: 3px; white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-height: 760px) { .sc-photo, .sc-photo img, .sc-photo .sc-sil { height: 100px; } }
 .sc-head { display: flex; gap: 10px; align-items: center; padding: 10px 28px 8px 12px; }
 .sc-flag { width: 30px; height: 20px; object-fit: cover; border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.15); flex: none; }
 .sc-name { font-size: 16px; font-weight: 600; line-height: 1.2; }
@@ -274,9 +284,10 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-photo img, .sc-photo .sc-sil { width: 100%; height: 150px; object-fit: cover; display: block; }
 .sc-credit { position: absolute; left: 8px; bottom: 6px; font-size: 10.5px; text-shadow: 0 1px 2px #000; }
 .sc-credit a { color: #fff; text-decoration: none; }
-.sc-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.sc-actions .btn { padding: 5px 10px; font-size: 12.5px; text-decoration: none; }
-.sc-actions select { flex: 1 1 130px; min-width: 110px; padding: 5px; font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.sc-actions { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.sc-row { display: flex; gap: 6px; align-items: center; }
+.sc-actions .btn { flex: 1 1 0; padding: 6px 10px; font-size: 12.5px; text-decoration: none; text-align: center; white-space: nowrap; }
+.sc-actions select { flex: 1 1 0; min-width: 0; padding: 6px 5px; font-size: 12.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
 .sc-tag { flex: 1; font-size: 12px; color: var(--muted); }
 .sc-route { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px 4px; }
 .sc-route b { display: block; font-size: 16px; font-family: var(--mono); }

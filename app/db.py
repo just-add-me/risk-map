@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS incidents(
     count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_seen ON incidents(last_seen);
+CREATE INDEX IF NOT EXISTS idx_incidents_mmsi ON incidents(mmsi);
+CREATE INDEX IF NOT EXISTS idx_notifications_mmsi ON notifications(mmsi);
 -- конструктор отслеживания: правила пользователя, их состояние по судам, свои области на карте
 CREATE TABLE IF NOT EXISTS rules(
     id INTEGER PRIMARY KEY,

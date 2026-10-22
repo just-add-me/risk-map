@@ -248,9 +248,32 @@ function renderZoneLayer() {
   const order = { inl: 0, jwc: 1, ibf: 2 };
   const feats = state.zonesFC.features.filter((f) => zoneVisible(f.properties))
     .sort((a, b) => order[layerOf(a.properties)] - order[layerOf(b.properties)]);
-  zonesLayer.addData({ ...state.zonesFC, features: feats });
+  zonesLayer.addData({ ...state.zonesFC, features: [...feats, ...wrapCopies(feats)] });
   zonesLayer.bringToBack();
   if (document.body.classList.contains("drawing")) setMapInteractive(false);
+}
+
+// Карта повторяет мир по долготе (worldCopyJump), а векторные слои Leaflet — нет: у 180-го меридиана
+// (Чукотка, Алеуты, Аляска) зоны обрывались. Зоны у края мира дорисовываем копией со сдвигом на 360°.
+function shiftCoords(c, dx) {
+  return typeof c[0] === "number" ? [c[0] + dx, ...c.slice(1)] : c.map((x) => shiftCoords(x, dx));
+}
+
+function lonRange(c, r = [Infinity, -Infinity]) {
+  if (typeof c[0] === "number") { r[0] = Math.min(r[0], c[0]); r[1] = Math.max(r[1], c[0]); return r; }
+  c.forEach((x) => lonRange(x, r));
+  return r;
+}
+
+function wrapCopies(feats) {
+  const out = [];
+  feats.forEach((f) => {
+    const [w, e] = lonRange(f.geometry.coordinates);
+    [[w < -90, 360], [e > 90, -360]].forEach(([need, dx]) => {
+      if (need) out.push({ ...f, wrapCopy: true, geometry: { ...f.geometry, coordinates: shiftCoords(f.geometry.coordinates, dx) } });
+    });
+  });
+  return out;
 }
 
 function renderZoneFilters() {
@@ -433,7 +456,7 @@ function focusZone(i) {
   const f = state.zonesFC.features[i];
   const layer = L.geoJSON(f);
   map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 7 });
-  zonesLayer.eachLayer((l) => { if (l.feature.properties.id === f.properties.id) l.openPopup(layer.getBounds().getCenter()); });
+  zonesLayer.eachLayer((l) => { if (!l.feature.wrapCopy && l.feature.properties.id === f.properties.id) l.openPopup(layer.getBounds().getCenter()); });
 }
 
 /* ------------------------------------------------------------------ порты */
@@ -745,7 +768,7 @@ const fmtAge = (s) => (s == null ? "—" : s < 60 ? "только что" : s < 
 
 /**
  * d — данные судна (общий слой или флот), zonesHtml — строки про зоны,
- * opts.actions — HTML кнопки «Во флот» / пометки, opts.ageS — давность позиции в секундах.
+ * opts.actions — HTML кнопки «Добавить во флот» / пометки, opts.ageS — давность позиции в секундах.
  */
 function shipCard(d, zonesHtml, opts = {}) {
   const sogCog = `${d.sog != null ? d.sog.toFixed(1) + " уз" : "—"} / ${d.cog != null ? Math.round(d.cog) + "°" : "—"}`;
@@ -757,9 +780,13 @@ function shipCard(d, zonesHtml, opts = {}) {
       <div class="sc-type"><i class="dot" style="background:${TRAFFIC_COLORS[d.category] || TRAFFIC_COLORS.other}"></i> ${esc(d.type_name || "Тип не передан")}</div></div></div>
     ${screeningBlock(d.screening)}
     <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
-    <div class="sc-actions">${opts.actions || ""}
-      <button class="btn ghost sc-track" type="button">Трек</button>
-      <a class="btn" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div>
+    <div class="sc-actions">${opts.actions ? `<div class="sc-row">${opts.actions}</div>` : ""}
+      <div class="sc-row"><button class="btn ghost sc-track" type="button">Показать трек</button>
+      <a class="btn ghost" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div></div>
+    <div class="sc-tabs"><button type="button" class="on" data-tab="info">Судно</button>
+      <button type="button" data-tab="events">События <span class="sc-evn"></span></button></div>
+    <div class="sc-pane" data-pane="events" hidden><div class="sc-events muted small">Загружаю…</div></div>
+    <div class="sc-pane" data-pane="info">
     <div class="sc-route"><div><span class="muted small">Пункт назначения</span><b>${esc(d.destination || "не указан")}</b></div>
       <div class="sc-eta"><span class="muted small">ETA</span><b>${esc(d.eta || "—")}</b></div></div>
     <div class="sc-zones">${zonesHtml}</div>
@@ -776,6 +803,7 @@ function shipCard(d, zonesHtml, opts = {}) {
       <a href="${mt}" target="_blank" rel="noopener">MarineTraffic</a> ·
       <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(d.imo || d.mmsi)}" target="_blank" rel="noopener">VesselFinder</a>
       ${d.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(d.imo)}">Equasis</a>` : ""}</div>
+    </div>
   </div>`;
 }
 
@@ -796,7 +824,18 @@ function screeningBlock(sc) {
 async function hydrateCard(popup, onTrack) {
   const el = popup.getElement()?.querySelector(".sc");
   if (!el) return;
+  // карточка становится содержимым попапа как узел, а не строка: иначе popup.update() после
+  // загрузки фото пересобирает HTML и теряет фото и обработчики кнопок
+  popup.setContent(el);
+  // карточка не выше карты: иначе на невысоком экране верх уходит за край и не прокручивается
+  el.style.maxHeight = `${Math.max(240, map.getSize().y - 60)}px`;
+  popup.update();
   el.querySelector(".sc-track").onclick = onTrack;
+  $$(".sc-tabs button", el).forEach((b) => b.onclick = () => {
+    $$(".sc-tabs button", el).forEach((x) => x.classList.toggle("on", x === b));
+    $$(".sc-pane", el).forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+  });
+  loadShipEvents(el);
   const imo = el.dataset.imo;
   if (!imo) return;
   try {
@@ -817,6 +856,23 @@ async function hydrateCard(popup, onTrack) {
     };
     img.src = photo.url;
   } catch { /* фото необязательно */ }
+}
+
+// Вкладка «События» в карточке: происшествия AIS, санкции, задержания, уведомления по зонам и правилам
+async function loadShipEvents(el) {
+  const box = el.querySelector(".sc-events");
+  try {
+    const { items } = await api(`/api/traffic/${encodeURIComponent(el.dataset.mmsi)}/events`);
+    if (!el.isConnected) return;
+    el.querySelector(".sc-evn").textContent = items.length || "";
+    box.classList.toggle("muted", !items.length);
+    box.innerHTML = items.length ? items.map((e) => `<div class="sc-ev">
+      <div><i class="dot" style="background:${SEV_COLORS[e.severity] || SEV_COLORS.info}"></i>
+        <b>${esc(e.title)}</b>${e.count > 1 ? ` <span class="muted">×${e.count}</span>` : ""}</div>
+      <div class="muted">${fmtTime(e.ts)}</div>
+      ${e.body ? `<div class="sc-ev-body">${esc(e.body)}</div>` : ""}</div>`).join("")
+      : "Событий по этому судну пока нет: здесь появятся входы в зоны, срабатывания правил, аварийные сигналы, санкции и задержания.";
+  } catch (e) { box.textContent = `Не удалось загрузить события: ${e.message}`; }
 }
 
 function zoneLines(inside, near) {
@@ -940,8 +996,8 @@ async function openTrafficShip(mmsi, latlng) {
     const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
     const zs = s.zones || [];
     const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
-      : state.fleets.some((f) => f.access !== "view") ? `<select class="sc-fleet">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>
-        <button class="btn" type="button" data-add-fleet>Во флот</button>` : "";
+      : state.fleets.some((f) => f.access !== "view") ? `<button class="btn" type="button" data-add-fleet>+ Добавить во флот</button>
+        <select class="sc-fleet" title="В какой флот добавить">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>` : "";
     popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
       { actions, ageS: s.age_s }));
     hydrateCard(popup, async () => drawTrack((await api(`/api/traffic/${encodeURIComponent(mmsi)}/track`)).points, "#f6b26b"));

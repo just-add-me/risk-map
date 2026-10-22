@@ -305,6 +305,28 @@ async def api_incidents(request: Request):
 
 
 @api
+async def api_ship_events(request: Request):
+    """События одного судна для вкладки в карточке: происшествия из AIS, санкции, задержания
+    и уведомления (зоны, правила), которые видит этот пользователь. Новые сверху."""
+    mmsi = request.path_params["mmsi"]
+    user = _user(request)
+
+    def load() -> list[dict]:
+        out = [{"ts": r["last_seen"], "severity": incidents.KINDS.get(r["kind"], {}).get("severity", "info"),
+                "title": incidents.KINDS.get(r["kind"], {}).get("label", r["kind"]), "body": r["text"] or "",
+                "count": r["count"], "source": "incident"}
+               for r in db.query("SELECT kind, text, last_seen, count FROM incidents WHERE mmsi=? "
+                                 "ORDER BY last_seen DESC LIMIT 100", (mmsi,))]
+        out += [{"ts": r["ts"], "severity": r["severity"], "title": r["title"], "body": r["body"] or "",
+                 "source": "notification"}
+                for r in db.query(f"SELECT n.ts, n.severity, n.title, n.body FROM notifications n "
+                                  f"WHERE n.mmsi=? AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
+                                  (mmsi, user, user, user))]
+        return sorted(out, key=lambda e: e["ts"], reverse=True)[:100]
+    return JSONResponse({"items": await asyncio.to_thread(load)}, headers={"Cache-Control": "no-store"})
+
+
+@api
 async def api_traffic_track(request: Request):
     return JSONResponse({"points": traffic.trail(request.path_params["mmsi"])})
 
@@ -897,6 +919,7 @@ routes = [
     Route("/api/traffic", api_traffic),
     Route("/api/ships/search", api_ship_search),
     Route("/api/traffic/{mmsi}", api_traffic_ship),
+    Route("/api/traffic/{mmsi}/events", api_ship_events),
     Route("/api/traffic/{mmsi}/track", api_traffic_track),
     Route("/api/photo/{imo}", api_ship_photo),
     Route("/api/ibf", api_ibf),
