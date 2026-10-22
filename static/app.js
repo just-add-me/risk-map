@@ -829,7 +829,7 @@ async function hydrateCard(popup, onTrack) {
   popup.setContent(el);
   // карточка не выше карты: иначе на невысоком экране верх уходит за край и не прокручивается
   el.style.maxHeight = `${Math.max(240, map.getSize().y - 60)}px`;
-  popup.update();
+  fitPopup(popup);
   el.querySelector(".sc-track").onclick = onTrack;
   $$(".sc-tabs button", el).forEach((b) => b.onclick = () => {
     $$(".sc-tabs button", el).forEach((x) => x.classList.toggle("on", x === b));
@@ -852,10 +852,17 @@ async function hydrateCard(popup, onTrack) {
       box.querySelector(".sc-sil")?.remove();
       box.prepend(img);
       box.querySelector(".sc-credit").innerHTML = `<a href="${esc(photo.page)}" target="_blank" rel="noopener">© ${esc(photo.author || "Wikimedia Commons")}${photo.license ? `, ${esc(photo.license)}` : ""}</a>`;
-      popup.update();
+      fitPopup(popup);
     };
     img.src = photo.url;
   } catch { /* фото необязательно */ }
+}
+
+// Пересчитать размер попапа и сдвинуть карту, чтобы он целиком был виден (Leaflet делает это
+// только при открытии, а карточка меняет высоту позже — фото, ограничение по высоте карты)
+function fitPopup(popup) {
+  popup.update();
+  if (popup.isOpen() && popup._adjustPan) popup._adjustPan();
 }
 
 // Вкладка «События» в карточке: происшествия AIS, санкции, задержания, уведомления по зонам и правилам
