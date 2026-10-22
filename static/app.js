@@ -497,8 +497,8 @@ function renderLegend() {
     cats[c] || { cargo: "Грузовые", tanker: "Танкеры", passenger: "Пассажирские", yacht: "Яхты и прогулочные",
                  fishing: "Рыболовные", service: "Буксиры и служебные", other: "Прочие" }[c], t.on && t.cats.has(c))).join("");
   html += head("fleet", "Суда флота", state.showFleet);
-  html += `<div class="lg-hint">Точка у кормы судна — статус:</div>`;
-  html += [["safe", "Вне зон"], ["near", "Приближается"], ["inside", "В зоне"]].map(([lvl, label]) =>
+  html += `<div class="lg-hint">Точка у кормы судна — где оно относительно зон риска (JWC, IBF, INL):</div>`;
+  html += [["safe", "Вне зоны риска"], ["near", "Приближается к зоне риска"], ["inside", "В зоне риска"]].map(([lvl, label]) =>
     row(`lvl:${lvl}`, `<i class="dot s-${lvl}"></i>`, label, state.showFleet && state.fleetLevels.has(lvl))).join("");
   if (state.fleets.length > 1) {                    // флоты — цвет кольца вокруг значка судна
     html += `<div class="lg-title">Флоты (цвет судна)</div>`
