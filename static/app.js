@@ -2352,6 +2352,10 @@ const TOUR = [
 const tour = { i: 0, box: null };
 
 function tourTarget(step) {
+  // свёрнутую легенду на её шаге раскрываем, потом возвращаем как было
+  const lg = $("#legend");
+  if (step.el === "#legend" && lg.classList.contains("collapsed")) { lg.classList.remove("collapsed"); tour.legendOpened = true; }
+  else if (step.el !== "#legend" && tour.legendOpened) { lg.classList.add("collapsed"); tour.legendOpened = false; }
   if (step.tab) { switchTab(step.tab); return $("#sidebar"); }
   return $(step.el);
 }
@@ -2405,6 +2409,7 @@ function tourGo(d) {
   tourShow();
 }
 function tourEnd() {
+  if (tour.legendOpened) { $("#legend").classList.add("collapsed"); tour.legendOpened = false; }
   tour.box?.remove();
   tour.box = null;
   switchTab("fleet");
