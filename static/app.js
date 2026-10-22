@@ -61,42 +61,57 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
 // Зоны, порты и суда — на одном холсте: тогда клик попадает в верхний объект (судно → порт → зона).
 // С отдельными холстами или SVG зона перехватывала клики по портам внутри неё.
 const mapCanvas = L.canvas({ padding: 0.5, tolerance: 3 });
-// Зоны у 180-го меридиана разрезаны по нему (так устроен GeoJSON), и у контура там вертикальный край.
-// Заливку рисуем как обычно, а обводку — без отрезков, лежащих точно на меридиане 180° (и его копиях).
-// Узор зоны (снежинки, мечи) — второй заливкой поверх цвета, по тому же контуру.
+// Зоны рисуются «как в играх»: еле заметная заливка, мягкое свечение от границы внутрь зоны
+// (несколько обводок с обрезкой по контуру, от широкой и прозрачной к узкой и яркой) и чёткая граница.
+// Зоны у 180-го меридиана разрезаны по нему (так устроен GeoJSON): отрезки, лежащие точно на
+// меридиане 180° (и его копиях), не обводятся и не светятся — иначе виден шов.
+const GLOW = [[18, 0.07], [10, 0.11], [5, 0.16]];        // [ширина, прозрачность] — от края внутрь
+
 mapCanvas._updatePoly = function (layer, closed) {
   const proto = L.Canvas.prototype, o = layer.options;
   if (!closed || !this._drawing) return proto._updatePoly.call(this, layer, closed);
   const stroke = o.stroke;
   o.stroke = false;
-  proto._updatePoly.call(this, layer, closed);
+  proto._updatePoly.call(this, layer, closed);          // заливка
   o.stroke = stroke;
   const parts = layer._parts;
-  if (!parts.length) return;
-  if (o.pattern && o.fill !== false) {               // путь заливки ещё в контексте — заливаем узором
-    const ctx = this._ctx;
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = ctx.createPattern(patternTile(o.pattern, o.color, o.patternAlpha ?? 0.55), "repeat");
-    ctx.fill(o.fillRule || "evenodd");
-  }
-  if (!stroke) return;
+  if (!parts.length || !stroke) return;
+  const ctx = this._ctx;
   const W = this._map.getPixelWorldBounds().getSize().x;
   const x0 = this._map.latLngToLayerPoint([0, 180]).x;
   const seam = (x) => { const d = (((x - x0) % W) + W) % W; return d <= 1.5 || W - d <= 1.5; };   // ±1 px округления
-  const ctx = this._ctx;
-  ctx.beginPath();
-  parts.forEach((ring) => {
-    ring.forEach((p, j) => {
-      if (!j) { ctx.moveTo(p.x, p.y); return; }
-      const a = ring[j - 1];
-      ctx[seam(a.x) && seam(p.x) ? "moveTo" : "lineTo"](p.x, p.y);
+  const edges = () => {
+    ctx.beginPath();
+    parts.forEach((ring) => {
+      ring.forEach((p, j) => {
+        if (!j) { ctx.moveTo(p.x, p.y); return; }
+        const a = ring[j - 1];
+        ctx[seam(a.x) && seam(p.x) ? "moveTo" : "lineTo"](p.x, p.y);
+      });
+      const a = ring[ring.length - 1], b = ring[0];      // замыкающий отрезок
+      ctx[seam(a.x) && seam(b.x) ? "moveTo" : "lineTo"](b.x, b.y);
     });
-    const a = ring[ring.length - 1], b = ring[0];        // замыкающий отрезок
-    ctx[seam(a.x) && seam(b.x) ? "moveTo" : "lineTo"](b.x, b.y);
-  });
+  };
+  if (o.glow) {
+    ctx.save();
+    ctx.beginPath();                                     // обрезка по контуру: свечение только внутрь
+    parts.forEach((ring) => { ring.forEach((p, j) => ctx[j ? "lineTo" : "moveTo"](p.x, p.y)); ctx.closePath(); });
+    ctx.clip(o.fillRule || "evenodd");
+    edges();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = o.color;
+    ctx.lineJoin = "round";
+    for (const [w, a] of GLOW) {
+      ctx.globalAlpha = a * o.glow;
+      ctx.lineWidth = w;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  edges();
   const fill = o.fill;
   o.fill = false;
-  this._fillStroke(ctx, layer);
+  this._fillStroke(ctx, layer);                          // чёткая граница
   o.fill = fill;
 };
 const zonesLayer = L.geoJSON(null, { renderer: mapCanvas, style: zoneStyle, onEachFeature: bindZone }).addTo(map);
@@ -148,57 +163,29 @@ const LAYERS = {
   ibf: { label: "IBF/ITF — экипаж", hint: "Бонусы и права экипажа по коллективному договору IBF" },
   inl: { label: "INL (IWL) — навигационные ограничения", hint: "Лёд и полярные воды: заход только с согласия страховщика" },
 };
-// pattern — узор поверх заливки: war — скрещённые мечи (военные риски), ice — снежинки (льды, INL)
+// icon — эмблема в центре зоны: war — скрещённые мечи (военные риски), ice — снежинка (льды, INL)
 const ZONE_TYPES = {
-  country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e", pattern: "war" },
-  sea: { layer: "jwc", label: "Морской район", color: "#ff9440", pattern: "war" },
-  conditional: { layer: "jwc", label: "Условная (offshore)", color: "#b48cff", dash: "4 4", pattern: "war" },
-  woa: { layer: "ibf", label: "WOA — военные действия", color: "#e8368f", pattern: "war" },
-  hra: { layer: "ibf", label: "HRA — высокий риск", color: "#f783ac", pattern: "war" },
-  erz: { layer: "ibf", label: "ERZ — расширенный риск", color: "#20c997", pattern: "war" },
-  erz2: { layer: "ibf", label: "ERZ-2 — порты", color: "#c0eb75", pattern: "war" },
-  inl_perm: { layer: "inl", label: "Круглый год", color: "#4dabf7", pattern: "ice" },
-  inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4", pattern: "ice" },
+  country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e", icon: "war" },
+  sea: { layer: "jwc", label: "Морской район", color: "#ff9440", icon: "war" },
+  conditional: { layer: "jwc", label: "Условная (offshore)", color: "#b48cff", dash: "4 4", icon: "war" },
+  woa: { layer: "ibf", label: "WOA — военные действия", color: "#e8368f", icon: "war" },
+  hra: { layer: "ibf", label: "HRA — высокий риск", color: "#f783ac", icon: "war" },
+  erz: { layer: "ibf", label: "ERZ — расширенный риск", color: "#20c997", icon: "war" },
+  erz2: { layer: "ibf", label: "ERZ-2 — порты", color: "#c0eb75", icon: "war" },
+  inl_perm: { layer: "inl", label: "Круглый год", color: "#4dabf7", icon: "ice" },
+  inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4", icon: "ice" },
 };
 
-// Плитка узора 48×48 с двумя значками в шахматном порядке — рисуем сами, без шрифтов и картинок
-const _patternTiles = new Map();
-function patternTile(kind, color, alpha = 0.6) {
-  const key = `${kind}|${color}|${alpha}`;
-  if (_patternTiles.has(key)) return _patternTiles.get(key);
-  const c = document.createElement("canvas");
-  c.width = c.height = 48;
-  const g = c.getContext("2d");
-  g.strokeStyle = color;
-  g.fillStyle = color;
-  g.globalAlpha = alpha;
-  g.lineCap = "round";
-  const draw = kind === "ice" ? (x, y) => {         // снежинка: три оси и «веточки»
-    g.lineWidth = 1.3;
-    for (let k = 0; k < 3; k++) {
-      const a = (Math.PI / 3) * k, dx = Math.cos(a) * 6.5, dy = Math.sin(a) * 6.5;
-      g.beginPath(); g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
-      for (const sgn of [1, -1]) {
-        const bx = x + sgn * dx * 0.6, by = y + sgn * dy * 0.6;
-        for (const t of [Math.PI / 4, -Math.PI / 4]) {
-          const ang = a + (sgn > 0 ? 0 : Math.PI) + t;
-          g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + Math.cos(ang) * 2.4, by + Math.sin(ang) * 2.4); g.stroke();
-        }
-      }
-    }
-  } : (x, y) => {                                     // скрещённые мечи: клинки, гарды, навершия
-    g.lineWidth = 1.5;
-    for (const sgn of [1, -1]) {
-      g.beginPath(); g.moveTo(x - 6 * sgn, y + 6); g.lineTo(x + 6 * sgn, y - 6); g.stroke();          // клинок
-      g.beginPath(); g.moveTo(x - 6.5 * sgn, y + 2.5); g.lineTo(x - 2.5 * sgn, y + 6.5); g.stroke();  // гарда
-      g.beginPath(); g.arc(x - 7.6 * sgn, y + 7.6, 1.1, 0, Math.PI * 2); g.fill();                    // навершие
-    }
-  };
-  draw(12, 12);
-  draw(36, 36);
-  _patternTiles.set(key, c);
-  return c;
+// Эмблемы зон — маленькие SVG: скрещённые мечи и снежинка
+const ZONE_GLYPH = {
+  war: `<path d="M5 19 19 5M19 19 5 5" /><path d="M4.5 14.5l5 5M19.5 14.5l-5 5" /><circle cx="3.6" cy="20.4" r="1.2" class="f"/><circle cx="20.4" cy="20.4" r="1.2" class="f"/>`,
+  ice: `<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" /><path d="M9.6 4.6 12 7l2.4-2.4M9.6 19.4 12 17l2.4 2.4M3.7 10.9l3.3.9-.9 3.3M20.3 10.9l-3.3.9.9 3.3M6.1 4.8l.9 3.3-3.3.9M17.9 19.2l-.9-3.3 3.3-.9" />`,
+};
+function zoneGlyph(kind, color, size = 14) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="2.1"
+    stroke-linecap="round" stroke-linejoin="round" style="--c:${color}">${ZONE_GLYPH[kind]}</svg>`;
 }
+
 const CHANGED_COLOR = "#ffe066";
 state.zoneFilter.types = new Set(Object.keys(ZONE_TYPES));
 state.showPorts = localStorageGet("showPorts") !== "0";
@@ -229,18 +216,19 @@ function zoneStyle(f) {
   const p = f.properties;
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
-  const s = { color: t.color, weight: layer === "ibf" ? 1.8 : 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.2, inl: 0.1 }[layer],
-    pattern: t.pattern, patternAlpha: 0.55 };
+  const s = { color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
+    fillOpacity: { jwc: 0.07, ibf: 0.07, inl: 0.04 }[layer], glow: 1 };
   if (t.dash) s.dashArray = t.dash;
-  if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.03, patternAlpha: 0.22 });   // вне сезона — бледнее
+  if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.02, glow: 0.35, opacity: 0.6 });   // вне сезона — бледнее
   if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
-  if (state.selectedZone === p.id) Object.assign(s, { color: "#ffffff", weight: 2.5, dashArray: null, fillOpacity: 0.45 });
+  if (state.selectedZone === p.id) Object.assign(s, { weight: 2.4, dashArray: null, fillOpacity: 0.2, glow: 2.2 });
   return s;
 }
 
 function selectZone(id) {
   state.selectedZone = id;
   zonesLayer.setStyle(zoneStyle);
+  updateZoneEmblems();
   $$("#zones-list .zone-item").forEach((el) =>
     el.classList.toggle("selected", state.zonesFC.features[+el.dataset.i].properties.id === id));
 }
@@ -344,8 +332,44 @@ function renderZoneLayer() {
     .sort((a, b) => order[layerOf(a.properties)] - order[layerOf(b.properties)]);
   zonesLayer.addData({ ...state.zonesFC, features: [...feats, ...wrapCopies(feats)] });
   zonesLayer.bringToBack();
+  state.zoneEmblemFeats = feats.filter((f) => f.properties.label_pt);
+  updateZoneEmblems();
   if (document.body.classList.contains("drawing")) setMapInteractive(false);
 }
+
+// Эмблема зоны (мечи / снежинка) в её «визуальном центре» — одна на зону, как метка области в играх.
+// Только если зона на экране крупная, и без наложений: ближе EMBLEM_GAP пикселей остаётся одна (JWC и IBF важнее INL).
+const zoneEmblems = L.layerGroup().addTo(map);
+const EMBLEM_MIN_PX = 90, EMBLEM_GAP = 34;
+function updateZoneEmblems() {
+  zoneEmblems.clearLayers();
+  const placed = [];
+  const view = map.getBounds().pad(0.2);
+  const rank = { jwc: 0, ibf: 1, inl: 2 };
+  const feats = (state.zoneEmblemFeats || []).slice().sort((a, b) => rank[layerOf(a.properties)] - rank[layerOf(b.properties)]);
+  for (const f of feats) {
+    const p = f.properties, [w, s, e, n] = p.bbox;
+    const ll = L.latLng(p.label_pt[0], p.label_pt[1]);
+    if (!view.contains(ll)) continue;
+    const a = map.latLngToContainerPoint([s, w]), b = map.latLngToContainerPoint([n, e]);
+    if (Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) < EMBLEM_MIN_PX) continue;
+    const pt = map.latLngToContainerPoint(ll);
+    if (placed.some((q) => q.distanceTo(pt) < EMBLEM_GAP)) continue;
+    placed.push(pt);
+    const t = ZONE_TYPES[zoneType(p)];
+    const sel = state.selectedZone === p.id;
+    L.marker(ll, {
+      icon: L.divIcon({ className: `zone-emblem${sel ? " sel" : ""}${layerOf(p) === "inl" && !inSeason(p) ? " off" : ""}`,
+        iconSize: [26, 26], iconAnchor: [13, 13], html: `<span style="--c:${t.color}">${zoneGlyph(t.icon, t.color)}</span>` }),
+      zIndexOffset: -500, keyboard: false,
+    }).bindTooltip(esc(p.name), { direction: "top", offset: [0, -12] })
+      .on("click", () => zonesLayer.eachLayer((l) => {
+        if (!l.feature.wrapCopy && l.feature.properties.id === p.id) l.openPopup(ll);
+      }))
+      .addTo(zoneEmblems);
+  }
+}
+map.on("zoomend moveend", () => updateZoneEmblems());
 
 // Карта повторяет мир по долготе (worldCopyJump), а векторные слои Leaflet — нет: у 180-го меридиана
 // (Чукотка, Алеуты, Аляска) зоны обрывались. Зоны у края мира дорисовываем копией со сдвигом на 360°.
@@ -486,8 +510,7 @@ $("#legend-items").addEventListener("click", async (e) => {
 });
 
 function swatchStyle(d) {
-  const img = d.pattern ? `background-image:url(${patternTile(d.pattern, d.color, 0.9).toDataURL()});background-size:24px 24px;` : "";
-  return `background-color:${d.color}55;${img}border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
+  return `background:${d.color}22;box-shadow:inset 0 0 5px ${d.color}aa;border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
 }
 
 function applyZoneFilter() {

@@ -76,9 +76,27 @@ def for_map() -> Optional[dict]:
     """Зоны для карты: вместо полного контура — контур без суши (feature["display"]), если он есть."""
     if not _raw:
         return None
-    feats = [{"type": "Feature", "properties": f.get("properties") or {},
-              "geometry": _seamless(f.get("display") or f["geometry"])} for f in _raw["features"]]
+    feats = []
+    for f in _raw["features"]:
+        geom = _seamless(f.get("display") or f["geometry"])
+        feats.append({"type": "Feature", "properties": {**(f.get("properties") or {}), **_label(geom)}, "geometry": geom})
     return {**_raw, "features": feats}
+
+
+def _label(geom: dict) -> dict:
+    """Точка для значка зоны — «визуальный центр» самой большой части (внутри контура, а не центр
+    рамки, который у изогнутой зоны попадает на сушу), и рамка зоны — чтобы прятать значок у мелких зон."""
+    from shapely.geometry import shape
+    from shapely.ops import polylabel
+    try:
+        g = shape(geom)
+        if g.is_empty:
+            return {}
+        big = max(getattr(g, "geoms", [g]), key=lambda p: p.area)
+        pt = polylabel(big, tolerance=0.05)
+        return {"label_pt": [round(pt.y, 3), round(pt.x, 3)], "bbox": [round(v, 3) for v in big.bounds]}
+    except Exception:  # noqa: BLE001 — без значка карта всё равно работает
+        return {}
 
 
 SEAM_SNAP = 0.12          # градусов: точки ближе к 180° ставим ровно на 180°

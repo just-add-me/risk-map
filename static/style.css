@@ -495,3 +495,12 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .fi-rule { margin-top: 6px; padding-top: 4px; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
 .feed-more summary { cursor: pointer; font-size: 13px; }
 .feed-more[open] summary { margin-bottom: 8px; }
+
+/* ---------- эмблемы зон (как метки областей в играх) ---------- */
+.zone-emblem span { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #1b2f38, #0b161c); border: 1.5px solid var(--c);
+  box-shadow: 0 0 0 2px rgba(11, 22, 28, .7), 0 0 10px var(--c); cursor: pointer; transition: transform .15s; }
+.zone-emblem span svg .f { fill: var(--c); stroke: none; }
+.zone-emblem:hover span { transform: scale(1.15); }
+.zone-emblem.sel span { transform: scale(1.2); box-shadow: 0 0 0 2px rgba(11, 22, 28, .7), 0 0 16px var(--c), 0 0 4px #fff; }
+.zone-emblem.off span { opacity: .45; box-shadow: none; }
