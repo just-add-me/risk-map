@@ -604,3 +604,33 @@ def test_news_check_vessel_collapses_stories(monkeypatch):
     assert [(r["kind"], r["source"], r["count"]) for r in rows] == [("news", "Reuters", 3), ("news_risk", "Lloyd's List", 1)]
     # повторный прогон с теми же статьями ничего не добавляет
     assert news.check_vessel(v, pause=0) == 0
+
+
+def test_destination_resolve(monkeypatch):
+    from app.ais import destination as dst
+    dst._codes.clear(); dst._names.clear(); dst.resolve.cache_clear()
+    dst._codes.update({
+        "ZADUR": {"code": "ZADUR", "name": "Durban", "country": "ZA", "lat": -29.85, "lon": 31.02, "major": True},
+        "NLRTM": {"code": "NLRTM", "name": "Rotterdam", "country": "NL", "lat": 51.92, "lon": 4.48, "major": True},
+        "BEGNE": {"code": "BEGNE", "name": "Gent (Ghent)", "country": "BE", "lat": 51.05, "lon": 3.72, "major": False},
+    })
+    dst._names.update({"DURBAN": ["ZADUR"], "ROTTERDAM": ["NLRTM"], "GENT": ["BEGNE"], "GHENT": ["BEGNE"],
+                       "GENTGHENT": ["BEGNE"]})
+    dst._name_list[:] = list(dst._names)
+    assert dst.resolve("ZADUR")["name"] == "Durban"
+    assert dst.resolve("ZA DUR")["how"] == "code"
+    assert dst.resolve("EEVAN<>NLRTM")["code"] == "NLRTM"
+    assert dst.resolve("ROTTERDAM ANCH")["code"] == "NLRTM"
+    assert dst.resolve("GHENT")["code"] == "BEGNE"
+    assert dst.resolve("ROTERDAMM")["how"] == "fuzzy"
+    assert dst.resolve("FOR ORDERS") is None and dst.resolve("") is None
+    monkeypatch.setattr(dst, "_sea_path", lambda lat, lon, port: ([[lat, lon], [port["lat"], port["lon"]]],
+                                                                  dst.distance_nm(lat, lon, port["lat"], port["lon"]), "straight"))
+    r = dst.route(10.0, 179.0, {"code": "XXTST", "lat": 10.0, "lon": -179.0})
+    assert r["distance_nm"] < 130 and r["line"][1][1] == 181.0       # через 180°, а не вокруг света
+    assert dst.resolve_near("JEA", 25.2, 55.2) is None                 # нет такого кода в тестовом справочнике
+    dst._codes["AEJEA"] = {"code": "AEJEA", "name": "Jebel Ali", "country": "AE", "lat": 25.01, "lon": 55.06, "major": False}
+    assert dst.resolve_near("JEA", 25.2, 55.2)["code"] == "AEJEA"
+    assert dst.resolve_near("JEA", 51.0, 3.0) is None                  # слишком далеко — не угадываем
+    dst._route_cached.cache_clear()
+    dst._codes.clear(); dst._names.clear(); dst.resolve.cache_clear()

@@ -834,6 +834,7 @@ function shipCard(d, zonesHtml, opts = {}) {
     <div class="sc-pane" data-pane="info">
     <div class="sc-route"><div><span class="muted small">Пункт назначения</span><b>${esc(d.destination || "не указан")}</b></div>
       <div class="sc-eta"><span class="muted small">ETA</span><b>${esc(d.eta || "—")}</b></div></div>
+    <div class="sc-dest"></div>
     <div class="sc-zones">${zonesHtml}</div>
     <div class="sc-grid">
       <div><span>Статус</span><b>${esc(d.nav_status || "—")}</b></div>
@@ -881,6 +882,7 @@ async function hydrateCard(popup, onTrack) {
     $$(".sc-pane", el).forEach((p) => { p.hidden = p.dataset.pane !== b.dataset.tab; });
   });
   loadShipEvents(el);
+  loadShipRoute(el, popup);
   const imo = el.dataset.imo;
   if (!imo) return;
   try {
@@ -908,6 +910,36 @@ async function hydrateCard(popup, onTrack) {
 function fitPopup(popup) {
   popup.update();
   if (popup.isOpen() && popup._adjustPan) popup._adjustPan();
+}
+
+// Пункт назначения: порт по коду UN/LOCODE или названию, типовой морской путь до него пунктиром, зоны в порту и по пути
+const routeLayer = L.layerGroup().addTo(map);
+
+async function loadShipRoute(el, popup) {
+  const box = el.querySelector(".sc-dest");
+  try {
+    const { destination: dest, route: r } = await api(`/api/traffic/${encodeURIComponent(el.dataset.mmsi)}/route`);
+    if (!el.isConnected) return;
+    if (!r) {
+      if (dest) box.innerHTML = `<span class="muted small">Порт «${esc(dest)}» не распознан — судно указало его не кодом и не названием из справочника UN/LOCODE</span>`;
+      fitPopup(popup);
+      return;
+    }
+    const zl = (zs) => zs.map((z) => esc(z.name)).join(", ");
+    box.innerHTML = `<div class="small">→ <b>${esc(r.port)}</b> <span class="muted">(${esc(r.country)}, ${esc(r.code)})</span>${
+      r.distance_nm != null ? ` · ${r.distance_nm.toLocaleString("ru-RU")} миль ${r.path === "sea" ? "по морю" : "по прямой"}` : ""}</div>
+      ${r.port_zones.length ? `<div class="zin small">● Порт в зоне: ${zl(r.port_zones)}</div>` : `<div class="zok small">Порт вне зон риска</div>`}
+      ${r.route_zones?.length ? `<div class="znr small" title="${r.path === "sea"
+        ? "Типовой морской маршрут (searoute), а не план рейса — судно может идти иначе"
+        : "Прямая линия: реальный путь обходит сушу"}">◌ ${r.path === "sea" ? "По пути" : "По прямой"} через: ${zl(r.route_zones)}</div>` : ""}`;
+    routeLayer.clearLayers();
+    const color = r.port_zones.length ? "#ff5a4e" : "#4fc3d9";
+    if (r.line) L.polyline(r.line, { color, weight: 1.5, opacity: 0.85, dashArray: "4 6", interactive: false }).addTo(routeLayer);
+    L.circleMarker(r.line ? r.line[r.line.length - 1] : [r.lat, r.lon], { radius: 6, color, weight: 2, fillColor: "#0b1a22", fillOpacity: 1 })
+      .bindTooltip(`Пункт назначения: ${esc(r.port)}`, { direction: "top" }).addTo(routeLayer);
+    popup.once("remove", () => routeLayer.clearLayers());
+    fitPopup(popup);
+  } catch { /* пункт назначения необязателен */ }
 }
 
 // Новость — сюжет: одинаковые статьи разных изданий схлопнуты, count — сколько изданий написали

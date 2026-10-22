@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS news(
     incident_id INTEGER,           -- запись в incidents, которая показывает сюжет
     PRIMARY KEY(imo, title_key)
 );
+CREATE TABLE IF NOT EXISTS dest_alerts(          -- «идёт в порт в зоне риска»: одно уведомление на рейс
+    mmsi TEXT NOT NULL, dest_key TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY(mmsi, dest_key)
+);
 CREATE TABLE IF NOT EXISTS kv(
     key TEXT PRIMARY KEY,
     value TEXT

@@ -296,6 +296,9 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-route b { display: block; font-size: 16px; font-family: var(--mono); }
 .sc-eta { text-align: right; }
 .sc-zones { padding: 4px 12px 8px; font-size: 12.5px; }
+.sc-dest { padding: 0 12px 4px; }
+.sc-dest:empty { display: none; }
+.sc-dest .zin { color: var(--red); } .sc-dest .znr { color: var(--amber); } .sc-dest .zok { color: var(--green); }
 .sc-zones .zin { color: var(--red); } .sc-zones .znr { color: var(--amber); } .sc-zones .zok { color: var(--green); }
 .sc-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
 .sc-grid div { padding: 7px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }

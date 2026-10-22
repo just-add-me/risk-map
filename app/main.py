@@ -25,7 +25,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from . import access, alerts, config, db, fleet_import, news, rules, screening, users, zones
-from .ais import incidents, ingest, photos, shipinfo, traffic
+from .ais import destination, incidents, ingest, photos, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
 
@@ -326,6 +326,21 @@ async def api_ship_events(request: Request):
                                   (mmsi, user, user, user))]
         return sorted(out, key=lambda e: e["ts"], reverse=True)[:100]
     return JSONResponse({"items": await asyncio.to_thread(load)}, headers={"Cache-Control": "no-store"})
+
+
+@api
+async def api_ship_route(request: Request):
+    """Пункт назначения судна: порт по UN/LOCODE, расстояние, зоны в порту и на прямой до него."""
+    mmsi = request.path_params["mmsi"]
+
+    def load() -> dict:
+        s = traffic.get(mmsi) or {}
+        st = db.query_one("SELECT lat, lon, destination FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
+        lat = s.get("lat") if s.get("lat") is not None else st.get("lat")
+        lon = s.get("lon") if s.get("lon") is not None else st.get("lon")
+        dest = s.get("destination") or st.get("destination")
+        return {"destination": dest, "route": destination.for_vessel(mmsi, lat, lon, dest)}
+    return JSONResponse(await asyncio.to_thread(load), headers={"Cache-Control": "no-store"})
 
 
 @api
@@ -853,6 +868,10 @@ async def _maintenance_loop(stop: asyncio.Event):
             alerts.check_stale()
             incidents.cleanup()
             rules.periodic()
+            try:      # в потоке: первый раз скачивает и разбирает справочник портов (несколько секунд)
+                await asyncio.to_thread(destination.check_fleet)
+            except Exception:  # noqa: BLE001 — справочник портов мог не скачаться
+                log.exception("Ошибка проверки пунктов назначения")
             db.cleanup_notifications()
             now = time.time()
             for ip in [ip for ip, ts in _failed.items() if not ts or now - max(ts) > 900]:
@@ -936,6 +955,7 @@ routes = [
     Route("/api/traffic/{mmsi}", api_traffic_ship),
     Route("/api/traffic/{mmsi}/events", api_ship_events),
     Route("/api/traffic/{mmsi}/track", api_traffic_track),
+    Route("/api/traffic/{mmsi}/route", api_ship_route),
     Route("/api/photo/{imo}", api_ship_photo),
     Route("/api/ibf", api_ibf),
     Route("/api/ibf/check", api_ibf_check, methods=["POST"]),
