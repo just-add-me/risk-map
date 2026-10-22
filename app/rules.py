@@ -370,7 +370,7 @@ def _zone_rule(r: dict, mmsi: str, via: list[int], lat: float, lon: float) -> No
         sog = (db.query_one("SELECT sog FROM ais_state WHERE mmsi=?", (mmsi,)) or {}).get("sog")
         for zid in sorted(cur_ids - prev - prev_in):    # только подход снаружи, а не выход из зоны
             fire(r, mmsi, via, f"До границы ≈ {cur[zid]:.0f} мор. миль{alerts.eta_text(cur[zid], sog)}."
-                 + alerts.zone_note(zid), zid, title=f"приближается к зоне «{names.get(zid, zid)}»")
+                 + alerts.zone_note(zid), zid, title=f"Подход к зоне «{names.get(zid, zid)}»")
 
 
 def _nav_rule(r: dict, mmsi: str, via: list[int], nav: Optional[int]) -> None:
@@ -531,7 +531,7 @@ def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str) 
         return
     for r, via in rules_for(mmsi, ("vessel_event",)):
         if group in r["params"]["groups"]:
-            _safe(lambda rr, v: fire(rr, mmsi, v, text or "Сообщение получено по AIS.", title=label.lower(),
+            _safe(lambda rr, v: fire(rr, mmsi, v, text or "Сообщение получено по AIS.", title=label[:1].upper() + label[1:],
                                      severity=severity), r, via)
 
 
@@ -575,7 +575,7 @@ def _visit_rules() -> None:
                 _save(r["id"], key, "fired", fired=1)
                 fire(r, mmsi, via, f"Судно в зоне «{v['zone_name']}» с {v['entered_at'][:16].replace('T', ' ')} UTC "
                      f"({hours:.0f} ч). Отметьте заявку во вкладке «Журнал».", v["zone_id"],
-                     title=f"заход в «{v['zone_name']}» не заявлен")
+                     title=f"Заход в зону не заявлен «{v['zone_name']}»")
 # [журнал-заходов] конец
 
 

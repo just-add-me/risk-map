@@ -103,7 +103,7 @@ def test_alert_flow():
                (db.now_iso(),))
     from app import rules
     rules.ensure_defaults("admin")            # уведомления о зонах шлют стандартные правила
-    kind_of = {"ВХОД": "zone_enter", "ВЫХОД": "zone_exit", "приближается": "zone_near"}
+    kind_of = {"ВХОД": "zone_enter", "ВЫХОД": "zone_exit", "Подход": "zone_near"}
     kinds = lambda: [next(v for k, v in kind_of.items() if k in n["title"]) for n in db.query(  # noqa: E731
         "SELECT title FROM notifications WHERE kind='rule' AND mmsi='273000001' AND username='admin' ORDER BY id")
         if any(k in n["title"] for k in kind_of)]

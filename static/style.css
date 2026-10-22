@@ -476,12 +476,22 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .feed-item.critical { border-left-color: var(--red); } .feed-item.warning { border-left-color: var(--amber); }
 .feed-item.info { border-left-color: var(--accent); }
 .feed-item.unread { background: var(--bg-3); }
-.feed-item.read .fi-title { font-weight: 500; color: #c3d2d8; }
-.fi-meta { display: flex; align-items: center; gap: 4px; font: 11px var(--mono); color: var(--muted); margin-bottom: 2px; }
+.fi-meta { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--muted); margin-bottom: 4px; }
 .fi-meta .inc-dot { width: 16px; height: 16px; font-size: 9px; line-height: 16px; }
-.fi-src { text-transform: uppercase; letter-spacing: .04em; }
-.fi-title { font-weight: 600; font-size: 13.5px; }
-.fi-body { color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
-.fi-rule { margin-top: 3px; font-size: 11.5px; }
+.fi-src { text-transform: uppercase; letter-spacing: .05em; }
+.fi-time { margin-left: auto; }
+.fi-event { font-weight: 700; font-size: 13.5px; line-height: 1.3; }
+.feed-item.critical .fi-event { color: #ff8a80; } .feed-item.warning .fi-event { color: #ffc861; }
+.feed-item.read .fi-event { font-weight: 600; }
+.fi-vessel { margin-top: 3px; font-size: 13px; }
+.fi-vessel .muted { font: 11px var(--mono); }
+.fi-zone { margin-top: 4px; padding: 3px 8px; font-size: 12px; border-radius: 4px; background: rgba(255, 255, 255, .05);
+  border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+.fi-lines { list-style: none; margin: 5px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+.fi-lines li { padding: 1px 0 1px 12px; position: relative; overflow-wrap: anywhere; }
+.fi-lines li::before { content: "·"; position: absolute; left: 3px; }
+.fi-quote { margin-top: 4px; font-size: 12px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+.fi-link { margin-top: 3px; }
+.fi-rule { margin-top: 6px; padding-top: 4px; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
 .feed-more summary { cursor: pointer; font-size: 13px; }
 .feed-more[open] summary { margin-bottom: 8px; }

@@ -63,14 +63,23 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
 const mapCanvas = L.canvas({ padding: 0.5, tolerance: 3 });
 // Зоны у 180-го меридиана разрезаны по нему (так устроен GeoJSON), и у контура там вертикальный край.
 // Заливку рисуем как обычно, а обводку — без отрезков, лежащих точно на меридиане 180° (и его копиях).
+// Узор зоны (снежинки, мечи) — второй заливкой поверх цвета, по тому же контуру.
 mapCanvas._updatePoly = function (layer, closed) {
   const proto = L.Canvas.prototype, o = layer.options;
-  if (!closed || !o.stroke || !this._drawing) return proto._updatePoly.call(this, layer, closed);
+  if (!closed || !this._drawing) return proto._updatePoly.call(this, layer, closed);
+  const stroke = o.stroke;
   o.stroke = false;
   proto._updatePoly.call(this, layer, closed);
-  o.stroke = true;
+  o.stroke = stroke;
   const parts = layer._parts;
   if (!parts.length) return;
+  if (o.pattern && o.fill !== false) {               // путь заливки ещё в контексте — заливаем узором
+    const ctx = this._ctx;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = ctx.createPattern(patternTile(o.pattern, o.color, o.patternAlpha ?? 0.55), "repeat");
+    ctx.fill(o.fillRule || "evenodd");
+  }
+  if (!stroke) return;
   const W = this._map.getPixelWorldBounds().getSize().x;
   const x0 = this._map.latLngToLayerPoint([0, 180]).x;
   const seam = (x) => { const d = (((x - x0) % W) + W) % W; return d <= 1.5 || W - d <= 1.5; };   // ±1 px округления
@@ -139,17 +148,57 @@ const LAYERS = {
   ibf: { label: "IBF/ITF — экипаж", hint: "Бонусы и права экипажа по коллективному договору IBF" },
   inl: { label: "INL (IWL) — навигационные ограничения", hint: "Лёд и полярные воды: заход только с согласия страховщика" },
 };
+// pattern — узор поверх заливки: war — скрещённые мечи (военные риски), ice — снежинки (льды, INL)
 const ZONE_TYPES = {
-  country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e" },
-  sea: { layer: "jwc", label: "Морской район", color: "#ff9440" },
-  conditional: { layer: "jwc", label: "Условная (offshore)", color: "#b48cff", dash: "4 4" },
-  woa: { layer: "ibf", label: "WOA — военные действия", color: "#e8368f" },
-  hra: { layer: "ibf", label: "HRA — высокий риск", color: "#f783ac" },
-  erz: { layer: "ibf", label: "ERZ — расширенный риск", color: "#20c997" },
-  erz2: { layer: "ibf", label: "ERZ-2 — порты", color: "#c0eb75" },
-  inl_perm: { layer: "inl", label: "Круглый год", color: "#4dabf7" },
-  inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4" },
+  country: { layer: "jwc", label: "Страна (порты и 12 миль)", color: "#ff5a4e", pattern: "war" },
+  sea: { layer: "jwc", label: "Морской район", color: "#ff9440", pattern: "war" },
+  conditional: { layer: "jwc", label: "Условная (offshore)", color: "#b48cff", dash: "4 4", pattern: "war" },
+  woa: { layer: "ibf", label: "WOA — военные действия", color: "#e8368f", pattern: "war" },
+  hra: { layer: "ibf", label: "HRA — высокий риск", color: "#f783ac", pattern: "war" },
+  erz: { layer: "ibf", label: "ERZ — расширенный риск", color: "#20c997", pattern: "war" },
+  erz2: { layer: "ibf", label: "ERZ-2 — порты", color: "#c0eb75", pattern: "war" },
+  inl_perm: { layer: "inl", label: "Круглый год", color: "#4dabf7", pattern: "ice" },
+  inl_season: { layer: "inl", label: "Сезонные (лёд)", color: "#a5d8ff", dash: "5 4", pattern: "ice" },
 };
+
+// Плитка узора 48×48 с двумя значками в шахматном порядке — рисуем сами, без шрифтов и картинок
+const _patternTiles = new Map();
+function patternTile(kind, color, alpha = 0.6) {
+  const key = `${kind}|${color}|${alpha}`;
+  if (_patternTiles.has(key)) return _patternTiles.get(key);
+  const c = document.createElement("canvas");
+  c.width = c.height = 48;
+  const g = c.getContext("2d");
+  g.strokeStyle = color;
+  g.fillStyle = color;
+  g.globalAlpha = alpha;
+  g.lineCap = "round";
+  const draw = kind === "ice" ? (x, y) => {         // снежинка: три оси и «веточки»
+    g.lineWidth = 1.3;
+    for (let k = 0; k < 3; k++) {
+      const a = (Math.PI / 3) * k, dx = Math.cos(a) * 6.5, dy = Math.sin(a) * 6.5;
+      g.beginPath(); g.moveTo(x - dx, y - dy); g.lineTo(x + dx, y + dy); g.stroke();
+      for (const sgn of [1, -1]) {
+        const bx = x + sgn * dx * 0.6, by = y + sgn * dy * 0.6;
+        for (const t of [Math.PI / 4, -Math.PI / 4]) {
+          const ang = a + (sgn > 0 ? 0 : Math.PI) + t;
+          g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + Math.cos(ang) * 2.4, by + Math.sin(ang) * 2.4); g.stroke();
+        }
+      }
+    }
+  } : (x, y) => {                                     // скрещённые мечи: клинки, гарды, навершия
+    g.lineWidth = 1.5;
+    for (const sgn of [1, -1]) {
+      g.beginPath(); g.moveTo(x - 6 * sgn, y + 6); g.lineTo(x + 6 * sgn, y - 6); g.stroke();          // клинок
+      g.beginPath(); g.moveTo(x - 6.5 * sgn, y + 2.5); g.lineTo(x - 2.5 * sgn, y + 6.5); g.stroke();  // гарда
+      g.beginPath(); g.arc(x - 7.6 * sgn, y + 7.6, 1.1, 0, Math.PI * 2); g.fill();                    // навершие
+    }
+  };
+  draw(12, 12);
+  draw(36, 36);
+  _patternTiles.set(key, c);
+  return c;
+}
 const CHANGED_COLOR = "#ffe066";
 state.zoneFilter.types = new Set(Object.keys(ZONE_TYPES));
 state.showPorts = localStorageGet("showPorts") !== "0";
@@ -180,9 +229,10 @@ function zoneStyle(f) {
   const p = f.properties;
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
-  const s = { color: t.color, weight: layer === "ibf" ? 1.8 : 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.2, inl: 0.1 }[layer] };
+  const s = { color: t.color, weight: layer === "ibf" ? 1.8 : 1, fillColor: t.color, fillOpacity: { jwc: 0.2, ibf: 0.2, inl: 0.1 }[layer],
+    pattern: t.pattern, patternAlpha: 0.55 };
   if (t.dash) s.dashArray = t.dash;
-  if (layer === "inl" && !inSeason(p)) s.fillOpacity = 0.03;
+  if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.03, patternAlpha: 0.22 });   // вне сезона — бледнее
   if (isChanged(p)) Object.assign(s, { color: CHANGED_COLOR, weight: 2, dashArray: "6 4" });
   if (state.selectedZone === p.id) Object.assign(s, { color: "#ffffff", weight: 2.5, dashArray: null, fillOpacity: 0.45 });
   return s;
@@ -436,7 +486,8 @@ $("#legend-items").addEventListener("click", async (e) => {
 });
 
 function swatchStyle(d) {
-  return `background:${d.color}55;border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
+  const img = d.pattern ? `background-image:url(${patternTile(d.pattern, d.color, 0.9).toDataURL()});background-size:24px 24px;` : "";
+  return `background-color:${d.color}55;${img}border:1px ${d.dash ? "dashed" : "solid"} ${d.color}`;
 }
 
 function applyZoneFilter() {
@@ -1528,24 +1579,46 @@ function feedItems() {
   return out.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 400);
 }
 
+// «IKARIA ANGEL (MMSI 357321000): ВЫХОД из зоны «IBF ERZ…»» → судно, MMSI, событие, зона
+function splitTitle(title, mmsi) {
+  const m = mmsi && /^(.*?) \(MMSI (\d+)\): (.*)$/s.exec(title || "");
+  const rest = m ? m[3] : (mmsi && /^MMSI \d+: /.test(title) ? title.replace(/^MMSI \d+: /, "") : title);
+  const vessel = m ? m[1] : (mmsi && rest !== title ? "" : null);
+  const z = /^(.*?)\s*«(.+)»\s*(.*)$/s.exec(rest || "");
+  // «заход в «X» не заявлен» → «заход в зону не заявлен» (зона — отдельной строкой)
+  let event = z ? (z[3] ? `${z[1]}${/ (в|из|к)$/.test(z[1]) ? " зону" : ""} ${z[3]}` : z[1]).trim() : rest || "";
+  event = event.replace(/:$/, "");
+  return { vessel, mmsi: m ? m[2] : mmsi, event: event.charAt(0).toUpperCase() + event.slice(1), zone: z ? z[2] : null };
+}
+
+// подробности по строкам: «Позиция …. Время в зоне: 3.2 ч.» → две строки
+function detailLines(text) {
+  return (text || "").split(/(?<=[.!])\s+(?=[А-ЯЁA-Z«])/).map((s) => s.trim().replace(/\.$/, "")).filter(Boolean);
+}
+
 function feedRow(x, i) {
   if (x.type === "notif") {
     const n = x.n;
     const [first, ...rest] = (n.body || "").split("\n");
+    const t = splitTitle(n.title, n.mmsi);
+    const lines = detailLines(first);
     return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}" data-i="${i}">
-      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span> · ${fmtTime(n.ts)}</div>
-      <div class="fi-title">${esc(n.title)}</div>
-      ${first ? `<div class="fi-body">${esc(first)}</div>` : ""}
-      ${rest.length ? `<div class="fi-rule muted small">${esc(rest.join(" "))}</div>` : ""}</li>`;
+      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span><span class="fi-time">${fmtTime(n.ts)}</span></div>
+      <div class="fi-event">${esc(t.event)}</div>
+      ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? `<b>${esc(t.vessel)}</b>` : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span></div>` : ""}
+      ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
+      ${lines.length ? `<ul class="fi-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
+      ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^(Правило «[^»]*»).*$/s, "$1").replace(/\.$/, ""))}</div>` : ""}</li>`;
   }
   const it = x.it, st = INC_STYLE[it.kind] || INC_STYLE.safety;
   const link = /^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
     isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : "";
   return `<li class="feed-item ${it.severity} read world" data-i="${i}">
-    <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span> · ${fmtTime(it.last_seen)}${
-      it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</div>
-    <div class="fi-title">${esc(it.label)}: ${esc(it.name || "MMSI " + it.mmsi)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
-    ${it.text ? `<div class="fi-body">«${esc(it.text)}»</div>` : ""}${link}</li>`;
+    <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span><span class="fi-time">${fmtTime(it.last_seen)}${
+      it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span></div>
+    <div class="fi-event">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
+    <div class="fi-vessel">${it.name ? `<b>${esc(it.name)}</b> ` : ""}<span class="muted">MMSI ${esc(it.mmsi)}</span></div>
+    ${it.text ? `<div class="fi-quote">${esc(it.text)}</div>` : ""}${link ? `<div class="fi-link">${link}</div>` : ""}</li>`;
 }
 
 function renderFeed() {
