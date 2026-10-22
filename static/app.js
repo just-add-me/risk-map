@@ -2391,6 +2391,7 @@ async function loadZoneLog() {
 /* ------------------------------------------------------------------ события UI */
 function switchTab(name) {
   if (isPhone() && sidebarSheet.get() === "min") sidebarSheet.set("half");   // свёрнутая панель — раскрываем
+  if (!isPhone() && document.body.classList.contains("sb-collapsed")) setSidebarCollapsed(false);
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
   if (name === "rules") loadRules().catch((e) => toast("Ошибка", e.message, "critical"));
@@ -2711,3 +2712,17 @@ tickClock();
 setInterval(tickClock, 15000);
 
 loadTrash().then(updateTrashCount).catch(() => {});
+
+/* ------------------------------------------------------------------ компьютер: свернуть левую панель */
+function setSidebarCollapsed(on) {
+  document.body.classList.toggle("sb-collapsed", on);
+  const b = $("#sb-toggle");
+  b.textContent = on ? "›" : "‹";
+  b.title = on ? "Развернуть панель" : "Свернуть панель";
+  b.setAttribute("aria-label", b.title);
+  b.setAttribute("aria-expanded", String(!on));
+  localStorageSet("sidebarCollapsed", on ? "1" : "0");
+  setTimeout(() => map.invalidateSize(), 230);         // после анимации ширины
+}
+$("#sb-toggle").onclick = () => setSidebarCollapsed(!document.body.classList.contains("sb-collapsed"));
+if (localStorageGet("sidebarCollapsed") === "1") setSidebarCollapsed(true);
