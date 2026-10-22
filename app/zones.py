@@ -76,9 +76,47 @@ def for_map() -> Optional[dict]:
     """Зоны для карты: вместо полного контура — контур без суши (feature["display"]), если он есть."""
     if not _raw:
         return None
-    feats = [{"type": "Feature", "properties": f.get("properties") or {}, "geometry": f.get("display") or f["geometry"]}
-             for f in _raw["features"]]
+    feats = [{"type": "Feature", "properties": f.get("properties") or {},
+              "geometry": _seamless(f.get("display") or f["geometry"])} for f in _raw["features"]]
     return {**_raw, "features": feats}
+
+
+SEAM_SNAP = 0.12          # градусов: точки ближе к 180° ставим ровно на 180°
+
+
+def _seamless(geom: dict) -> dict:
+    """Готовит контур к стыку на 180-м меридиане (карта рисует копии мира со сдвигом 360°).
+
+    Части за пределами ±180° переносятся на другую сторону, а точки у самого меридиана ставятся
+    ровно на него — тогда край по 180° на карте не обводится и шов не виден.
+    """
+    from shapely import affinity
+    from shapely.geometry import box, mapping, shape
+    from shapely.ops import unary_union
+    from .geo.builder import polygonal
+
+    def snap(c):
+        if isinstance(c[0], (int, float)):
+            x = c[0]
+            return [180.0 if x > 180 - SEAM_SNAP else -180.0 if x < -180 + SEAM_SNAP else x, *c[1:]]
+        return [snap(x) for x in c]
+
+    try:
+        g = shape(geom)
+        minx, _, maxx, _ = g.bounds
+        if minx < -180 or maxx > 180:
+            g = polygonal(unary_union([
+                g.intersection(box(-180, -90, 180, 90)),
+                affinity.translate(g.intersection(box(-540, -90, -180, 90)), xoff=360),
+                affinity.translate(g.intersection(box(180, -90, 540, 90)), xoff=-360)]))
+            geom = mapping(g)
+        if minx > -180 + SEAM_SNAP and maxx < 180 - SEAM_SNAP:
+            return geom
+        geom = json.loads(json.dumps(geom))          # mapping() даёт кортежи
+        return {**geom, "coordinates": snap(geom["coordinates"])}
+    except Exception:  # noqa: BLE001 — карта важнее красоты шва
+        log.exception("Не удалось подготовить контур к стыку на 180°")
+        return geom
 
 
 def ensure_display() -> None:

@@ -61,6 +61,35 @@ L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_D
 // Зоны, порты и суда — на одном холсте: тогда клик попадает в верхний объект (судно → порт → зона).
 // С отдельными холстами или SVG зона перехватывала клики по портам внутри неё.
 const mapCanvas = L.canvas({ padding: 0.5, tolerance: 3 });
+// Зоны у 180-го меридиана разрезаны по нему (так устроен GeoJSON), и у контура там вертикальный край.
+// Заливку рисуем как обычно, а обводку — без отрезков, лежащих точно на меридиане 180° (и его копиях).
+mapCanvas._updatePoly = function (layer, closed) {
+  const proto = L.Canvas.prototype, o = layer.options;
+  if (!closed || !o.stroke || !this._drawing) return proto._updatePoly.call(this, layer, closed);
+  o.stroke = false;
+  proto._updatePoly.call(this, layer, closed);
+  o.stroke = true;
+  const parts = layer._parts;
+  if (!parts.length) return;
+  const W = this._map.getPixelWorldBounds().getSize().x;
+  const x0 = this._map.latLngToLayerPoint([0, 180]).x;
+  const seam = (x) => { const d = (((x - x0) % W) + W) % W; return d < 1 || W - d < 1; };
+  const ctx = this._ctx;
+  ctx.beginPath();
+  parts.forEach((ring) => {
+    ring.forEach((p, j) => {
+      if (!j) { ctx.moveTo(p.x, p.y); return; }
+      const a = ring[j - 1];
+      ctx[seam(a.x) && seam(p.x) ? "moveTo" : "lineTo"](p.x, p.y);
+    });
+    const a = ring[ring.length - 1], b = ring[0];        // замыкающий отрезок
+    ctx[seam(a.x) && seam(b.x) ? "moveTo" : "lineTo"](b.x, b.y);
+  });
+  const fill = o.fill;
+  o.fill = false;
+  this._fillStroke(ctx, layer);
+  o.fill = fill;
+};
 const zonesLayer = L.geoJSON(null, { renderer: mapCanvas, style: zoneStyle, onEachFeature: bindZone }).addTo(map);
 // Фигуры на canvas: стрелка — судно (по курсу), ромб — яхта, квадрат — порт
 L.Canvas.include({
