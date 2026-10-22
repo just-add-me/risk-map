@@ -37,6 +37,7 @@ JWC_PAGE_URL = _env("JWC_PAGE_URL", "https://lmalloyds.com/committee/joint-war-c
 CIRCULAR_CHECK_HOURS = float(_env("CIRCULAR_CHECK_HOURS", "12"))   # 2 раза в сутки
 # Список зон IBF/ITF (экипаж): страница IMEC, где выкладывают свежий PDF «IBF List of designated risk areas»
 IBF_PAGE_URL = _env("IBF_PAGE_URL", "https://imec.org.uk/the-international-bargaining-forum-ibf/ibf-risk-areas")
+DOMAIN = _env("DOMAIN", "")      # адрес сайта (из .env); нужен, например, в подписи запросов к Wikimedia
 HTTP_USER_AGENT = _env(
     "HTTP_USER_AGENT",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "

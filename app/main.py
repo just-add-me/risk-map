@@ -383,10 +383,14 @@ async def api_traffic_track(request: Request):
 
 @api
 async def api_ship_photo(request: Request):
-    fut = asyncio.get_running_loop().run_in_executor(PHOTO_POOL, photos.get, request.path_params["imo"])
+    """Фото судна. pending=true — ещё ищем (очередь к Commons или он не ответил): карточка спросит снова."""
+    imo = request.path_params["imo"]
+    fut = asyncio.get_running_loop().run_in_executor(PHOTO_POOL, photos.get, imo)
     try:
         photo = await asyncio.wait_for(asyncio.shield(fut), timeout=PHOTO_WAIT_S)
-    except asyncio.TimeoutError:     # очередь к Wikimedia длинная — карточка без фото; поиск доделается и закэшируется
+    except asyncio.TimeoutError:     # очередь к Wikimedia длинная — поиск доделается и закэшируется
+        return JSONResponse({"photo": None, "pending": True}, headers={"Cache-Control": "no-store"})
+    if photo is None and photos.state(imo) == "unknown":        # Commons не ответил — попробуем ещё
         return JSONResponse({"photo": None, "pending": True}, headers={"Cache-Control": "no-store"})
     return JSONResponse({"photo": photo}, headers={"Cache-Control": "private, max-age=3600"})
 
@@ -953,6 +957,8 @@ async def _maintenance_loop(stop: asyncio.Event):
             ingest.cleanup_trails()
             incidents.cleanup()
             await asyncio.to_thread(rules.periodic)      # первый раз разбирает справочник портов (несколько секунд)
+            loop = asyncio.get_running_loop()            # фото судов флотов — заранее, в своём пуле (не мешает карте)
+            loop.run_in_executor(PHOTO_POOL, photos.prefetch_fleet)
             try:                                                     # [подозрительное-поведение]
                 await asyncio.to_thread(anomalies.check_fleet)       # [подозрительное-поведение]
             except Exception:  # noqa: BLE001                          [подозрительное-поведение]

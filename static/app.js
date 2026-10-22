@@ -993,24 +993,31 @@ async function hydrateCard(popup, trackUrl) {      // popup — панель к�
   loadShipEvents(el);
   loadShipPath(el, popup, trackUrl);
   const imo = el.dataset.imo;
-  if (!imo) return;
+  const credit = el.querySelector(".sc-credit");
+  if (!imo) { credit.textContent = "фото нет: судно не передаёт IMO"; return; }
+  // Commons отвечает не сразу (очередь, ограничение частоты) — спрашиваем, пока карточка открыта, до ~40 с
   try {
-    let { photo, pending } = await api(`/api/photo/${encodeURIComponent(imo)}`);
-    if (pending && el.isConnected) {          // очередь к Wikimedia — спросим ещё раз чуть позже
-      await new Promise((r) => setTimeout(r, 4000));
-      ({ photo } = await api(`/api/photo/${encodeURIComponent(imo)}`));
+    let photo = null;
+    credit.textContent = "фото загружается…";
+    for (let i = 0; i < 10 && el.isConnected; i++) {
+      const r = await api(`/api/photo/${encodeURIComponent(imo)}`);
+      photo = r.photo;
+      if (!r.pending) break;
+      await new Promise((res) => setTimeout(res, 4000));
     }
-    if (!photo || !el.isConnected) return;
+    if (!el.isConnected) return;
+    if (!photo) { credit.textContent = "фото нет в открытых источниках (Wikimedia Commons)"; return; }
     const box = el.querySelector(".sc-photo");
     const img = new Image();
     img.alt = "";
     img.onload = () => {
       box.querySelector(".sc-sil")?.remove();
       box.prepend(img);
-      box.querySelector(".sc-credit").innerHTML = `<a href="${esc(photo.page)}" target="_blank" rel="noopener">© ${esc(photo.author || "Wikimedia Commons")}${photo.license ? `, ${esc(photo.license)}` : ""}</a>`;
+      credit.innerHTML = `<a href="${esc(photo.page)}" target="_blank" rel="noopener">© ${esc(photo.author || "Wikimedia Commons")}${photo.license ? `, ${esc(photo.license)}` : ""}</a>`;
     };
+    img.onerror = () => { credit.textContent = "фото не открылось — попробуйте позже"; };
     img.src = photo.url;
-  } catch { /* фото необязательно */ }
+  } catch { credit.textContent = ""; /* фото необязательно */ }
 }
 
 // Карточка судна — панель у края карты, а не всплывающее окно над судном: окно закрывало путь.

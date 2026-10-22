@@ -14,12 +14,13 @@ from typing import Optional
 
 import requests
 
-from .. import db
+from .. import config, db
 
 log = logging.getLogger(__name__)
 
 API = "https://commons.wikimedia.org/w/api.php"
-UA = "WarRiskMonitor/0.1 (internal vessel map; photos shown with attribution)"
+# Wikimedia просит указывать в User-Agent, как связаться (без этого ограничивает строже) — адрес сайта, не email
+UA = f"WarRiskMonitor/0.1 (https://{config.DOMAIN or 'localhost'}; vessel risk map, photos shown with attribution)"
 TTL_FOUND = 30 * 86400
 TTL_NONE = 7 * 86400
 _lock = threading.Lock()          # Commons отвечает 429 на частые запросы: не чаще раза в секунду
@@ -27,15 +28,25 @@ _last_call = 0.0
 
 
 def _api(**params) -> dict:
+    """Запрос к Commons не чаще раза в секунду; на «429 — слишком часто» ждём, сколько просят, и повторяем."""
     global _last_call
-    wait = 1.0 - (time.time() - _last_call)
-    if wait > 0:
-        time.sleep(wait)
-    _last_call = time.time()
-    r = requests.get(API, params={"action": "query", "format": "json", **params},
-                     headers={"User-Agent": UA}, timeout=15)
+    for attempt in range(3):
+        wait = 1.0 - (time.time() - _last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _last_call = time.time()
+        r = requests.get(API, params={"action": "query", "format": "json", **params},
+                         headers={"User-Agent": UA}, timeout=15)
+        if r.status_code == 429 and attempt < 2:
+            pause = min(float(r.headers.get("Retry-After") or 10), 30)
+            log.info("Commons: слишком частые запросы, жду %.0f с", pause)
+            time.sleep(pause)
+            _last_call = time.time()
+            continue
+        r.raise_for_status()
+        return r.json()
     r.raise_for_status()
-    return r.json()
+    return {}
 
 
 def _first_image(category: str) -> Optional[dict]:
@@ -82,3 +93,31 @@ def get(imo: str) -> Optional[dict]:
         return None
     db.kv_set(key, {"ts": time.time(), "photo": photo})
     return photo
+
+
+def state(imo: str) -> str:
+    """found — фото есть, none — точно нет (Commons ответил), unknown — ещё не спрашивали или была ошибка."""
+    cached = db.kv_get(f"photo:{imo}")
+    if not cached:
+        return "unknown"
+    return "found" if cached.get("photo") else "none"
+
+
+def prefetch_fleet(limit: int = 10, pause: float = 3.0) -> int:
+    """Фото судов флотов — заранее, понемногу (раз в 10 минут по 10), чтобы карточки открывались сразу с фото."""
+    rows = db.query("SELECT DISTINCT COALESCE(NULLIF(v.imo, ''), a.imo) AS imo FROM vessels v "
+                    "LEFT JOIN ais_state a ON a.mmsi=v.mmsi")
+    done = 0
+    for r in rows:
+        imo = str(r["imo"] or "")
+        if not re.fullmatch(r"\d{7}", imo):
+            continue
+        cached = db.kv_get(f"photo:{imo}")
+        if cached and time.time() - cached.get("ts", 0) < (TTL_FOUND if cached.get("photo") else TTL_NONE):
+            continue
+        get(imo)
+        done += 1
+        if done >= limit:
+            break
+        time.sleep(pause)
+    return done
