@@ -613,3 +613,11 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .pop-acts .btn { flex: 1; padding: 5px 8px; font-size: 12.5px; }
 .pop-acts .btn.on { color: #ffd166; border-color: rgba(255, 209, 102, .5); }
 .pop-acts [data-pop=del]:hover { color: var(--red); border-color: var(--red); }
+@media (max-width: 820px) {
+  /* шторки плавно переезжают между положениями; во время жеста — без задержки за пальцем */
+  .sidebar, .ship-panel { transition: height .2s ease; }
+  .sidebar.dragging, .ship-panel.dragging { transition: none; }
+  #sidebar .tabs { touch-action: pan-x; }
+  .sidebar.min .panel { visibility: hidden; }
+  .ship-panel.min { overflow: hidden; }
+}

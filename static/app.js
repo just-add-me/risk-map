@@ -1122,47 +1122,71 @@ $("#ship-panel-close").onclick = () => shipPanel.close();
 const isPhone = () => matchMedia("(max-width: 820px)").matches;
 function setShipOpen(on) {
   document.body.classList.toggle("ship-open", on);
+  if (on && typeof shipSheet !== "undefined" && shipSheet.get() === "min") shipSheet.set("half");
   if (isPhone()) setTimeout(() => map.invalidateSize(), 0);      // карта поменяла размер
 }
 
-function sheetGrip(grip, { box, cssVar, target, initial, min = 0.18, snaps, storeKey, onDone }) {
+// Три положения: свёрнута (видно только верх), половина экрана, весь экран. Свайп вверх/вниз — в соседнее
+// положение (тянуть до края не нужно), длинный жест — в ближайшее, нажатие на ручку — следующее.
+const SHEET = ["min", "half", "full"];
+function sheet(target, { box, cssVar, handles, minPx, initial = "half", storeKey, onDone }) {
   const avail = () => box().getBoundingClientRect().height;
-  const set = (frac) => {
-    target.style.setProperty(cssVar, `${Math.round(frac * 1000) / 10}%`);
-    target.classList.toggle("full", frac > 0.98);
-  };
-  let cur = +(storeKey && localStorageGet(storeKey)) || initial;
-  set(cur);
-  let start = null;
-  grip.addEventListener("pointerdown", (e) => {
-    start = { y: e.clientY, h: target.getBoundingClientRect().height, moved: false };
-    grip.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  });
-  grip.addEventListener("pointermove", (e) => {
-    if (!start) return;
-    const dy = e.clientY - start.y;
-    if (Math.abs(dy) > 4) start.moved = true;
-    if (start.moved) { cur = Math.min(1, Math.max(min, (start.h - dy) / avail())); set(cur); }
-  });
-  const end = () => {
-    if (!start) return;
-    if (!start.moved) cur = cur > 0.9 ? initial : 1;                       // нажатие: на весь экран и обратно
-    else cur = snaps.reduce((a, b) => (Math.abs(b - cur) < Math.abs(a - cur) ? b : a));   // к ближайшему положению
-    set(cur);
-    start = null;
-    if (storeKey) localStorageSet(storeKey, String(cur));
+  const px = (st) => (st === "min" ? minPx() : st === "half" ? avail() * 0.5 : avail());
+  let state = (storeKey && SHEET.includes(localStorageGet(storeKey)) && localStorageGet(storeKey)) || initial;
+  const apply = (st) => {
+    state = st;
+    target.style.setProperty(cssVar, st === "min" ? `${Math.round(minPx())}px` : st === "half" ? "50%" : "100%");
+    target.classList.toggle("full", st === "full");
+    target.classList.toggle("min", st === "min");
+    target.dataset.sheet = st;
+    if (storeKey) localStorageSet(storeKey, st);
     onDone && onDone();
   };
-  grip.addEventListener("pointerup", end);
-  grip.addEventListener("pointercancel", end);
+  let drag = null;
+  for (const h of handles()) {
+    h.addEventListener("pointerdown", (e) => {
+      if (!isPhone() || e.button > 0) return;
+      drag = { y: e.clientY, h: target.getBoundingClientRect().height, t: Date.now(), moved: false, id: e.pointerId, el: h, isGrip: h.classList.contains("sheet-grip") };
+    });
+    h.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved && Math.abs(dy) < 8) return;
+      if (!drag.moved) { drag.moved = true; drag.el.setPointerCapture(e.pointerId); target.classList.add("dragging"); }
+      target.style.setProperty(cssVar, `${Math.round(Math.min(avail(), Math.max(minPx(), drag.h - dy)))}px`);
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag;
+      drag = null;
+      target.classList.remove("dragging");
+      if (!d.moved) {                                  // нажатие на ручку — следующее положение; на вкладку — обычный клик
+        if (d.isGrip) apply(state === "min" ? "half" : state === "half" ? "full" : "half");
+        return;
+      }
+      const dy = e.clientY - d.y, h = target.getBoundingClientRect().height;
+      const near = SHEET.reduce((a, b) => (Math.abs(px(b) - h) < Math.abs(px(a) - h) ? b : a));
+      const from = SHEET.indexOf(state);
+      // короткий свайп — на шаг в сторону жеста, даже если до следующего положения далеко
+      const step = Math.abs(dy) > 24 && near === state ? SHEET[Math.min(2, Math.max(0, from + (dy < 0 ? 1 : -1)))] : near;
+      apply(step);
+    };
+    h.addEventListener("pointerup", end);
+    h.addEventListener("pointercancel", end);
+    h.addEventListener("click", (e) => { if (target.classList.contains("dragging")) e.preventDefault(); }, true);
+  }
+  apply(state);
+  return { set: apply, get: () => state };
 }
-// панель с вкладками: доля высоты под шапкой
-sheetGrip($("#sidebar-grip"), { box: () => $(".layout"), cssVar: "--sb-h", target: $("#sidebar"), initial: 0.48,
-  snaps: [0.25, 0.48, 0.75, 1], storeKey: "sidebarH", onDone: () => map.invalidateSize() });
-// карточка судна: доля высоты карты (а карта при открытой карточке — весь экран под шапкой)
-sheetGrip($("#ship-grip"), { box: () => $(".map-wrap"), cssVar: "--sp-h", target: $("#ship-panel"), initial: 0.58,
-  snaps: [0.3, 0.58, 1] });
+// панель с вкладками: свёрнута — видны ручка и вкладки
+const sidebarSheet = sheet($("#sidebar"), { box: () => $(".layout"), cssVar: "--sb-h", storeKey: "sidebarSheet",
+  handles: () => [$("#sidebar-grip"), $("#sidebar .tabs")],
+  minPx: () => $("#sidebar-grip").offsetHeight + $("#sidebar .tabs").offsetHeight + 1,
+  onDone: () => setTimeout(() => map.invalidateSize(), 220) });
+// карточка судна: свёрнута — видно название судна
+const shipSheet = sheet($("#ship-panel"), { box: () => $(".map-wrap"), cssVar: "--sp-h",
+  handles: () => [$("#ship-grip")],
+  minPx: () => $("#ship-grip").offsetHeight + ($("#ship-panel .sc-head")?.offsetHeight || 56) + 2 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shipPanel.isOpen()) shipPanel.close(); });
 
 // Путь судна в карточке: пройденный трек (сплошная линия) + типовой путь до порта назначения (пунктир).
@@ -2366,6 +2390,7 @@ async function loadZoneLog() {
 
 /* ------------------------------------------------------------------ события UI */
 function switchTab(name) {
+  if (isPhone() && sidebarSheet.get() === "min") sidebarSheet.set("half");   // свёрнутая панель — раскрываем
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
   if (name === "rules") loadRules().catch((e) => toast("Ошибка", e.message, "critical"));
