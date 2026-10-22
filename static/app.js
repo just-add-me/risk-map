@@ -1959,7 +1959,12 @@ async function loadStatus() {
   setUnread(st.unread);
 }
 
+// Обновление раз в 10 с. Пока предыдущее не закончилось (медленная сеть) — новое не начинаем,
+// в свёрнутой или фоновой вкладке не опрашиваем вовсе, при возврате на вкладку — обновляем сразу.
+let refreshing = false;
 async function refreshAll(forceZones = false) {
+  if (refreshing) return;
+  refreshing = true;
   try {
     // статус нужен, чтобы понять, изменились ли зоны; остальное грузим параллельно, а не по очереди
     await loadStatus();
@@ -1968,6 +1973,7 @@ async function refreshAll(forceZones = false) {
     await loadTraffic();                         // после флотов: суда флотов рисуются отдельно
     if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
+  finally { refreshing = false; }
 }
 
 /* ------------------------------------------------------------------ журнал заходов в зоны [журнал-заходов] начало */
@@ -2177,5 +2183,6 @@ renderLegend();
   loadRules().catch(() => {});
   const vs = allVessels().filter((v) => v.position);
   if (vs.length) map.fitBounds(L.latLngBounds(vs.map((v) => [v.position.lat, v.position.lon])).pad(0.5), { maxZoom: 6 });
-  setInterval(() => refreshAll(false), 10000);
+  setInterval(() => { if (!document.hidden) refreshAll(false); }, 10000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(false); });
 })();

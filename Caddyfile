@@ -12,7 +12,11 @@
 	}
 
 	encode gzip
-	reverse_proxy app:8000
+	# при перезапуске приложения (обновление сайта) не отвечаем браузеру ошибкой 502, а ждём до 30 с, пока оно поднимется
+	reverse_proxy app:8000 {
+		lb_try_duration 30s
+		lb_try_interval 500ms
+	}
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Frame-Options "DENY"

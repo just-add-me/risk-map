@@ -166,14 +166,20 @@ async def api_status(request: Request):
 
 @api
 async def api_zones(request: Request):
-    def build() -> object:
-        return zones.for_map() or {"type": "FeatureCollection", "features": [], "properties": {}}
-    return await _versioned_json(request, "zones", zones.version(), build)
+    return await _versioned_json(request, "zones", zones.version(), _zones_json)
+
+
+def _zones_json() -> object:
+    return zones.for_map() or {"type": "FeatureCollection", "features": [], "properties": {}}
+
+
+def _ports_json() -> object:
+    return {"ports": ports.with_zones()}
 
 
 @api
 async def api_ports(request: Request):
-    return await _versioned_json(request, "ports", zones.version(), lambda: {"ports": ports.with_zones()})
+    return await _versioned_json(request, "ports", zones.version(), _ports_json)
 
 
 # Большие ответы, которые меняются только при обновлении зон (2 МБ зон, 1100 портов): собираем
@@ -181,16 +187,40 @@ async def api_ports(request: Request):
 _json_cache: dict[str, tuple[object, str, bytes, bytes]] = {}
 
 
-async def _versioned_json(request: Request, name: str, version: object, build) -> Response:
+_json_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _json_cached(name: str, version: object, build) -> tuple:
+    """Собирает ответ один раз на версию; одновременные запросы ждут ту же сборку, а не повторяют её."""
     cached = _json_cache.get(name)
-    if not cached or cached[0] != version:
+    if cached and cached[0] == version:
+        return cached
+    async with _json_locks.setdefault(name, asyncio.Lock()):
+        cached = _json_cache.get(name)
+        if cached and cached[0] == version:
+            return cached
+
         def make():
             raw = json.dumps(build(), ensure_ascii=False, separators=(",", ":")).encode()
             return raw, gzip.compress(raw, compresslevel=6)
         raw, gz = await asyncio.to_thread(make)
         cached = (version, f'"{name}-{hashlib.sha1(raw).hexdigest()[:16]}"', raw, gz)
         _json_cache[name] = cached
-    _, etag, raw, gz = cached
+        return cached
+
+
+async def _map_warm_loop(stop: asyncio.Event):
+    """Зоны и порты для карты собираем заранее — после запуска и после каждого обновления зон
+    (склейка территорий и упрощение контуров занимают несколько секунд, первый посетитель не ждёт)."""
+    while not stop.is_set():
+        await _json_cached("zones", zones.version(), _zones_json)
+        await _json_cached("ports", zones.version(), _ports_json)
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=60)
+
+
+async def _versioned_json(request: Request, name: str, version: object, build) -> Response:
+    _, etag, raw, gz = await _json_cached(name, version, build)
     headers = {"ETag": etag, "Cache-Control": "private, no-cache", "Vary": "Accept-Encoding"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
@@ -1023,7 +1053,7 @@ async def lifespan(app):
     tasks = [asyncio.create_task(_supervise(name, fn, stop)) for name, fn in (
         ("приём AIS", ais_source.run), ("циркуляры и IBF", _circular_loop), ("обслуживание", _maintenance_loop),
         ("снимок судов", _traffic_snapshot_loop), ("санкции и задержания", _screening_loop),
-        ("новости о судах", _news_loop))]
+        ("новости о судах", _news_loop), ("данные карты", _map_warm_loop))]
     try:
         yield
     finally:
