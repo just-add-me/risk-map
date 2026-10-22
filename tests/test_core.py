@@ -707,3 +707,11 @@ def test_default_rules_and_vessel_event():
     db.execute("UPDATE rules SET params=? WHERE id=?", (json.dumps({"groups": ["distress"]}), r["id"]))
     rules.on_vessel_event("273000990", "news", "info", "новости о судне", "статья")   # группа выключена
     assert len(got()) == 1
+
+
+def test_news_single_word_name_needs_vessel_type():
+    from app import news
+    ferry = {"title": "AML charters the ship \u201cGalaxy\u201d for the Tangier Med line", "summary": "", "url": "u", "via": "google"}
+    assert not news.relevant(ferry, "GALAXY", "9826902", None, "tanker")      # наш GALAXY — танкер
+    yacht = {"title": "Superyacht Koru arrives in Auckland", "summary": "", "url": "u", "via": "google"}
+    assert news.relevant(yacht, "KORU", "9857298", 125, "yacht")

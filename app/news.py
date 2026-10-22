@@ -155,7 +155,24 @@ def length_conflict(text: str, length: Optional[float]) -> bool:
     return bool(length and ls and not any(abs(x - length) <= 0.15 * length for x in ls))
 
 
-def relevant(item: dict, name: str, imo: str, length: Optional[float] = None) -> bool:
+# Слова типа судна: у однословного названия без IMO в тексте статья должна говорить о судне того же типа
+# («the ship “Galaxy” for the Tangier Med line» — паром, а наш GALAXY — танкер)
+TYPE_WORDS = {
+    "tanker": r"tanker|oil|crude|lng|lpg|vlcc|product carrier|chemical",
+    "cargo": r"cargo|bulk|bulker|container|freighter|carrier|general cargo|boxship",
+    "yacht": r"yacht|superyacht|megayacht|gigayacht|sailing",
+    "passenger": r"cruise|ferry|passenger|liner",
+    "fishing": r"fishing|trawler|fleet",
+}
+
+
+def type_ok(text: str, name: str, category: Optional[str]) -> bool:
+    if not category or category not in TYPE_WORDS or len(re.split(r"[\s\-]+", name.strip())) > 1:
+        return True
+    return bool(re.search(rf"\b(?:{TYPE_WORDS[category]})", text, re.I))
+
+
+def relevant(item: dict, name: str, imo: str, length: Optional[float] = None, category: Optional[str] = None) -> bool:
     """Статья про это судно: IMO или название в заголовке/описании, а иначе — в тексте самой статьи.
 
     Текст открываем только по прямым ссылкам Bing. Ссылки Google ведут на их окно согласия на cookies,
@@ -166,11 +183,11 @@ def relevant(item: dict, name: str, imo: str, length: Optional[float] = None) ->
     if imo not in blob and length_conflict(item["title"], length):
         return False
     if mentions(blob, name, imo):
-        return True
+        return imo in blob or type_ok(blob, name, category)
     if item.get("via") != "bing":
         return False
     text = article_text(item["url"])
-    return bool(text) and mentions(text, name, imo)
+    return bool(text) and mentions(text, name, imo) and (imo in text or type_ok(text, name, category))
 
 
 def article_text(url: str) -> Optional[str]:
@@ -236,12 +253,14 @@ def _key(title: str) -> str:
 def _fleet() -> list[dict]:
     """Суда флотов с IMO: название (из флота или AIS), IMO, MMSI."""
     seen, out = set(), []
+    from .ais import shipinfo
     for r in db.query("SELECT v.mmsi, COALESCE(v.imo, a.imo) AS imo, COALESCE(NULLIF(v.name, ''), a.ais_name) AS name, "
-                      "a.length FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi"):
+                      "a.length, a.ship_type FROM vessels v LEFT JOIN ais_state a ON a.mmsi=v.mmsi"):
         imo = str(r["imo"] or "")
         if fleet_import.imo_valid(imo) and imo not in seen:
             seen.add(imo)
-            out.append({"imo": imo, "mmsi": r["mmsi"], "name": (r["name"] or "").strip(), "length": r["length"]})
+            out.append({"imo": imo, "mmsi": r["mmsi"], "name": (r["name"] or "").strip(), "length": r["length"],
+                        "category": shipinfo.category(r["ship_type"]) if r["ship_type"] is not None else None})
     return out
 
 
@@ -265,7 +284,7 @@ def check_vessel(v: dict, pause: float = PAUSE_S) -> int:
                 continue
             if it["published"] and it["published"] < cutoff:
                 continue
-            if relevant(it, v["name"], v["imo"], v.get("length")):
+            if relevant(it, v["name"], v["imo"], v.get("length"), v.get("category")):
                 found[key] = it
         time.sleep(pause)
     if not found:
