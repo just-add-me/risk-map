@@ -287,9 +287,16 @@ async def api_ship_search(request: Request):
 @api
 async def api_traffic_ship(request: Request):
     mmsi = request.path_params["mmsi"]
+    imo = mmsi[4:] if mmsi.startswith("IMO:") else ""
+    if imo:                                    # судно из списков, известно только по IMO — ищем его MMSI в AIS
+        mmsi = traffic.find_imo(imo) or mmsi
     s = traffic.get(mmsi)
     if not s:
-        return JSONResponse({"error": "Нет данных по судну"}, status_code=404)
+        # сейчас не видно в AIS — карточка из того, что знаем: последнее имя, IMO, санкции, задержания
+        last = None if imo else db.query_one("SELECT ais_name, imo FROM ais_state WHERE mmsi=?", (mmsi,))
+        imo = imo or (str(last["imo"]) if last and last["imo"] else "")
+        return JSONResponse({"offline": True, "mmsi": None if mmsi.startswith("IMO:") else mmsi, "imo": imo,
+                             "name": last["ais_name"] if last else None, "screening": screening.lookup(imo)})
     d = traffic.details(s)
     if d["lat"] is not None:
         idx = zones.index()

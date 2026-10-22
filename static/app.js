@@ -1303,27 +1303,35 @@ function renderTrafficCats() {
 // Название судна в уведомлении, ленте, окне происшествия — ссылка на его карточку
 function shipLink(name, mmsi) {
   const label = `<b>${esc(name)}</b>`;
-  return /^\d+$/.test(mmsi || "") ? `<a href="#" class="ship-link" data-mmsi="${esc(mmsi)}" title="Открыть карточку судна">${label}</a>` : label;
+  return /^(\d+|IMO:\d+)$/.test(mmsi || "")
+    ? `<a href="#" class="ship-link" data-mmsi="${esc(mmsi)}" data-name="${esc(name)}" title="Открыть карточку судна">${label}</a>` : label;
 }
-function openShip(mmsi) {
+// «MMSI 123» или «IMO 9478767» — у судов из санкционных списков и задержаний бывает известен только IMO
+function shipIdText(mmsi) {
+  return /^IMO:/.test(mmsi || "") ? `IMO ${esc(mmsi.slice(4))}` : `MMSI ${esc(mmsi)}`;
+}
+function openShip(mmsi, name) {
   map.closePopup();
   eventSpot.clearLayers();
-  if (allVessels().some((v) => v.mmsi === mmsi)) { selectVessel(mmsi, true); return; }
-  openTrafficShip(mmsi, map.getCenter(), true);
+  const imo = /^IMO:/.test(mmsi) ? mmsi.slice(4) : null;
+  const own = allVessels().find((v) => v.mmsi === mmsi || (imo && String(v.imo || "") === imo));
+  if (own) { selectVessel(own.mmsi, true); return; }
+  openTrafficShip(mmsi, map.getCenter(), true, name);
 }
 document.addEventListener("click", (e) => {
   const a = e.target.closest(".ship-link");
   if (!a) return;
   e.preventDefault();
   e.stopPropagation();
-  openShip(a.dataset.mmsi);
+  openShip(a.dataset.mmsi, a.dataset.name);
 });
 
-async function openTrafficShip(mmsi, latlng, fly = false) {
+async function openTrafficShip(mmsi, latlng, fly = false, name = "") {
   const popup = shipPanel.open(mmsi, latlng, `<div class="sc-loading muted">Загружаю…</div>`);
   try {
     const s = await api(`/api/traffic/${encodeURIComponent(mmsi)}`);
     if (shipPanel.mmsi !== mmsi) return;            // пока грузили, открыли другое судно
+    if (s.offline) { popup.setContent(offlineCard(s, name)); return; }
     if (fly && s.lat != null) {                      // открыли по названию — показываем, где судно сейчас
       shipPanel.latlng = L.latLng(s.lat, s.lon);
       map.fitBounds(L.latLngBounds([shipPanel.latlng, shipPanel.latlng]), { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
@@ -1346,10 +1354,22 @@ async function openTrafficShip(mmsi, latlng, fly = false) {
         renderTraffic();
       } catch (e) { toast("Не удалось добавить", e.message, "critical"); }
     };
-  } catch (e) {
-    popup.setContent(`<div class="sc-loading muted">${e.message === "Нет данных по судну"
-      ? "Судно сейчас не видно в AIS — карточку открыть нельзя." : esc(e.message)}</div>`);
-  }
+  } catch (e) { popup.setContent(`<div class="sc-loading muted">${esc(e.message)}</div>`); }
+}
+
+// Судно сейчас не передаёт AIS (или нашей сети его не видно): что знаем — IMO, санкции, задержания, ссылки
+function offlineCard(s, name) {
+  const id = s.imo || s.mmsi;
+  return `<div class="sc">
+    <div class="sc-head"><div><div class="sc-name">${esc(s.name || name || "Без названия")}</div>
+      <div class="sc-type">${[s.imo && `IMO ${esc(s.imo)}`, s.mmsi && `MMSI ${esc(s.mmsi)}`].filter(Boolean).join(" · ")}</div></div></div>
+    ${screeningBlock(s.screening)}
+    <div class="sc-foot">Сейчас судно не видно в AIS: оно далеко от береговых станций, стоит с выключенным AIS
+      или передаёт под другим MMSI. Позиции и пути нет.</div>
+    ${id ? `<div class="sc-links">Где судно сейчас, владелец:
+      <a href="https://www.vesselfinder.com/vessels/details/${encodeURIComponent(id)}" target="_blank" rel="noopener">VesselFinder</a>
+      ${s.imo ? ` · <a href="https://www.equasis.org/" target="_blank" rel="noopener" title="Бесплатно после регистрации, поиск по IMO ${esc(s.imo)}">Equasis</a>` : ""}</div>` : ""}
+  </div>`;
 }
 
 /* ------------------------------------------------------------------ правила (конструктор отслеживания) */
@@ -1704,7 +1724,7 @@ function incPopup(it) {
     ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
     ${/^https?:\/\//.test(it.extra || "") ? `<p><a href="${esc(it.extra)}" target="_blank" rel="noopener">Открыть статью ↗</a></p>`
       : it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
-    <dl class="kv"><dt>MMSI</dt><dd>${esc(it.mmsi)}</dd>
+    <dl class="kv"><dt>${/^IMO:/.test(it.mmsi) ? "IMO" : "MMSI"}</dt><dd>${esc(it.mmsi.replace(/^IMO:/, ""))}</dd>
       ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
       <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>`;
 }
@@ -1802,7 +1822,7 @@ function feedRow(x, i) {
     <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span><span class="fi-time">${fmtTime(it.last_seen)}${
       it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span></div>
     <div class="fi-event">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
-    <div class="fi-vessel">${it.name ? `${shipLink(it.name, it.mmsi)} ` : ""}<span class="muted">MMSI ${esc(it.mmsi)}</span></div>
+    <div class="fi-vessel">${it.name ? `${shipLink(it.name, it.mmsi)} ` : ""}<span class="muted">${shipIdText(it.mmsi)}</span></div>
     ${it.text ? `<div class="fi-quote">${esc(it.text)}</div>` : ""}${link ? `<div class="fi-link">${link}</div>` : ""}</li>`;
 }
 
