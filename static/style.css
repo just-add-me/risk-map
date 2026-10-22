@@ -466,3 +466,22 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .log-decl { font-size: 12px; white-space: nowrap; color: var(--muted); }
 .log-item .zin { color: var(--amber); }
 /* [журнал-заходов] конец */
+
+/* ---------- лента ---------- */
+.feed-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.feed-tools { margin-bottom: 8px; }
+.feed-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.feed-item { padding: 9px 10px 9px 12px; margin-bottom: 7px; border-left: 3px solid var(--line); border-radius: 0 6px 6px 0;
+  background: var(--bg); cursor: pointer; }
+.feed-item.critical { border-left-color: var(--red); } .feed-item.warning { border-left-color: var(--amber); }
+.feed-item.info { border-left-color: var(--accent); }
+.feed-item.unread { background: var(--bg-3); }
+.feed-item.read .fi-title { font-weight: 500; color: #c3d2d8; }
+.fi-meta { display: flex; align-items: center; gap: 4px; font: 11px var(--mono); color: var(--muted); margin-bottom: 2px; }
+.fi-meta .inc-dot { width: 16px; height: 16px; font-size: 9px; line-height: 16px; }
+.fi-src { text-transform: uppercase; letter-spacing: .04em; }
+.fi-title { font-weight: 600; font-size: 13.5px; }
+.fi-body { color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
+.fi-rule { margin-top: 3px; font-size: 11.5px; }
+.feed-more summary { cursor: pointer; font-size: 13px; }
+.feed-more[open] summary { margin-bottom: 8px; }

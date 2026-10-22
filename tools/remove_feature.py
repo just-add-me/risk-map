@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FEATURES = {
     "журнал-заходов": {"files": ["app/zone_log.py"],
-                       "drop_sql": "DROP TABLE IF EXISTS zone_visits;"},
+                       "drop_sql": "DROP TABLE IF EXISTS zone_visits; DELETE FROM rules WHERE kind='visit_undeclared';"},
     "подозрительное-поведение": {"files": ["app/anomalies.py"],
                                  "drop_sql": "DROP TABLE IF EXISTS anomaly_state; "
                                              "DELETE FROM incidents WHERE kind IN ('dark','sts','spoof','identity');"},

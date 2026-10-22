@@ -101,7 +101,12 @@ def test_alert_flow():
     db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Test', 'admin', ?)", (db.now_iso(),))
     db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(1, '273000001', 'TEST ONE', ?)",
                (db.now_iso(),))
-    kinds = lambda: [n["kind"] for n in db.query("SELECT kind FROM notifications ORDER BY id")]  # noqa: E731
+    from app import rules
+    rules.ensure_defaults("admin")            # уведомления о зонах шлют стандартные правила
+    kind_of = {"ВХОД": "zone_enter", "ВЫХОД": "zone_exit", "приближается": "zone_near"}
+    kinds = lambda: [next(v for k, v in kind_of.items() if k in n["title"]) for n in db.query(  # noqa: E731
+        "SELECT title FROM notifications WHERE kind='rule' AND mmsi='273000001' AND username='admin' ORDER BY id")
+        if any(k in n["title"] for k in kind_of)]
 
     ingest.position("273000001", 20.0, 33.5, sog=12)      # далеко от зоны (≈84 мили)
     assert kinds() == []
@@ -118,12 +123,11 @@ def test_alert_flow():
     st = alerts.vessel_status("273000001")
     assert st["level"] == "near"
 
-    # смена зон: новая версия без red-sea, судно сидело внутри → уведомление с причиной
+    # смена зон: новая версия без red-sea, судно сидело внутри → правило сообщает о выходе сразу
     ingest.position("273000001", 20.0, 36.0, sog=12)
     zones.set_active({**FAKE_ZONES, "features": FAKE_ZONES["features"][1:]})
     alerts.reevaluate_all("Причина: тест")
-    last = db.query("SELECT * FROM notifications ORDER BY id DESC LIMIT 1")[0]
-    assert last["kind"] == "zone_exit" and "тест" in last["body"]
+    assert kinds()[-1] == "zone_exit"
     assert alerts.vessel_status("273000001")["level"] == "safe"
 
 
@@ -371,6 +375,10 @@ def test_incidents():
     assert incidents.classify("MAYDAY MAYDAY FIRE ON BOARD")[0] == "distress"
     assert incidents.classify("DRIFTING CONTAINER 43-10N 029-50E")[0] == "safety"
     aisstream._tracked = {"273000555"}
+    from app import rules
+    rules.ensure_defaults("admin")
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Происшествия', 'admin', ?)", (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(?, '273000555', 'STUCK', ?)", (fid, db.now_iso()))
     # аварийный маяк (MMSI 970…), статус «на мели» у судна флота, текстовое сообщение, повтор
     aisstream.handle(json.dumps({"MessageType": "PositionReport", "MetaData": {"MMSI": 970123456, "ShipName": "SART"},
                                  "Message": {"PositionReport": {"Latitude": 43.1, "Longitude": 29.5, "NavigationalStatus": 14}}}))
@@ -390,8 +398,8 @@ def test_incidents():
     assert not any(i["mmsi"] == "211000001" for i in incidents.recent(1))
     assert items["safety"]["text"] == "NAVIGATIONAL WARNING MINE DANGER" and items["safety"]["lat"] == 44.6
     assert len([i for i in incidents.recent(1) if i["kind"] == "safety"]) == 1      # повторы не плодят записи
-    note = db.query_one("SELECT severity, title FROM notifications WHERE kind='incident' AND mmsi='273000555'")
-    assert note["severity"] == "warning" and "мели" in note["title"]
+    note = db.query_one("SELECT severity, title FROM notifications WHERE kind='rule' AND mmsi='273000555'")
+    assert note["severity"] == "warning" and "мели" in note["title"]       # правило «Событие с судном»
     aisstream._tracked = None
 
 
@@ -424,15 +432,15 @@ def test_rules_engine():
     add("port_departure", {"port_id": "0"})
     add("destination", {"eta": False})
     add("incident", {"radius_nm": 30, "kinds": ["distress"]}, target_type="vessel", target=m)
-    mine = lambda u: [n["title"].split(": ", 1)[1] for n in db.query(  # noqa: E731
+    mine = lambda u: [n["title"].split(": ", 1)[1].split(" «")[0] for n in db.query(  # noqa: E731
         "SELECT title FROM notifications WHERE kind='rule' AND username=? ORDER BY id", (u,))]
 
     ingest.position(m, 44.5, 30.5, sog=10, nav=0)          # первое наблюдение — тишина
     assert mine("olga") == []
     ingest.position(m, 44.5, 31.5, sog=10, nav=0)          # вошло в свою область
-    assert mine("olga") == ["Вход в зону"] and mine("pavel") == ["Вход в зону"]   # audience=fleet
+    assert mine("olga") == ["ВХОД в зону"] and mine("pavel") == ["ВХОД в зону"]   # audience=fleet
     ingest.position(m, 44.5, 32.5, sog=10, nav=0)          # вышло; «выход» только владельцу
-    assert mine("olga")[-1] == "Выход из зоны" and mine("pavel") == ["Вход в зону"]
+    assert mine("olga")[-1] == "ВЫХОД из зоны" and mine("pavel") == ["ВХОД в зону"]
     ingest.position(m, 44.01, 30.01, sog=0.5, nav=1)       # у порта, якорь, медленно
     assert {"Смена статуса", "Скорость", "Заход в порт"} <= set(mine("olga"))
     ingest.position(m, 44.5, 30.5, sog=12, nav=0)          # ушло дальше 5 миль от порта
@@ -450,7 +458,7 @@ def test_rules_engine():
     assert mine("olga").count("Нет сигнала AIS") == 1
     # выключенные правила не срабатывают
     before = len(mine("olga"))
-    db.execute("UPDATE rules SET enabled=0 WHERE id <> ?", (rid,))
+    db.execute("UPDATE rules SET enabled=0 WHERE id <> ? AND owner='olga'", (rid,))
     ingest.position(m, 44.5, 31.5, sog=10, nav=0)
     assert len(mine("olga")) == before
     try:
@@ -487,6 +495,8 @@ def test_screening_parsers_and_fleet_hit():
     assert d["detained_on"] == "2026-10-02" and d["built"] == "2025" and d["port"] == "Vancouver, Canada"
     # судно флота нашлось в списке → происшествие и уведомление, повторная проверка — без дублей
     ports._ports = [{"name": "Vancouver", "lat": 49.3, "lon": -123.1, "country": "Canada"}]
+    from app import rules
+    rules.ensure_defaults("admin")            # о санкциях и задержаниях сообщает правило «Событие с судном»
     fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Санкции', 'admin', ?)", (db.now_iso(),)).lastrowid
     db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, created_at) VALUES(?, '538099001', '9273387', ?)", (fid, db.now_iso()))
     db.execute("INSERT INTO vessels(fleet_id, mmsi, imo, created_at) VALUES(?, '538099002', '1130113', ?)", (fid, db.now_iso()))
@@ -670,3 +680,25 @@ def test_anomaly_position_jump():
     assert [r["kind"] for r in rows] == ["spoof"] and "92 миль" in rows[0]["text"]
     assert "spoof" in incidents.ANOMALY_KINDS
 # [подозрительное-поведение] конец
+
+
+def test_default_rules_and_vessel_event():
+    from app import rules, users
+    db.connect()
+    users.add("rita", "pw")
+    assert rules.ensure_defaults("rita") == len(rules.DEFAULTS)
+    assert rules.ensure_defaults("rita") == 0                        # второй раз — ничего
+    ev = db.query_one("SELECT id FROM rules WHERE owner='rita' AND kind='vessel_event'")["id"]
+    db.execute("DELETE FROM rules WHERE id=?", (ev,))
+    assert rules.ensure_defaults("rita") == 0                        # удалённое само не возвращается
+    assert rules.ensure_defaults("rita", force=True) == 1            # «Вернуть стандартные»
+    fid = db.execute("INSERT INTO fleets(name, owner, created_at) VALUES('Рита', 'rita', ?)", (db.now_iso(),)).lastrowid
+    db.execute("INSERT INTO vessels(fleet_id, mmsi, name, created_at) VALUES(?, '273000990', 'RITA ONE', ?)", (fid, db.now_iso()))
+    got = lambda: [n["title"] for n in db.query(  # noqa: E731
+        "SELECT title FROM notifications WHERE username='rita' AND mmsi='273000990' ORDER BY id")]
+    rules.on_vessel_event("273000990", "sanction", "critical", "в санкционных списках (1)", "OFAC")
+    assert len(got()) == 1 and "санкционных" in got()[0]
+    r = db.query_one("SELECT * FROM rules WHERE owner='rita' AND kind='vessel_event'")
+    db.execute("UPDATE rules SET params=? WHERE id=?", (json.dumps({"groups": ["distress"]}), r["id"]))
+    rules.on_vessel_event("273000990", "news", "info", "новости о судне", "статья")   # группа выключена
+    assert len(got()) == 1

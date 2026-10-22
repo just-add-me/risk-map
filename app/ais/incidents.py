@@ -116,9 +116,9 @@ def record(kind: str, mmsi: str, *, name: Optional[str] = None, lat: Optional[fl
                            "text": text, "test": test})
     except Exception:  # noqa: BLE001
         log.exception("Ошибка проверки правил для происшествия %s", iid)
-    if tracked and not test and KINDS[kind]["severity"] != "info":
-        title = f"{name or 'MMSI ' + mmsi}: {KINDS[kind]['label'].lower()}"
-        db.notify("incident", KINDS[kind]["severity"], title, text or "Сообщение получено по AIS.", mmsi)
+    if tracked and not test:                 # судно флота: сообщают правила «Событие с судном»
+        from .. import rules
+        rules.on_vessel_event(mmsi, kind, KINDS[kind]["severity"], KINDS[kind]["label"], text)
     return iid
 
 

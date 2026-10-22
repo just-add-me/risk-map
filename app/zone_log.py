@@ -3,7 +3,7 @@
 Каждый заход — строка в zone_visits: когда судно вошло в зону и вышло, где, сколько пробыло,
 заявлен ли заход (отмечают пользователи с правом редактировать флот). Записи ведёт
 alerts.process при входе и выходе. Старые заходы восстанавливаются один раз из истории
-уведомлений (backfill). Напоминание — если судно в зоне JWC больше REMIND_HOURS, а заход не заявлен.
+уведомлений (backfill). Напоминание о незаявленном заходе — правило «Заход в зону не заявлен» (rules.py).
 Функция отдельная: всё, что её подключает, помечено меткой [журнал-заходов] — чтобы удалить функцию,
 удалите этот файл и отмеченные строки (поиск: grep -rn "[журнал-заходов]" app static tests), а в базе —
 таблицу zone_visits.
@@ -124,20 +124,6 @@ def declare(user: str, vid: int, declared: bool, note: Optional[str] = None) -> 
     db.execute("UPDATE zone_visits SET declared=?, declared_at=?, declared_by=?, note=COALESCE(?, note) WHERE id=?",
                (int(declared), db.now_iso() if declared else None, user if declared else None,
                 note.strip()[:300] if note is not None else None, vid))
-
-
-def remind() -> int:
-    """Судно больше REMIND_HOURS в зоне JWC, заход не заявлен — одно напоминание на заход."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=REMIND_HOURS)).replace(microsecond=0).isoformat()
-    n = 0
-    for r in db.query("SELECT * FROM zone_visits WHERE exited_at IS NULL AND declared=0 AND reminded=0 "
-                      "AND layer='jwc' AND entered_at < ?", (cutoff,)):
-        db.execute("UPDATE zone_visits SET reminded=1 WHERE id=?", (r["id"],))
-        db.notify("zone_log", "warning", f"{_label(r['mmsi'])}: заход в «{r['zone_name']}» не заявлен",
-                  f"Судно в зоне с {r['entered_at'][:16].replace('T', ' ')} UTC "
-                  f"({_hours(r['entered_at'], None):.0f} ч). Отметьте заявку в журнале заходов.", r["mmsi"], r["zone_id"])
-        n += 1
-    return n
 
 
 def xlsx(rows: list[dict]) -> bytes:

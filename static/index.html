@@ -66,8 +66,7 @@
       <button class="tab active" data-tab="fleet">Флот</button>
       <button class="tab" data-tab="zones">Зоны</button>
       <button class="tab" data-tab="rules">Правила</button>
-      <button class="tab" data-tab="events">События <span class="tab-count" id="tab-alert-count" hidden></span></button>
-      <!-- [журнал-заходов] -->
+      <button class="tab" data-tab="events">Лента <span class="tab-count" id="tab-alert-count" hidden></span></button>
       <button class="tab" data-tab="log">Журнал <span class="tab-count" id="tab-log-count" hidden></span></button>
     </nav>
 
@@ -177,29 +176,32 @@
         <div class="row"><button class="btn" type="submit" id="btn-rule-save">Сохранить</button>
           <button class="text-btn" type="button" id="btn-rule-cancel">Отмена</button></div>
       </form>
-      <h3 class="sub-h">Мои правила</h3>
+      <h3 class="sub-h">Правила уведомлений</h3>
+      <p class="muted small" style="margin-top:0">Всё, о чём сообщает колокольчик и что попадает в «Ленту» по вашим
+        судам, задаётся здесь. Стандартные правила можно изменить, выключить или удалить.</p>
       <ul class="rule-list" id="rule-list"></ul>
+      <button class="text-btn" type="button" id="btn-rules-defaults" hidden>Вернуть стандартные правила</button>
       <h3 class="sub-h">Мои области
         <label class="check small"><input type="checkbox" id="areas-show" checked> на карте</label></h3>
       <ul class="rule-list" id="area-list"></ul>
     </section>
 
 
-    <!-- СОБЫТИЯ: уведомления и происшествия -->
+    <!-- ЛЕНТА: всё, что сообщили правила по вашим судам, происшествия в мире и системные сообщения -->
     <section class="panel" id="panel-events">
-      <div class="seg" role="tablist">
-        <button class="seg-btn on" type="button" data-seg="alerts">Уведомления <span class="tab-count" id="seg-alert-count" hidden></span></button>
-        <button class="seg-btn" type="button" data-seg="incidents">Происшествия</button>
+      <div class="feed-filters" role="tablist">
+        <button class="fchip on" type="button" data-feed="all">Всё</button>
+        <button class="fchip" type="button" data-feed="mine">Мои суда</button>
+        <button class="fchip" type="button" data-feed="world">В мире</button>
+        <button class="fchip" type="button" data-feed="system">Система</button>
       </div>
-      <div class="seg-body" id="seg-alerts">
-      <div class="row between">
+      <div class="row between feed-tools">
         <label class="check"><input type="checkbox" id="n-unread-only"> Только непрочитанные</label>
         <button class="text-btn" id="btn-read-all">Прочитать все</button>
       </div>
-      <ul class="notif-list" id="notif-list"></ul>
-    </div>
-      <div class="seg-body" id="seg-incidents" hidden>
-      <div class="card">
+      <ul class="feed-list" id="feed-list"></ul>
+      <details class="card feed-more">
+        <summary>Происшествия в мире: период, виды, показ на карте</summary>
         <label class="zf-layer-head"><input type="checkbox" id="inc-show" checked> Показывать на карте</label>
         <div class="row inc-opts">
           <select id="inc-days" aria-label="Период">
@@ -209,21 +211,27 @@
         </div>
         <div class="z-types-row" id="inc-kinds"></div>
         <p class="muted small">Из потока AIS: аварийные маяки (SART, «человек за бортом», EPIRB), суда, включившие
-          аварийный сигнал или сменившие статус на «на мели» / «не управляется». Такие события редкие и видны только
-          в зоне береговых станций. Текстовые сообщения о безопасности и спасательную авиацию бесплатный источник AIS
-          не передаёт.<br>Новости: раз в 6 часов для судов флота ищем статьи в Google News и Bing News по IMO и
-          названию. «Тревожные» — со словами о захвате, задержании, нападении, аварии, санкциях; по ним приходит
-          уведомление. Одинаковые новости разных изданий собраны в одну: показана статья самого авторитетного
-          издания и число источников. Отбор по ключевым словам, без анализа смысла, поэтому возможен шум.</p>
-      </div>
-      <div class="card" id="screen-card"><div id="screen-status"></div>
-        <button class="btn ghost" type="button" id="btn-screen-refresh" style="margin-top:8px">Обновить списки сейчас</button></div>
-      <ul class="inc-list" id="inc-list"></ul>
-    </div>
+          аварийный сигнал или сменившие статус на «на мели» / «не управляется» (видны только в зоне береговых станций).
+          Санкционные списки и задержания Tokyo MoU — раз в сутки. Новости о судах флотов — раз в 6 часов из Google News
+          и Bing News; одинаковые статьи собраны в одну, отбор по ключевым словам, возможен шум.
+          О событиях с вашими судами сообщают правила (вкладка «Правила»).</p>
+        <div id="screen-status"></div>
+        <button class="btn ghost" type="button" id="btn-screen-refresh" style="margin-top:8px">Обновить санкционные списки сейчас</button>
+      </details>
     </section>
-
-    <!-- [журнал-заходов] начало: журнал заходов в зоны -->
+    <!-- ЖУРНАЛ: документы для выгрузки -->
     <section class="panel" id="panel-log">
+      <div class="card">
+        <b>Журнал событий</b>
+        <p class="muted small">Всё, что пришло в «Ленту» по вашим судам и системе, — одной таблицей Excel.</p>
+        <div class="row">
+          <select id="events-days" aria-label="Период"><option value="7">7 дней</option><option value="30" selected>30 дней</option>
+            <option value="90">90 дней</option><option value="365">Год</option></select>
+          <a class="btn ghost" id="events-xlsx" href="/api/notifications/export?days=30" download>Скачать Excel</a>
+        </div>
+      </div>
+      <!-- [журнал-заходов] начало: заходы в зоны -->
+      <h3 class="sub-h">Заходы в зоны</h3>
       <p class="muted small" style="margin-top:0">Заходы судов ваших флотов в зоны — для заявок страховщику на
         дополнительную премию. Отметьте «Заявлено», когда заход сообщён. Если судно в зоне JWC дольше
         <span id="log-remind-h">6</span> ч, а заход не заявлен, придёт напоминание.</p>
@@ -238,8 +246,8 @@
       <div class="log-summary" id="log-summary"></div>
       <a class="btn ghost log-xlsx" id="log-xlsx" href="#" download>Скачать Excel</a>
       <ul class="log-list" id="log-list"></ul>
+      <!-- [журнал-заходов] конец -->
     </section>
-    <!-- [журнал-заходов] конец -->
   </aside>
 
   <main class="map-wrap">

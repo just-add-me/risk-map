@@ -1177,7 +1177,8 @@ function renderRules() {
     <li class="rule-item ${r.enabled ? "" : "off"}" data-id="${r.id}">
       <input type="checkbox" class="ri-toggle" ${r.enabled ? "checked" : ""} title="Включено">
       <div class="ri-main">
-        <div class="ri-name"><span class="ri-sev" style="background:${SEV_COLORS[r.severity]}"></span>${esc(r.name)}</div>
+        <div class="ri-name"><span class="ri-sev" style="background:${SEV_COLORS[r.severity]}"></span>${esc(r.name)}${
+          r.standard ? ` <span class="tag" title="Стандартное правило: его можно изменить, выключить или удалить">стандартное</span>` : ""}</div>
         <div class="small">${esc(r.description)}</div>
         <div class="muted small">${esc(r.target_name)} · ${r.audience === "fleet" ? "всем, кто видит флот" : "только мне"}
           · ${r.fired_count ? `сработало ${r.fired_count} раз, последний ${ago(r.last_fired)}` : "ещё не срабатывало"}</div>
@@ -1185,6 +1186,9 @@ function renderRules() {
       <div class="ri-actions"><button class="text-btn ri-edit" type="button">Изменить</button>
         <button class="text-btn danger ri-del" type="button" title="Удалить">✕</button></div>
     </li>`).join("") || `<li class="empty muted">Правил пока нет. Нажмите «+ Новое правило».</li>`;
+  const miss = state.rules.meta?.defaults_missing || 0;
+  $("#btn-rules-defaults").hidden = !miss;
+  $("#btn-rules-defaults").textContent = `Вернуть стандартные правила (${miss})`;
   $$("#rule-list .rule-item").forEach((el) => {
     const r = items.find((x) => x.id === +el.dataset.id);
     el.querySelector(".ri-toggle").onchange = async (e) => {
@@ -1250,6 +1254,19 @@ function renderRuleParams(kind, p = {}) {
     html = `<label>Порт<input name="port" list="rule-ports" value="${esc(name)}" placeholder="любой порт — оставьте пустым"></label>
       <datalist id="rule-ports">${(state.ports || []).map((pt) => `<option value="${esc(pt.name)}">${esc(pt.country)}</option>`).join("")}</datalist>
       <p class="muted small">«В порту» — ближе 3 миль к порту и почти без хода; «вышло» — дальше 5 миль.</p>`;
+  } else if (kind === "vessel_event") {
+    const on = new Set(p.groups || Object.keys(meta.event_groups));
+    html = `<div><div class="muted small">Сообщать, когда с судном:</div><div class="rule-checks">${
+      Object.entries(meta.event_groups).map(([g, label]) => `<label><input type="checkbox" name="groups" value="${g}" ${on.has(g) ? "checked" : ""}> ${esc(label)}</label>`).join("")}</div>
+      <p class="muted small">Важность уведомления берётся из самого события: санкции — критично, обычная новость — информация.</p></div>`;
+  } else if (kind === "dest_zone") {
+    html = `<label>Какие зоны<select name="scope">${["layer:any", "layer:jwc", "layer:ibf", "layer:inl"].map((v) =>
+      `<option value="${v}" ${(p.scope || "layer:any") === v ? "selected" : ""}>${{ "layer:any": "любые", "layer:jwc": "JWC — военные риски", "layer:ibf": "IBF — экипаж", "layer:inl": "INL — навигация" }[v]}</option>`).join("")}</select></label>
+      <p class="muted small">Порт назначения берётся из AIS и распознаётся по справочнику UN/LOCODE; сообщение — один раз на рейс.</p>`;
+  } else if (kind === "visit_undeclared") {                                                    // [журнал-заходов] начало
+    html = `<div class="rule-row">${num("hours", "В зоне дольше (часов)", p.hours ?? 6)}
+      <label>Зоны<select name="layer">${["jwc", "ibf", "inl", "any"].map((v) => `<option value="${v}" ${(p.layer || "jwc") === v ? "selected" : ""}>${{ jwc: "JWC", ibf: "IBF", inl: "INL", any: "любые" }[v]}</option>`).join("")}</select></label></div>
+      <p class="muted small">Заход отмечается «Заявлено» во вкладке «Журнал».</p>`;          // [журнал-заходов] конец
   } else if (kind === "incident") {
     const on = new Set(p.kinds || ["distress", "sart", "mob", "epirb", "aground"]);
     html = num("radius_nm", "В радиусе (мор. миль)", p.radius_nm ?? 50)
@@ -1277,6 +1294,11 @@ async function openRuleForm(r = null) {
 }
 $("#rule-kind").onchange = (e) => renderRuleParams(e.target.value);
 $("#btn-rule-new").onclick = () => openRuleForm();
+$("#btn-rules-defaults").onclick = async () => {
+  const { added } = await api("/api/rules/defaults", { method: "POST" });
+  toast("Стандартные правила", added ? `Добавлено: ${added}` : "Все на месте");
+  await loadRules();
+};
 $("#btn-rule-cancel").onclick = () => { $("#rule-form").hidden = true; };
 
 $("#rule-form").onsubmit = async (e) => {
@@ -1285,7 +1307,8 @@ $("#rule-form").onsubmit = async (e) => {
   const kind = form.kind.value;
   const params = {};
   const fd = new FormData(form);
-  for (const k of ["scope", "distance_nm", "hours", "op", "knots", "minutes", "radius_nm"]) if (fd.has(k)) params[k] = fd.get(k);
+  for (const k of ["scope", "distance_nm", "hours", "op", "knots", "minutes", "radius_nm", "layer"]) if (fd.has(k)) params[k] = fd.get(k);
+  if (kind === "vessel_event") params.groups = fd.getAll("groups");
   if (kind === "nav_status") params.statuses = fd.getAll("statuses").map(Number);
   if (kind === "incident") params.kinds = fd.getAll("kinds");
   if (kind === "destination") params.eta = fd.has("eta");
@@ -1476,19 +1499,65 @@ function renderIncidents() {
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
         .addTo(incidentsLayer));
   }
-  $("#inc-list").innerHTML = shown.slice(0, 300).map((it, i) => `
-    <li class="inc ${it.severity}${it.test ? " test" : ""}" data-i="${i}">
-      <span class="inc-dot" style="background:${(INC_STYLE[it.kind] || INC_STYLE.safety).color}">${(INC_STYLE[it.kind] || INC_STYLE.safety).glyph}</span>
-      <div><div class="inc-title">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
-        <div class="muted small">${esc(it.name || "MMSI " + it.mmsi)} · <span class="nowrap">${ago(it.last_seen)}</span>${it.lat == null ? " · без координат" : ""}</div>
-        ${it.text ? `<div class="small inc-text">«${esc(it.text)}»</div>` : ""}
-        ${/^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
-          isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : ""}</div></li>`).join("")
-    || `<li class="empty muted">За выбранный период ничего нет. Сообщения о происшествиях редкие — они появятся здесь, как только придут.</li>`;
-  $$("#inc-list .inc").forEach((el) => el.onclick = (e) => {
+  renderFeed();
+}
+
+/* ------------------------------------------------------------------ лента */
+// Одна лента: уведомления (что сообщили ваши правила, системные сообщения) + происшествия в мире.
+// События с вашими судами приходят только как уведомления правил, чтобы не дублировались.
+state.feedFilter = "all";
+const SYSTEM_KINDS = new Set(["circular", "system"]);
+
+function feedItems() {
+  const f = state.feedFilter, unreadOnly = $("#n-unread-only").checked;
+  const mine = new Set(allVessels().map((v) => v.mmsi));
+  const out = [];
+  if (f !== "world") {
+    for (const n of state.notifications) {
+      const sys = SYSTEM_KINDS.has(n.kind) || !n.mmsi;
+      if ((f === "mine" && sys) || (f === "system" && !sys)) continue;
+      out.push({ type: "notif", ts: n.ts, n, sys });
+    }
+  }
+  if ((f === "all" || f === "world") && !unreadOnly) {
+    for (const it of state.inc?.items || []) {
+      if (!incVisible(it) || mine.has(it.mmsi)) continue;
+      out.push({ type: "inc", ts: it.last_seen, it });
+    }
+  }
+  return out.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 400);
+}
+
+function feedRow(x, i) {
+  if (x.type === "notif") {
+    const n = x.n;
+    const [first, ...rest] = (n.body || "").split("\n");
+    return `<li class="feed-item ${n.severity} ${n.is_read ? "read" : "unread"}" data-i="${i}">
+      <div class="fi-meta"><span class="fi-src">${x.sys ? "система" : "мои суда"}</span> · ${fmtTime(n.ts)}</div>
+      <div class="fi-title">${esc(n.title)}</div>
+      ${first ? `<div class="fi-body">${esc(first)}</div>` : ""}
+      ${rest.length ? `<div class="fi-rule muted small">${esc(rest.join(" "))}</div>` : ""}</li>`;
+  }
+  const it = x.it, st = INC_STYLE[it.kind] || INC_STYLE.safety;
+  const link = /^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
+    isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : "";
+  return `<li class="feed-item ${it.severity} read world" data-i="${i}">
+    <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span> · ${fmtTime(it.last_seen)}${
+      it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</div>
+    <div class="fi-title">${esc(it.label)}: ${esc(it.name || "MMSI " + it.mmsi)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
+    ${it.text ? `<div class="fi-body">«${esc(it.text)}»</div>` : ""}${link}</li>`;
+}
+
+function renderFeed() {
+  const items = feedItems();
+  const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Правила».",
+    world: "Происшествий в мире за выбранный период нет.", system: "Системных сообщений нет." }[state.feedFilter];
+  $("#feed-list").innerHTML = items.map(feedRow).join("") || `<li class="empty muted">${empty}</li>`;
+  $$("#feed-list .feed-item").forEach((el) => el.onclick = (e) => {
     if (e.target.closest("a")) return;           // ссылка на статью открывается сама
-    const it = shown[+el.dataset.i];
-    if (ownMarker(it)) { selectVessel(it.mmsi, true); return; }
+    const x = items[+el.dataset.i];
+    if (x.type === "notif") { openNotification(x.n); return; }
+    const it = x.it;
     if (it.lat == null) return;
     map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
     setTimeout(() => incidentsLayer.eachLayer((m) => {
@@ -1496,6 +1565,12 @@ function renderIncidents() {
     }), 900);
   });
 }
+$$("#panel-events [data-feed]").forEach((b) => b.onclick = () => {
+  state.feedFilter = b.dataset.feed;
+  $$("#panel-events [data-feed]").forEach((x) => x.classList.toggle("on", x === b));
+  if (state.feedFilter === "world" || state.feedFilter === "all") loadIncidents(true).catch(() => {});
+  renderFeed();
+});
 function renderScreeningStatus(sc) {
   const c = sc.sanctions?.counts || {};
   $("#screen-status").innerHTML = `<b>Санкции и задержания</b>
@@ -1587,21 +1662,12 @@ function setUnread(n) {
   state.unread = n;
   $("#bell-count").hidden = !n;
   $("#bell-count").textContent = n > 99 ? "99+" : n;
-  for (const id of ["#tab-alert-count", "#seg-alert-count"]) { $(id).hidden = !n; $(id).textContent = n; }
+  $("#tab-alert-count").hidden = !n;
+  $("#tab-alert-count").textContent = n;
   document.title = n ? `(${n}) WarRisk Monitor` : "WarRisk Monitor";
 }
 
-function renderNotifications() {
-  const list = $("#notif-list");
-  list.innerHTML = state.notifications.map((n) => `
-    <li class="notif ${n.severity} ${n.is_read ? "read" : "unread"}" data-id="${n.id}">
-      <div class="notif-time">${fmtTime(n.ts)}</div>
-      <div class="notif-title">${esc(n.title)}</div>
-      ${n.body ? `<div class="notif-body">${esc(n.body)}</div>` : ""}
-    </li>`).join("") || `<li class="empty muted">Уведомлений нет</li>`;
-  $$(".notif", list).forEach((el) => el.onclick = () => openNotification(state.notifications.find((n) => n.id === +el.dataset.id)));
-}
-
+function renderNotifications() { renderFeed(); }
 async function openNotification(n) {
   if (!n) return;
   if (!n.is_read) {
@@ -1763,14 +1829,8 @@ function switchTab(name) {
 }
 $$(".tab").forEach((t) => t.onclick = () => switchTab(t.dataset.tab));
 
-// «События»: переключатель между уведомлениями и происшествиями
-function showSeg(name) {
-  $$(".seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.seg === name));
-  $$(".seg-body").forEach((el) => { el.hidden = el.id !== `seg-${name}`; });
-  if (name === "incidents") loadIncidents(true).catch(() => {});
-}
-$$(".seg-btn").forEach((b) => b.onclick = () => showSeg(b.dataset.seg));
-$("#btn-bell").onclick = () => { switchTab("events"); showSeg("alerts"); };
+$("#events-days").onchange = (e) => { $("#events-xlsx").href = `/api/notifications/export?days=${e.target.value}`; };
+$("#btn-bell").onclick = () => { switchTab("events"); $("#panel-events [data-feed=mine]").click(); };
 
 // Источники зон (циркуляры JWC, IBF, INL) — окно поверх карты, открывается из шапки
 function openCirculars() {

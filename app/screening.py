@@ -251,7 +251,7 @@ def _position(imo: str, mmsi: Optional[str]) -> tuple[Optional[float], Optional[
 def screen_fleets() -> int:
     """Суда флотов, впервые найденные в санкционных списках или задержаниях: происшествие + уведомление."""
     from .ais import incidents
-    from . import alerts
+    from . import rules
     hits = 0
     for imo, mmsis in _fleet_vessels().items():
         found = lookup(imo)
@@ -268,8 +268,7 @@ def screen_fleets() -> int:
             lines = [f"{s['label']}: {s['program']}" + (f", с {s['listed_on']}" if s["listed_on"] else "") for s in fresh]
             incidents.record("sanction", mmsi, name=fresh[0]["name"], lat=lat, lon=lon, text="; ".join(lines)[:300],
                              source=", ".join(s["label"] for s in fresh), extra=f"IMO {imo}")
-            db.notify("incident", "critical", f"{alerts.vessel_label(mmsi)}: в санкционных списках ({len(fresh)})",
-                      "\n".join(lines), mmsi)
+            rules.on_vessel_event(mmsi, "sanction", "critical", f"в санкционных списках ({len(fresh)})", "\n".join(lines))
             hits += 1
         for d in found["detentions"]:
             key = f"detention:{d['detained_on']}"
@@ -281,7 +280,7 @@ def screen_fleets() -> int:
                 text = _detention_text(d)
                 lat, lon = _port_position(d["port"])
                 incidents.record("detention", mmsi, lat=lat, lon=lon, text=text, source="Tokyo MoU", extra=f"IMO {imo}")
-                db.notify("incident", "warning", f"{alerts.vessel_label(mmsi)}: задержание в порту", text, mmsi)
+                rules.on_vessel_event(mmsi, "detention", "warning", "задержание в порту", text)
                 hits += 1
     return hits
 

@@ -310,8 +310,8 @@ def _sync_story(v: dict, rows: list[dict], notify: bool) -> None:
         db.execute("UPDATE incidents SET kind=?, text=?, source=?, extra=?, count=?, last_seen=? WHERE id=?",
                    (kind, best["title"], best["outlet"] or "", best["url"], len(rows), db.now_iso(), iid))
         if notify and kind == "news_risk" and old["kind"] != "news_risk":
-            db.notify("incident", "warning", f"{v['name'] or 'MMSI ' + v['mmsi']}: новости: тревожное",
-                      best["title"], v["mmsi"])
+            from . import rules
+            rules.on_vessel_event(v["mmsi"], "news_risk", "warning", "новости: тревожное", best["title"])
     else:
         lat, lon = _position(v["mmsi"])
         iid = incidents.record(kind, v["mmsi"], name=v["name"] or None, lat=lat, lon=lon, text=best["title"],

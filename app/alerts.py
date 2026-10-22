@@ -24,7 +24,7 @@ def vessel_label(mmsi: str) -> str:
     return f"{name} (MMSI {mmsi})" if name else f"MMSI {mmsi}"
 
 
-def _fmt_duration(since_iso: str) -> str:
+def fmt_duration(since_iso: str) -> str:
     try:
         delta = datetime.now(timezone.utc) - datetime.fromisoformat(since_iso)
     except ValueError:
@@ -37,14 +37,14 @@ def _fmt_duration(since_iso: str) -> str:
     return f"{hours / 24:.1f} сут"
 
 
-def _eta_text(distance_nm: float, sog: Optional[float]) -> str:
+def eta_text(distance_nm: float, sog: Optional[float]) -> str:
     if not sog or sog < 0.5:
         return ""
     hours = distance_nm / sog
     return f", при {sog:.0f} уз. ≈ {hours:.1f} ч" if hours < 72 else f", при {sog:.0f} уз. ≈ {hours / 24:.1f} сут"
 
 
-def _zone_suffix(zone_id: str) -> str:
+def zone_note(zone_id: str) -> str:
     z = zones.index().get(zone_id)
     if not z:
         return ""
@@ -59,18 +59,10 @@ def _zone_suffix(zone_id: str) -> str:
     return ""
 
 
-def _enter_severity(zone_id: str) -> str:
-    """Вход в зону JWC, WOA и HRA — критично; ERZ и INL — предупреждение."""
-    z = zones.index().get(zone_id)
-    p = z.props if z else {}
-    if p.get("layer") == "inl" or (p.get("layer") == "ibf" and p.get("category") in ("erz", "erz2")):
-        return "warning"
-    return "critical"
-
-
 def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
             initial: bool = False, reason: str = "") -> list[int]:
-    """Пересчитывает статусы судна. Возвращает id созданных уведомлений."""
+    """Пересчитывает статусы судна в зонах (для карты, списка флота и журнала заходов).
+    Возвращает id зон, где статус изменился. Уведомления об этом шлют правила (rules.py)."""
     idx = zones.index()
     result = idx.evaluate(lon, lat, config.WARN_DISTANCE_NM)
     # сезонные ограничения INL вне сезона не действуют
@@ -78,7 +70,6 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
     for zid in off_season:
         del result[zid]
     old = {r["zone_id"]: r for r in db.query("SELECT * FROM zone_state WHERE mmsi=?", (mmsi,))}
-    label = vessel_label(mmsi)
     created: list[int] = []
     now = db.now_iso()
 
@@ -97,41 +88,13 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
         prev = old.get(zid, {}).get("status")
         cur = result.get(zid, {}).get("status")
         dist = result.get(zid, {}).get("distance_nm")
-        zname = zones.zone_name(zid)
-        suffix = _zone_suffix(zid)
 
         if cur == prev:
             if cur == "near":
                 db.execute("UPDATE zone_state SET distance_nm=? WHERE mmsi=? AND zone_id=?", (dist, mmsi, zid))
             continue
 
-        if cur == "inside":
-            if initial:
-                title = f"{label}: находится в зоне «{zname}»"
-                body = "Судно уже было в зоне на момент начала отслеживания." + suffix
-            elif reason:
-                title = f"{label}: теперь в зоне «{zname}»"
-                body = reason + suffix
-            else:
-                title = f"{label}: ВХОД в зону «{zname}»"
-                body = f"Позиция {lat:.4f}, {lon:.4f}." + suffix
-            created.append(db.notify("zone_enter", _enter_severity(zid), title, body, mmsi, zid))
-        elif prev == "inside":
-            dur = _fmt_duration(old[zid]["since"])
-            if not zones.in_effect(zid):
-                title = f"{label}: сезонное ограничение «{zname}» закончилось"
-                body = "Судно по-прежнему в этом районе, но до следующего сезона ограничение не действует."
-            elif reason:
-                title = f"{label}: зона «{zname}» больше не действует для судна"
-                body = reason
-            else:
-                title = f"{label}: ВЫХОД из зоны «{zname}»"
-                body = f"Позиция {lat:.4f}, {lon:.4f}. Время в зоне: {dur}." if dur else ""
-            created.append(db.notify("zone_exit", "info", title, body, mmsi, zid))
-        elif cur == "near" and prev is None:
-            title = f"{label}: приближается к зоне «{zname}»"
-            body = f"До границы ≈ {dist:.0f} мор. миль{_eta_text(dist or 0, sog)}." + suffix
-            created.append(db.notify("zone_near", "warning", title, body, mmsi, zid))
+        created.append(zid)          # уведомления о входе/выходе/подходе шлют правила (rules.py)
 
         zone_log.on_change(mmsi, zid, prev, cur, lat, lon, now, initial, bool(reason) or not zones.in_effect(zid))  # [журнал-заходов]
 
@@ -148,11 +111,13 @@ def process(mmsi: str, lon: float, lat: float, sog: Optional[float] = None,
 
 
 def reevaluate_all(reason: str) -> int:
-    """После смены циркуляра пересчитываем все суда; уведомления — с пояснением причины."""
-    rows = db.query("SELECT mmsi, lat, lon, sog FROM ais_state WHERE lat IS NOT NULL")
+    """После смены циркуляра пересчитываем статусы всех судов; о новых зонах сообщат правила."""
+    rows = db.query("SELECT mmsi, lat, lon, sog, nav FROM ais_state WHERE lat IS NOT NULL")
     count = 0
+    from . import rules
     for r in rows:
         count += len(process(r["mmsi"], r["lon"], r["lat"], r["sog"], reason=reason))
+        rules.on_position(r["mmsi"], r["lat"], r["lon"], r["sog"], r.get("nav"))   # правила сообщат о новых зонах
     # зоны, которых больше нет в списке, удаляем из состояния
     known = {z.id for z in zones.index().zones}
     for r in db.query("SELECT DISTINCT zone_id FROM zone_state"):
@@ -174,22 +139,3 @@ def vessel_status(mmsi: str) -> dict:
     }
 
 
-def check_stale() -> int:
-    """Уведомление, если от судна давно нет AIS (бесплатный AIS бывает с дырами в покрытии)."""
-    limit_h = config.STALE_AIS_HOURS
-    n = 0
-    rows = db.query("SELECT DISTINCT a.mmsi, a.ts, a.stale_notified FROM ais_state a "
-                    "JOIN vessels v ON v.mmsi=a.mmsi WHERE a.ts IS NOT NULL")
-    now = datetime.now(timezone.utc)
-    for r in rows:
-        try:
-            age_h = (now - datetime.fromisoformat(r["ts"])).total_seconds() / 3600
-        except ValueError:
-            continue
-        if age_h > limit_h and not r["stale_notified"]:
-            db.notify("ais_stale", "warning", f"{vessel_label(r['mmsi'])}: нет данных AIS {age_h:.0f} ч",
-                      "Судно вне зоны покрытия береговых станций или выключило AIS. "
-                      "Статус по зонам показан на момент последней позиции.", r["mmsi"])
-            db.execute("UPDATE ais_state SET stale_notified=1 WHERE mmsi=?", (r["mmsi"],))
-            n += 1
-    return n

@@ -15,6 +15,7 @@ import secrets
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -421,6 +422,7 @@ def _vessel_dict(v: dict) -> dict:
 @api
 async def api_fleets(request: Request):
     user = _user(request)
+    rules.ensure_defaults(user)                # новый пользователь сразу получает стандартные правила
     fleets = access.fleets(user)
     for f in fleets:
         f["vessels"] = [_vessel_dict(v) for v in db.query(
@@ -670,13 +672,25 @@ async def api_rules(request: Request):
                           r["severity"], db.now_iso()))
         return JSONResponse({"ok": True, "id": cur.lastrowid})
     from .ais import incidents as inc
+    rules.ensure_defaults(user)
+    standard = {(kind, name) for name, kind, _, _ in rules.DEFAULTS}
     items = []
-    for row in db.query("SELECT * FROM rules WHERE owner=? ORDER BY id DESC", (user,)):
+    for row in db.query("SELECT * FROM rules WHERE owner=? ORDER BY id", (user,)):
         r = {**row, "params": json.loads(row["params"])}
-        items.append({**r, "description": rules.describe(r), "target_name": _rule_target_name(r)})
+        items.append({**r, "description": rules.describe(r), "target_name": _rule_target_name(r),
+                      "standard": (r["kind"], r["name"]) in standard})
+    missing = len(standard - {(i["kind"], i["name"]) for i in items})
     kinds = {k: v["label"] for k, v in inc.KINDS.items() if k not in inc.VESSEL_KINDS}
     kinds = {k: v for k, v in kinds.items() if k not in inc.ANOMALY_KINDS}       # [подозрительное-поведение]
-    return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES, "incident_kinds": kinds})
+    return JSONResponse({"items": items, "kinds": rules.KINDS, "nav": rules.NAV_NAMES, "incident_kinds": kinds,
+                         "event_groups": {g: label for g, (label, _) in rules.EVENT_GROUPS.items()},
+                         "defaults_missing": missing})
+
+
+@api
+async def api_rules_defaults(request: Request):
+    """«Вернуть стандартные правила»: добавить те стандартные, которых у пользователя сейчас нет."""
+    return JSONResponse({"ok": True, "added": rules.ensure_defaults(_user(request), force=True)})
 
 
 @api
@@ -756,6 +770,45 @@ async def api_notifications(request: Request):
     for r in rows:
         r["zone_name"] = zones.zone_name(r["zone_id"]) if r["zone_id"] else None
     return JSONResponse({"items": rows, "unread": _unread(user)})
+
+
+@api
+async def api_notifications_export(request: Request):
+    """Журнал событий в Excel: все уведомления пользователя за период (?days=30)."""
+    user = _user(request)
+    try:
+        days = max(1, min(int(request.query_params.get("days") or 30), 3650))
+    except ValueError:
+        days = 30
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+
+    def make() -> bytes:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+        rows = db.query(f"SELECT n.* FROM notifications n WHERE n.ts > ? AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 20000",
+                        (since, user, user, user))
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Журнал событий"
+        ws.append(["Время (UTC)", "Важность", "Источник", "Судно", "MMSI", "Событие", "Подробности"])
+        for c in ws[1]:
+            c.font = Font(bold=True)
+        sev = {"critical": "критично", "warning": "предупреждение", "info": "информация"}
+        for r in rows:
+            title = r["title"] or ""
+            vessel, _, what = title.partition(": ") if r["mmsi"] else ("", "", title)
+            ws.append([r["ts"][:16].replace("T", " "), sev.get(r["severity"], r["severity"]),
+                       "система" if r["kind"] in ("circular", "system") or not r["mmsi"] else "правило",
+                       vessel, r["mmsi"] or "", what or title, (r["body"] or "").replace("\n", " ")])
+        for col, w in zip("ABCDEFG", (17, 14, 10, 30, 11, 45, 80)):
+            ws.column_dimensions[col].width = w
+        import io
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+    data = await asyncio.to_thread(make)
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=events.xlsx"})
 
 
 @api
@@ -906,21 +959,12 @@ async def _maintenance_loop(stop: asyncio.Event):
     while not stop.is_set():
         try:
             ingest.cleanup_trails()
-            alerts.check_stale()
             incidents.cleanup()
-            rules.periodic()
+            await asyncio.to_thread(rules.periodic)      # первый раз разбирает справочник портов (несколько секунд)
             try:                                                     # [подозрительное-поведение]
                 await asyncio.to_thread(anomalies.check_fleet)       # [подозрительное-поведение]
             except Exception:  # noqa: BLE001                          [подозрительное-поведение]
                 log.exception("Ошибка проверки подозрительного поведения")  # [подозрительное-поведение]
-            try:                                                     # [журнал-заходов]
-                zone_log.remind()                                    # [журнал-заходов]
-            except Exception:  # noqa: BLE001                          [журнал-заходов]
-                log.exception("Ошибка напоминаний журнала заходов")  # [журнал-заходов]
-            try:      # в потоке: первый раз скачивает и разбирает справочник портов (несколько секунд)
-                await asyncio.to_thread(destination.check_fleet)
-            except Exception:  # noqa: BLE001 — справочник портов мог не скачаться
-                log.exception("Ошибка проверки пунктов назначения")
             db.cleanup_notifications()
             now = time.time()
             for ip in [ip for ip, ts in _failed.items() if not ts or now - max(ts) > 900]:
@@ -956,6 +1000,11 @@ async def lifespan(app):
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=16, thread_name_prefix="work"))
     db.connect()
     zones.load_active()
+    for u in access.all_usernames():           # стандартные правила уведомлений — у каждого пользователя
+        try:
+            rules.ensure_defaults(u)
+        except Exception:  # noqa: BLE001
+            log.exception("Стандартные правила для %s не созданы", u)
     try:                                                             # [журнал-заходов]
         zone_log.backfill()                                          # [журнал-заходов]
     except Exception:  # noqa: BLE001                                  [журнал-заходов]
@@ -1000,6 +1049,7 @@ routes = [
     Route("/api/screening", api_screening, methods=["GET", "POST"]),
     Route("/api/rules", api_rules, methods=["GET", "POST"]),
     Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),
+    Route("/api/rules/defaults", api_rules_defaults, methods=["POST"]),
     Route("/api/areas", api_areas, methods=["GET", "POST"]),
     Route("/api/areas/{aid:int}", api_area, methods=["PATCH", "DELETE"]),
     Route("/api/ports/{pid:int}", api_port),
@@ -1024,6 +1074,7 @@ routes = [
     Route("/api/track/{mmsi}", api_track),
     Route("/api/notifications", api_notifications),
     Route("/api/notifications/read", api_notifications_read, methods=["POST"]),
+    Route("/api/notifications/export", api_notifications_export),
     Route("/api/circulars", api_circulars),
     Route("/api/circulars/check", api_circular_check, methods=["POST"]),
     Route("/api/circulars/upload", api_circular_upload, methods=["POST"]),

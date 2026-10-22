@@ -8,7 +8,7 @@
 
 Путь до порта строится по сети морских путей (searoute): через каналы и проливы, в обход суши.
 Это типовой маршрут, а не план рейса, поэтому зоны по пути — оценка, а зоны в самом порту —
-надёжный признак: по ним уведомляем (check_fleet).
+надёжный признак: по ним уведомляет правило «Порт назначения в зоне риска» (rules.py).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import re
 import threading
 from typing import Optional
 
-from .. import config, db, zones
+from .. import config, zones
 from ..geo import countries as ne
 
 log = logging.getLogger(__name__)
@@ -248,26 +248,6 @@ def for_vessel(mmsi: str, lat: Optional[float], lon: Optional[float], dest: Opti
     return out
 
 
-def check_fleet() -> int:
-    """Уведомление один раз на рейс: судно флота идёт в порт, который лежит в зоне риска."""
-    sent = 0
-    for r in db.query("SELECT DISTINCT a.mmsi, a.destination, a.eta, a.lat, a.lon, "
-                      "COALESCE(NULLIF(v.name, ''), a.ais_name) AS name "
-                      "FROM vessels v JOIN ais_state a ON a.mmsi=v.mmsi WHERE a.destination IS NOT NULL"):
-        port = resolve_near(r["destination"], r["lat"], r["lon"])
-        if not port:
-            continue
-        zs = _zones_at(port["lon"], port["lat"], PORT_TOLERANCE_NM)
-        if not zs:
-            continue
-        key = f"{port['code']}|{r['destination']}"
-        cur = db.execute("INSERT OR IGNORE INTO dest_alerts(mmsi, dest_key, created_at) VALUES(?,?,?)",
-                         (r["mmsi"], key, db.now_iso()))
-        if not cur.rowcount:
-            continue
-        names = ", ".join(zones.zone_name(z) for z in zs)
-        db.notify("dest_zone", "warning", f"{r['name'] or 'MMSI ' + r['mmsi']}: идёт в порт в зоне риска",
-                  f"Пункт назначения «{r['destination']}» — {port['name']} ({port['country']})"
-                  f"{', ETA ' + r['eta'] if r['eta'] else ''}. Порт в зоне: {names}.", r["mmsi"])
-        sent += 1
-    return sent
+def zones_at_port(port: dict) -> list[str]:
+    """Зоны, в которых лежит порт (для правила «Порт назначения в зоне риска»)."""
+    return _zones_at(port["lon"], port["lat"], PORT_TOLERANCE_NM)

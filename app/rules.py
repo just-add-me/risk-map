@@ -7,11 +7,16 @@
 только запоминается (иначе новое правило выдало бы лавину уведомлений). Состояние по каждой
 паре «правило — судно» хранится в rule_state.
 
+Все уведомления о судах идут через правила. У каждого пользователя есть стандартный набор
+(DEFAULTS: вход/выход/подход к зоне, нет AIS, событие с судном, порт назначения в зоне, незаявленный
+заход) — его можно менять и удалять, кнопкой «Вернуть стандартные» восстановить (ensure_defaults).
+
 Точки входа:
   on_position(mmsi, …)   — новая позиция судна флота (из ingest.position);
   on_static(mmsi, …)     — сменились назначение или ETA (из ingest.static_data);
-  on_incident(row)       — новое происшествие (из ais.incidents.record);
-  periodic()             — раз в 10 минут: «нет сигнала AIS».
+  on_incident(row)       — новое происшествие рядом (из ais.incidents.record);
+  on_vessel_event(…)     — событие с самим судном флота: авария, санкции, задержание, новости…;
+  periodic()             — раз в 10 минут: «нет сигнала AIS», порт назначения в зоне, незаявленный заход.
 """
 from __future__ import annotations
 
@@ -22,7 +27,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-from . import access, alerts, db, zones
+from . import access, alerts, config, db, zones
 from .geo.zone_index import ZoneIndex
 
 log = logging.getLogger(__name__)
@@ -41,6 +46,19 @@ KINDS = {
     "port_arrival": "Заход в порт",
     "port_departure": "Выход из порта",
     "incident": "Происшествие рядом",
+    "vessel_event": "Событие с судном",
+    "dest_zone": "Порт назначения в зоне риска",
+    "visit_undeclared": "Заход в зону не заявлен",        # [журнал-заходов]
+}
+# Группы событий с судном (правило vessel_event): группа → (название, виды происшествий)
+EVENT_GROUPS = {
+    "distress": ("аварийный сигнал (бедствие, SART, MOB, EPIRB)", {"distress", "sart", "mob", "epirb"}),
+    "status": ("на мели / не управляется", {"aground", "nuc"}),
+    "sanction": ("санкции", {"sanction"}),
+    "detention": ("задержание в порту", {"detention"}),
+    "news_risk": ("тревожные новости", {"news_risk"}),
+    "news": ("прочие новости о судне", {"news"}),
+    "anomaly": ("подозрительное поведение", {"dark", "sts", "spoof", "identity"}),   # [подозрительное-поведение]
 }
 PORT_IN_NM = 3.0       # «в порту»: ближе 3 миль к точке порта и почти без хода
 PORT_OUT_NM = 5.0      # «вышел»: дальше 5 миль (запас, чтобы не мигало у границы)
@@ -86,6 +104,20 @@ def validate(kind: str, params: dict, owner: str) -> dict:
     elif kind in ("port_arrival", "port_departure"):
         pid = params.get("port_id")
         p["port_id"] = int(pid) if pid not in (None, "", "any") else None
+    elif kind == "vessel_event":
+        gs = [g for g in params.get("groups") or [] if g in EVENT_GROUPS]
+        if not gs:
+            raise ValueError("Отметьте хотя бы одно событие")
+        p["groups"] = gs
+    elif kind == "dest_zone":
+        scope = str(params.get("scope") or "layer:any")
+        if scope not in ("layer:any", "layer:jwc", "layer:ibf", "layer:inl"):
+            raise ValueError("Выберите слой зон")
+        p["scope"] = scope
+    elif kind == "visit_undeclared":                                                          # [журнал-заходов] начало
+        p["hours"] = _num(params.get("hours"), 0.5, 720, "Часов в зоне без заявки")
+        layer = str(params.get("layer") or "jwc")
+        p["layer"] = layer if layer in ("jwc", "ibf", "inl", "any") else "jwc"                # [журнал-заходов] конец
     elif kind == "incident":
         p["radius_nm"] = _num(params.get("radius_nm"), 1, 300, "Радиус, мили")
         from .ais import incidents
@@ -129,6 +161,13 @@ def describe(r: dict) -> str:
     if k in ("port_arrival", "port_departure"):
         port = _port(p["port_id"])["name"] if p["port_id"] is not None and _port(p["port_id"]) else "любой порт"
         return ("заход в " if k == "port_arrival" else "выход из: ") + port
+    if k == "vessel_event":
+        return "с судном: " + ", ".join(EVENT_GROUPS[g][0] for g in p["groups"] if g in EVENT_GROUPS)
+    if k == "dest_zone":
+        return "порт назначения лежит в " + scope_name(p["scope"], r["owner"])
+    if k == "visit_undeclared":                                                               # [журнал-заходов] начало
+        lay = {"any": "любой зоне", "jwc": "зоне JWC", "ibf": "зоне IBF", "inl": "районе INL"}[p["layer"]]
+        return f"в {lay} дольше {p['hours']:g} ч, а заход не отмечен «заявлено»"         # [журнал-заходов] конец
     if k == "incident":
         from .ais import incidents
         return (f"в {p['radius_nm']:g} милях: "
@@ -219,11 +258,12 @@ def _recipients(r: dict, via: list[int]) -> set[str]:
     return users
 
 
-def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str] = None) -> None:
-    title = f"{alerts.vessel_label(mmsi)}: {r['name']}"
-    body = f"{detail}\nПравило: {describe(r)}."
+def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str] = None,
+         title: Optional[str] = None, severity: Optional[str] = None) -> None:
+    title = f"{alerts.vessel_label(mmsi)}: {title or r['name']}"
+    body = f"{detail}\nПравило «{r['name']}»: {describe(r)}."
     for user in _recipients(r, via):
-        db.notify("rule", r["severity"], title, body, mmsi, zone_id, username=user)
+        db.notify("rule", severity or r["severity"], title, body, mmsi, zone_id, username=user)
     db.execute("UPDATE rules SET last_fired=?, fired_count=fired_count+1 WHERE id=?", (db.now_iso(), r["id"]))
 
 
@@ -288,33 +328,49 @@ def _nearest_port(lat: float, lon: float, max_nm: float) -> Optional[tuple[int, 
 def _zone_rule(r: dict, mmsi: str, via: list[int], lat: float, lon: float) -> None:
     idx, zs = _scope_zones(r)
     k = r["kind"]
+    st = _state(r["id"], mmsi)
+    raw = (st["value"] or "") if st else ""
+    prev_near_s, _, prev_in_s = raw.partition("|")
+    prev_in = set(filter(None, (prev_in_s if k == "zone_near" else prev_near_s).split(",")))
+    # гистерезис: из зоны не выпускаем, пока судно не отошло от границы на EXIT_HYSTERESIS_NM
+    inside = {z.id for z in zs if idx.contains(z, lon, lat)
+              or (z.id in prev_in and idx.distance_nm(z, lon, lat, config.EXIT_HYSTERESIS_NM) is not None)}
     if k == "zone_near":
         d_max = r["params"]["distance_nm"]
         cur = {}
         for z in zs:
-            if idx.contains(z, lon, lat):
+            if z.id in inside:
                 continue
             d = idx.distance_nm(z, lon, lat, d_max)
             if d is not None:
                 cur[z.id] = d
         cur_ids = set(cur)
+        value = ",".join(sorted(cur_ids)) + "|" + ",".join(sorted(inside))    # «рядом|внутри»
+        prev = set(filter(None, prev_near_s.split(",")))
     else:
-        cur_ids = {z.id for z in zs if idx.contains(z, lon, lat)}
-    st = _state(r["id"], mmsi)
-    _save(r["id"], mmsi, ",".join(sorted(cur_ids)))
+        cur_ids = inside
+        value = ",".join(sorted(cur_ids))
+        prev = prev_in
+    if st is not None and raw == value:
+        return                        # ничего не изменилось; since — время последней смены
+    _save(r["id"], mmsi, value)
     if st is None:                    # первое наблюдение — только запоминаем
         return
-    prev = set(filter(None, (st["value"] or "").split(",")))
     names = {z.id: z.props.get("name", z.id) for z in zs}
     if k == "zone_enter":
         for zid in sorted(cur_ids - prev):
-            fire(r, mmsi, via, f"Вошло в «{names.get(zid, zid)}». Позиция {lat:.4f}, {lon:.4f}.", zid)
+            fire(r, mmsi, via, f"Позиция {lat:.4f}, {lon:.4f}." + alerts.zone_note(zid), zid,
+                 title=f"ВХОД в зону «{names.get(zid, zid)}»")
     elif k == "zone_exit":
         for zid in sorted(prev - cur_ids):
-            fire(r, mmsi, via, f"Вышло из «{names.get(zid, zid)}». Позиция {lat:.4f}, {lon:.4f}.", zid)
+            dur = alerts.fmt_duration(st["since"]) if st.get("since") else ""
+            fire(r, mmsi, via, f"Позиция {lat:.4f}, {lon:.4f}." + (f" Время в зоне: {dur}." if dur else ""), zid,
+                 title=f"ВЫХОД из зоны «{names.get(zid, zid)}»")
     else:
-        for zid in sorted(cur_ids - prev):
-            fire(r, mmsi, via, f"До «{names.get(zid, zid)}» ≈ {cur[zid]:.0f} мор. миль.", zid)
+        sog = (db.query_one("SELECT sog FROM ais_state WHERE mmsi=?", (mmsi,)) or {}).get("sog")
+        for zid in sorted(cur_ids - prev - prev_in):    # только подход снаружи, а не выход из зоны
+            fire(r, mmsi, via, f"До границы ≈ {cur[zid]:.0f} мор. миль{alerts.eta_text(cur[zid], sog)}."
+                 + alerts.zone_note(zid), zid, title=f"приближается к зоне «{names.get(zid, zid)}»")
 
 
 def _nav_rule(r: dict, mmsi: str, via: list[int], nav: Optional[int]) -> None:
@@ -380,7 +436,7 @@ def _safe(fn: Callable, *args) -> None:
     try:
         fn(*args)
     except Exception:  # noqa: BLE001 — ошибка в одном правиле не должна ломать приём AIS
-        log.exception("Ошибка правила %s", getattr(args[0], "get", lambda k: None)("id"))
+        log.exception("Ошибка правила %s", args[0].get("id") if args and isinstance(args[0], dict) else "")
 
 
 def on_position(mmsi: str, lat: float, lon: float, sog: Optional[float], nav: Optional[int]) -> None:
@@ -438,7 +494,9 @@ def on_incident(inc: dict) -> None:
 
 
 def periodic() -> None:
-    """«Нет сигнала AIS»: проверяем раз в 10 минут."""
+    """Раз в 10 минут: «нет сигнала AIS», порт назначения в зоне, незаявленный заход."""
+    _safe(lambda: _dest_rules())
+    _safe(lambda: _visit_rules())        # [журнал-заходов]
     now = datetime.now(timezone.utc)
     for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='ais_lost'"):
         r = _load(row)
@@ -458,3 +516,112 @@ def periodic() -> None:
             elif not st["fired"]:
                 _save(r["id"], mmsi, "lost", fired=1)
                 fire(r, mmsi, via, f"Последний сигнал AIS {hours:.0f} ч назад.")
+
+
+# --------------------------------------------------------------------------- события с самим судном
+def event_group(kind: str) -> Optional[str]:
+    return next((g for g, (_, kinds) in EVENT_GROUPS.items() if kind in kinds), None)
+
+
+def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str) -> None:
+    """Происшествие с судном флота (из incidents.record, screening, news): правила vessel_event.
+    Важность — самого события (санкции критичны, обычная новость — информация)."""
+    group = event_group(kind)
+    if not group:
+        return
+    for r, via in rules_for(mmsi, ("vessel_event",)):
+        if group in r["params"]["groups"]:
+            _safe(lambda rr, v: fire(rr, mmsi, v, text or "Сообщение получено по AIS.", title=label.lower(),
+                                     severity=severity), r, via)
+
+
+# --------------------------------------------------------------------------- порт назначения в зоне
+def _dest_rules() -> None:
+    from .ais import destination
+    for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='dest_zone'"):
+        r = _load(row)
+        layer = r["params"]["scope"][6:]
+        for mmsi, via in targets_of(r):
+            a = db.query_one("SELECT destination, eta, lat, lon FROM ais_state WHERE mmsi=?", (mmsi,))
+            if not a or not a["destination"]:
+                continue
+            port = destination.resolve_near(a["destination"], a["lat"], a["lon"])
+            zs = [z for z in (destination.zones_at_port(port) if port else [])
+                  if layer == "any" or (zones.index().get(z).props.get("layer", "jwc") if zones.index().get(z) else "") == layer]
+            value = f"{port['code']}|{a['destination']}" if port and zs else "-"
+            st = _state(r["id"], mmsi)
+            if st is not None and st["value"] == value:
+                continue
+            _save(r["id"], mmsi, value)
+            if value != "-":
+                fire(r, mmsi, via, f"Пункт назначения «{a['destination']}» — {port['name']} ({port['country']})"
+                     f"{', ETA ' + a['eta'] if a['eta'] else ''}. Порт в зоне: {', '.join(zones.zone_name(z) for z in zs)}.")
+
+
+# --------------------------------------------------------------------------- незаявленный заход [журнал-заходов] начало
+def _visit_rules() -> None:
+    now = datetime.now(timezone.utc)
+    for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='visit_undeclared'"):
+        r = _load(row)
+        layer = r["params"]["layer"]
+        for mmsi, via in targets_of(r):
+            for v in db.query("SELECT * FROM zone_visits WHERE mmsi=? AND exited_at IS NULL AND declared=0", (mmsi,)):
+                if layer != "any" and (v["layer"] or "") != layer:
+                    continue
+                hours = (now - datetime.fromisoformat(v["entered_at"])).total_seconds() / 3600
+                key = f"{mmsi}#visit{v['id']}"
+                if hours < r["params"]["hours"] or _state(r["id"], key):
+                    continue
+                _save(r["id"], key, "fired", fired=1)
+                fire(r, mmsi, via, f"Судно в зоне «{v['zone_name']}» с {v['entered_at'][:16].replace('T', ' ')} UTC "
+                     f"({hours:.0f} ч). Отметьте заявку во вкладке «Журнал».", v["zone_id"],
+                     title=f"заход в «{v['zone_name']}» не заявлен")
+# [журнал-заходов] конец
+
+
+# --------------------------------------------------------------------------- стандартные правила
+DEFAULTS = [
+    ("Вход в зону риска", "zone_enter", {"scope": "layer:any"}, "critical"),
+    ("Выход из зоны", "zone_exit", {"scope": "layer:any"}, "info"),
+    ("Подход к зоне", "zone_near", {"scope": "layer:any", "distance_nm": 50}, "warning"),
+    ("Нет сигнала AIS", "ais_lost", {"hours": 24}, "warning"),
+    ("Событие с судном", "vessel_event", {"groups": list(EVENT_GROUPS)}, "warning"),
+    ("Порт назначения в зоне риска", "dest_zone", {"scope": "layer:any"}, "warning"),
+    ("Заход в зону не заявлен", "visit_undeclared", {"hours": 6, "layer": "jwc"}, "warning"),   # [журнал-заходов]
+]
+
+
+def ensure_defaults(user: str, force: bool = False) -> int:
+    """Стандартные правила пользователя: создаются один раз (удалённые не возвращаются сами);
+    force=True — «Вернуть стандартные»: добавить те, которых сейчас нет. Возвращает, сколько добавлено."""
+    key = f"rules_defaults:{user}"
+    if not force and db.query_one("SELECT 1 FROM kv WHERE key=?", (key,)):
+        return 0
+    have = {(r["kind"], r["name"]) for r in db.query("SELECT kind, name FROM rules WHERE owner=?", (user,))}
+    added = 0
+    for name, kind, params, severity in DEFAULTS:
+        if (kind, name) in have:
+            continue
+        cur = db.execute("INSERT INTO rules(owner, name, enabled, kind, target_type, target, params, audience, severity, "
+                         "created_at) VALUES(?,?,1,?,'all',NULL,?,'me',?,?)",
+                         (user, name, kind, json.dumps(validate(kind, params, user)), severity, db.now_iso()))
+        _quiet_start(_load(db.query_one("SELECT * FROM rules WHERE id=?", (cur.lastrowid,))))
+        added += 1
+    db.execute("INSERT INTO kv(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+               (key, db.now_iso()))
+    return added
+
+
+def _quiet_start(r: dict) -> None:
+    """Новое стандартное правило не должно разом сообщить о том, что уже было известно раньше:
+    «нет AIS» у давно молчащих судов и уже напомненные незаявленные заходы отмечаем как сообщённые."""
+    if r["kind"] == "ais_lost":
+        now = datetime.now(timezone.utc)
+        for mmsi, _ in targets_of(r):
+            pos = db.query_one("SELECT ts FROM ais_state WHERE mmsi=? AND ts IS NOT NULL", (mmsi,))
+            if pos and (now - datetime.fromisoformat(pos["ts"])).total_seconds() / 3600 >= r["params"]["hours"]:
+                _save(r["id"], mmsi, "lost", fired=1)
+    elif r["kind"] == "visit_undeclared":                                                     # [журнал-заходов] начало
+        for mmsi, _ in targets_of(r):
+            for v in db.query("SELECT id FROM zone_visits WHERE mmsi=? AND reminded=1", (mmsi,)):
+                _save(r["id"], f"{mmsi}#visit{v['id']}", "fired", fired=1)                # [журнал-заходов] конец
