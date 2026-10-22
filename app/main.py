@@ -151,6 +151,7 @@ async def api_status(request: Request):
     active = db.query_one("SELECT ref, issued, activated_at, source_url FROM circulars WHERE status='active'")
     unread = _unread(_user(request))
     return JSONResponse({
+        "server_time": time.time(),
         "ais": {"mode": config.AIS_MODE, "traffic": traffic.stats(), **({k: v for k, v in aisstream.status.items()}
                                             if config.AIS_MODE == "aisstream" else {})},
         "circular": {"active": active, "check": {**pipeline.state,

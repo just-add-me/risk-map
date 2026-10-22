@@ -471,7 +471,13 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   background: var(--bg); cursor: pointer; }
 .feed-item.critical { border-left-color: var(--red); } .feed-item.warning { border-left-color: var(--amber); }
 .feed-item.info { border-left-color: var(--accent); }
-.feed-item.unread { background: var(--bg-3); }
+/* новое — светлая карточка с яркой полосой и точкой; прочитанное — тёмное и приглушённое */
+.feed-item.unread { background: #1b3d4c; box-shadow: inset 0 0 0 1px rgba(79, 195, 217, .18); }
+.feed-item.unread .fi-src::before { content: "● "; color: var(--accent); }
+.feed-item.read:not(.world) { background: #08141a; border-left-color: #2a3b43; }
+.feed-item.read:not(.world) > * { opacity: .55; }
+.feed-item.read:not(.world) .fi-event { color: var(--text); }
+.feed-item.read:not(.world):hover > * { opacity: .85; }
 .fi-meta { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--muted); margin-bottom: 4px; }
 .fi-meta .inc-dot { width: 16px; height: 16px; font-size: 9px; line-height: 16px; }
 .fi-src { text-transform: uppercase; letter-spacing: .05em; }
@@ -565,3 +571,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 @media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } }
 .lg-n { margin-left: auto; padding-left: 8px; font: 11px/1 var(--mono); font-style: normal; color: var(--muted); }
 .lg-btn.off .inc-dot { text-decoration: none; }
+#chip-clock { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 900px) { #chip-clock { display: none; } }
+.tour-card p.tour-ex { margin-top: -4px; padding: 7px 10px; border-left: 2px solid var(--accent); background: rgba(79,195,217,.08); border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text); }
+.tour-ex b { color: var(--accent); font-weight: 600; }
