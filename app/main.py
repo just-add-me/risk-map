@@ -267,19 +267,8 @@ async def api_traffic_ship(request: Request):
 # [журнал-заходов] начало
 @api
 async def api_zone_visits(request: Request):
-    """Журнал заходов в зоны: ?days=90&layer=jwc&fleet=1&format=xlsx; POST {id, declared, note} — отметка заявки."""
+    """Журнал пребываний в зонах: ?days=90&layer=jwc&fleet=1&format=xlsx."""
     user = _user(request)
-    if request.method == "POST":
-        body = await request.json()
-        try:
-            if "vessel_skip" in body:          # «заявки не нужны» для всех заходов судна (или отмена)
-                n = zone_log.set_vessel_skip(user, str(body.get("mmsi")), bool(body["vessel_skip"]))
-                return JSONResponse({"ok": True, "updated": n})
-            zone_log.mark(user, int(body.get("id")), str(body.get("status") or "unmarked"),
-                          body.get("note") if "note" in body else None)
-        except (ValueError, TypeError) as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-        return JSONResponse({"ok": True})
     q = request.query_params
     try:
         days = max(1, min(int(q.get("days") or 90), 3650))
@@ -290,11 +279,8 @@ async def api_zone_visits(request: Request):
     if q.get("format") == "xlsx":
         data = await asyncio.to_thread(zone_log.xlsx, rows)
         return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        headers={"Content-Disposition": "attachment; filename=zone-visits.xlsx"})
-    skip = sorted(zone_log.skip_vessels() & access.mmsis(user))
-    return JSONResponse({"items": rows, "remind_hours": zone_log.REMIND_HOURS,
-                         "skip_vessels": [{"mmsi": x, "name": alerts.vessel_label(x)} for x in skip]},
-                        headers={"Cache-Control": "no-store"})
+                        headers={"Content-Disposition": "attachment; filename=zone-stays.xlsx"})
+    return JSONResponse({"items": rows, "merge_gap_h": zone_log.MERGE_GAP_H}, headers={"Cache-Control": "no-store"})
 # [журнал-заходов] конец
 
 
@@ -1051,7 +1037,7 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/incidents", api_incidents),
-    Route("/api/zone-visits", api_zone_visits, methods=["GET", "POST"]),       # [журнал-заходов]
+    Route("/api/zone-visits", api_zone_visits),       # [журнал-заходов]
     Route("/api/screening", api_screening, methods=["GET", "POST"]),
     Route("/api/rules", api_rules, methods=["GET", "POST"]),
     Route("/api/rules/{rid:int}", api_rule, methods=["PATCH", "DELETE"]),

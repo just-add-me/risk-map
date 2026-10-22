@@ -658,15 +658,15 @@ def test_zone_log():
     zone_log.opened("273000777", zid, 1.0, 2.0, "2026-10-01T00:00:00+00:00")
     zone_log.opened("273000777", zid, 1.0, 2.0)                      # повтор, пока открыт — не дублируется
     zone_log.closed("273000777", zid, 1.5, 2.5, "2026-10-02T12:00:00+00:00")
+    # вернулось в ту же зону через 2 часа — то же пребывание; через двое суток — новое
+    zone_log.opened("273000777", zid, ts="2026-10-02T14:00:00+00:00")
+    zone_log.closed("273000777", zid, ts="2026-10-02T20:00:00+00:00")
+    zone_log.opened("273000777", zid, ts="2026-10-05T00:00:00+00:00")
+    zone_log.closed("273000777", zid, ts="2026-10-05T06:00:00+00:00")
     rows = [r for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"]
-    assert len(rows) == 1 and rows[0]["hours"] == 36.0 and rows[0]["days"] == 2 and rows[0]["can_edit"]
-    assert rows[0]["status"] == "unmarked"                     # заявлен ли заход — не знаем
-    zone_log.mark(config.ADMIN_USER, rows[0]["id"], "declared")
-    assert [r["status"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"] == ["declared"]
-    zone_log.set_vessel_skip(config.ADMIN_USER, "273000777", True)   # годовое покрытие: заявки не нужны
-    zone_log.opened("273000777", zid, 1.0, 2.0)
-    assert [r["status"] for r in zone_log.visits(config.ADMIN_USER, 3650) if r["mmsi"] == "273000777"][0] == "not_required"
-    zone_log.set_vessel_skip(config.ADMIN_USER, "273000777", False)
+    assert len(rows) == 2
+    first = rows[1]
+    assert first["crossings"] == 2 and first["span_h"] == 44.0 and first["inside_h"] == 42.0 and first["days"] == 2
     assert zone_log.xlsx(rows)[:2] == b"PK"
 
 

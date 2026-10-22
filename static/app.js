@@ -1364,10 +1364,6 @@ function renderRuleParams(kind, p = {}) {
     html = `<label>Какие зоны<select name="scope">${["layer:any", "layer:jwc", "layer:ibf", "layer:inl"].map((v) =>
       `<option value="${v}" ${(p.scope || "layer:any") === v ? "selected" : ""}>${{ "layer:any": "любые", "layer:jwc": "JWC — военные риски", "layer:ibf": "IBF — экипаж", "layer:inl": "INL — навигация" }[v]}</option>`).join("")}</select></label>
       <p class="muted small">Порт назначения берётся из AIS и распознаётся по справочнику UN/LOCODE; сообщение — один раз на рейс.</p>`;
-  } else if (kind === "visit_undeclared") {                                                    // [журнал-заходов] начало
-    html = `<div class="rule-row">${num("hours", "В зоне дольше (часов)", p.hours ?? 6)}
-      <label>Зоны<select name="layer">${["jwc", "ibf", "inl", "any"].map((v) => `<option value="${v}" ${(p.layer || "jwc") === v ? "selected" : ""}>${{ jwc: "JWC", ibf: "IBF", inl: "INL", any: "любые" }[v]}</option>`).join("")}</select></label></div>
-      <p class="muted small">Заход отмечается «Заявлено» во вкладке «Журнал».</p>`;          // [журнал-заходов] конец
   } else if (kind === "incident") {
     const on = new Set(p.kinds || ["distress", "sart", "mob", "epirb", "aground"]);
     html = num("radius_nm", "В радиусе (мор. миль)", p.radius_nm ?? 50)
@@ -1929,7 +1925,7 @@ async function refreshAll(forceZones = false) {
     // статус нужен, чтобы понять, изменились ли зоны; остальное грузим параллельно, а не по очереди
     await loadStatus();
     await Promise.all([loadZones(forceZones), loadFleets(), loadNotifications(), loadIncidents().catch(() => {})]);
-    loadZoneLog().catch(() => {});                                 // [журнал-заходов]
+    if ($("#panel-log").classList.contains("active")) loadZoneLog().catch(() => {});   // [журнал-заходов]
     await loadTraffic();                         // после флотов: суда флотов рисуются отдельно
     if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
@@ -1942,60 +1938,28 @@ function logQuery() {
   return q;
 }
 
-// Отметка о заявке: система не знает, заявлен ли заход, — по умолчанию «нет отметки»
-const AP_STATUS = { unmarked: "нет отметки", declared: "заявлено", not_required: "не требуется" };
-
+// Журнал пребываний: входы и выходы одного судна в одной зоне с перерывом меньше суток — одно пребывание
 async function loadZoneLog() {
   const sel = $("#log-fleet"), cur = sel.value;
   sel.innerHTML = `<option value="">Все флоты</option>` + state.fleets.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("");
   sel.value = cur;
   const q = logQuery();
   const d = await api(`/api/zone-visits?${q}`);
-  $("#log-remind-h").textContent = d.remind_hours;
   $("#log-xlsx").href = `/api/zone-visits?${q}&format=xlsx`;
-  const onlyUnmarked = $("#log-unmarked").checked;
-  const items = d.items.filter((v) => !onlyUnmarked || v.status === "unmarked");
-  const late = (v) => v.open && v.status === "unmarked" && v.layer === "jwc" && v.hours >= d.remind_hours;
-  const unmarked = d.items.filter((v) => v.status === "unmarked").length, lateN = d.items.filter(late).length;
-  const cnt = $("#tab-log-count");
-  cnt.hidden = !lateN;
-  cnt.textContent = lateN;
-  $("#log-summary").innerHTML = d.items.length ? `Заходов: <b>${d.items.length}</b> · сейчас в зоне: <b>${d.items.filter((v) => v.open).length}</b>
-    · без отметки: <b class="${unmarked ? "warn" : ""}">${unmarked}</b>${lateN ? ` · <b class="warn">${lateN} в зоне дольше ${d.remind_hours} ч</b>` : ""}` : "";
-  $("#log-skip").innerHTML = d.skip_vessels.length ? `<span class="muted small">Заявки не нужны:</span> ${d.skip_vessels.map((x) =>
-    `<span class="tag">${esc(x.name)} <button class="text-btn" type="button" data-unskip="${esc(x.mmsi)}" title="Снова отслеживать заявки">✕</button></span>`).join(" ")}` : "";
+  const items = d.items;
+  $("#log-summary").innerHTML = items.length ? `Пребываний: <b>${items.length}</b> · сейчас в зоне: <b>${items.filter((v) => v.open).length}</b>
+    · судов: <b>${new Set(items.map((v) => v.mmsi)).size}</b>` : "";
   const fmtH = (h) => h < 48 ? `${Math.round(h)} ч` : `${(h / 24).toFixed(1).replace(".", ",")} сут`;
   $("#log-list").innerHTML = items.map((v) => `
-    <li class="log-item ${v.open ? "open" : ""} ${late(v) ? "late" : ""} st-${v.status}">
-      <div class="log-top"><b>${esc(v.vessel)}</b>
-        <select class="log-mark" data-id="${v.id}" data-mmsi="${esc(v.mmsi)}" ${v.can_edit ? "" : "disabled"}
-          title="${v.can_edit ? "Заявлен ли заход страховщику" : "Отмечать может тот, кто может редактировать флот"}">
-          ${Object.entries(AP_STATUS).map(([k, l]) => `<option value="${k}" ${v.status === k ? "selected" : ""}>${l}</option>`).join("")}
-          <option value="skip_vessel">не требуется — для всех заходов судна</option>
-        </select></div>
+    <li class="log-item ${v.open ? "open" : ""}">
+      <div class="log-top"><b>${esc(v.vessel)}</b>${v.open ? `<span class="log-now">в зоне сейчас</span>` : ""}</div>
       <div class="small">${esc(v.zone_name)} <span class="muted">· ${esc((v.layer || "").toUpperCase())}</span></div>
-      <div class="small muted">${fmtTime(v.entered_at)}${v.initial ? " (уже было в зоне)" : ""} → ${v.open ? `<b class="zin">в зоне сейчас</b>` : fmtTime(v.exited_at)}
-        · <b>${fmtH(v.hours)}</b>${v.days ? ` · суток к оплате: ${v.days}` : ""}</div>
-      ${v.status !== "unmarked" && v.declared_at ? `<div class="small muted">отмечено «${AP_STATUS[v.status]}» ${fmtTime(v.declared_at)}${v.declared_by ? `, ${esc(v.declared_by)}` : ""}</div>` : ""}
-      ${v.note ? `<div class="small muted">${esc(v.note)}</div>` : ""}
-    </li>`).join("") || `<li class="empty muted">${onlyUnmarked ? "Заходов без отметки нет." : "За выбранный период заходов в зоны этого слоя нет."}</li>`;
-  $$("#log-list .log-mark").forEach((el) => el.onchange = async () => {
-    try {
-      if (el.value === "skip_vessel") {
-        const { updated } = await api("/api/zone-visits", { json: { mmsi: el.dataset.mmsi, vessel_skip: true } });
-        toast("Заявки для судна не нужны", `Новые заходы получат «не требуется», без напоминаний. Отмечено сейчас: ${updated}`);
-      } else {
-        await api("/api/zone-visits", { json: { id: +el.dataset.id, status: el.value } });
-      }
-      loadZoneLog();
-    } catch (e) { toast("Не удалось отметить", e.message, "critical"); loadZoneLog(); }
-  });
-  $$("#log-skip [data-unskip]").forEach((b) => b.onclick = async () => {
-    await api("/api/zone-visits", { json: { mmsi: b.dataset.unskip, vessel_skip: false } });
-    loadZoneLog();
-  });
+      <div class="small muted">${fmtTime(v.entered_at)}${v.initial ? " (уже было в зоне)" : ""} → ${v.open ? "сейчас" : fmtTime(v.exited_at)}
+        · <b>${fmtH(v.span_h)}</b>${v.days ? ` · суток: ${v.days}` : ""}</div>
+      ${v.crossings > 1 ? `<div class="small muted">пересекало границу ${v.crossings} раз, фактически в зоне ${fmtH(v.inside_h)}</div>` : ""}
+    </li>`).join("") || `<li class="empty muted">За выбранный период пребываний в зонах этого слоя нет.</li>`;
 }
-["#log-fleet", "#log-layer", "#log-days", "#log-unmarked"].forEach((id) => $(id).onchange = () => loadZoneLog().catch(() => {}));
+["#log-fleet", "#log-layer", "#log-days"].forEach((id) => $(id).onchange = () => loadZoneLog().catch(() => {}));
 /* [журнал-заходов] конец */
 
 /* ------------------------------------------------------------------ события UI */

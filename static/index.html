@@ -231,12 +231,10 @@
         </div>
       </div>
       <!-- [журнал-заходов] начало: заходы в зоны -->
-      <h3 class="sub-h">Заходы в зоны</h3>
-      <p class="muted small" style="margin-top:0">Заходы судов ваших флотов в зоны — для заявок страховщику на
-        дополнительную премию. Заявлен ли заход, система знать не может: у нового захода «нет отметки», пока вы не
-        отметите «заявлено» или «не требуется». Для судна с годовым покрытием выберите «не требуется — для всех заходов
-        судна». Если судно в зоне JWC дольше <span id="log-remind-h">6</span> ч, а отметки нет, правило
-        «Заход без отметки о заявке» напомнит.</p>
+      <h3 class="sub-h">Пребывания в зонах</h3>
+      <p class="muted small" style="margin-top:0">Когда суда ваших флотов были в зонах — фактический документ для
+        страховщика. Если судно вышло из зоны и вернулось меньше чем через сутки, это одно пребывание: показаны начало,
+        конец, сколько суток и сколько раз судно пересекало границу.</p>
       <div class="log-filters">
         <select id="log-fleet" aria-label="Флот"><option value="">Все флоты</option></select>
         <select id="log-layer" aria-label="Слой зон">
@@ -245,9 +243,7 @@
         <select id="log-days" aria-label="Период">
           <option value="30">30 дней</option><option value="90" selected>90 дней</option><option value="365">Год</option></select>
       </div>
-      <label class="check small"><input type="checkbox" id="log-unmarked"> только без отметки</label>
       <div class="log-summary" id="log-summary"></div>
-      <div class="log-skip" id="log-skip"></div>
       <a class="btn ghost log-xlsx" id="log-xlsx" href="#" download>Скачать Excel</a>
       <ul class="log-list" id="log-list"></ul>
       <!-- [журнал-заходов] конец -->

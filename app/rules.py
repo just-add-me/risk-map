@@ -48,7 +48,6 @@ KINDS = {
     "incident": "Происшествие рядом",
     "vessel_event": "Событие с судном",
     "dest_zone": "Порт назначения в зоне риска",
-    "visit_undeclared": "Заход без отметки о заявке",     # [журнал-заходов]
 }
 # Группы событий с судном (правило vessel_event): группа → (название, виды происшествий)
 EVENT_GROUPS = {
@@ -114,10 +113,6 @@ def validate(kind: str, params: dict, owner: str) -> dict:
         if scope not in ("layer:any", "layer:jwc", "layer:ibf", "layer:inl"):
             raise ValueError("Выберите слой зон")
         p["scope"] = scope
-    elif kind == "visit_undeclared":                                                          # [журнал-заходов] начало
-        p["hours"] = _num(params.get("hours"), 0.5, 720, "Часов в зоне без заявки")
-        layer = str(params.get("layer") or "jwc")
-        p["layer"] = layer if layer in ("jwc", "ibf", "inl", "any") else "jwc"                # [журнал-заходов] конец
     elif kind == "incident":
         p["radius_nm"] = _num(params.get("radius_nm"), 1, 300, "Радиус, мили")
         from .ais import incidents
@@ -165,9 +160,6 @@ def describe(r: dict) -> str:
         return "с судном: " + ", ".join(EVENT_GROUPS[g][0] for g in p["groups"] if g in EVENT_GROUPS)
     if k == "dest_zone":
         return "порт назначения лежит в " + scope_name(p["scope"], r["owner"])
-    if k == "visit_undeclared":                                                               # [журнал-заходов] начало
-        lay = {"any": "любой зоне", "jwc": "зоне JWC", "ibf": "зоне IBF", "inl": "районе INL"}[p["layer"]]
-        return f"в {lay} дольше {p['hours']:g} ч, а у захода нет отметки (заявлено / не требуется)"   # [журнал-заходов] конец
     if k == "incident":
         from .ais import incidents
         return (f"в {p['radius_nm']:g} милях: "
@@ -501,7 +493,6 @@ def on_incident(inc: dict) -> None:
 def periodic() -> None:
     """Раз в 10 минут: «нет сигнала AIS», порт назначения в зоне, незаявленный заход."""
     _safe(lambda: _dest_rules())
-    _safe(lambda: _visit_rules())        # [журнал-заходов]
     now = datetime.now(timezone.utc)
     for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='ais_lost'"):
         r = _load(row)
@@ -565,26 +556,6 @@ def _dest_rules() -> None:
                      zs[0], at=(port["lat"], port["lon"]))
 
 
-# --------------------------------------------------------------------------- незаявленный заход [журнал-заходов] начало
-def _visit_rules() -> None:
-    now = datetime.now(timezone.utc)
-    for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='visit_undeclared'"):
-        r = _load(row)
-        layer = r["params"]["layer"]
-        for mmsi, via in targets_of(r):
-            for v in db.query("SELECT * FROM zone_visits WHERE mmsi=? AND exited_at IS NULL AND declared=0", (mmsi,)):
-                if layer != "any" and (v["layer"] or "") != layer:
-                    continue
-                hours = (now - datetime.fromisoformat(v["entered_at"])).total_seconds() / 3600
-                key = f"{mmsi}#visit{v['id']}"
-                if hours < r["params"]["hours"] or _state(r["id"], key):
-                    continue
-                _save(r["id"], key, "fired", fired=1)
-                fire(r, mmsi, via, f"Судно в зоне «{v['zone_name']}» с {v['entered_at'][:16].replace('T', ' ')} UTC "
-                     f"({hours:.0f} ч). Отметьте во вкладке «Журнал», заявлен ли заход страховщику "
-                     f"(или что заявка не требуется).", v["zone_id"],
-                     title=f"Отметьте заявку на заход «{v['zone_name']}»")
-# [журнал-заходов] конец
 
 
 # --------------------------------------------------------------------------- стандартные правила
@@ -595,7 +566,6 @@ DEFAULTS = [
     ("Нет сигнала AIS", "ais_lost", {"hours": 24}, "warning"),
     ("Событие с судном", "vessel_event", {"groups": list(EVENT_GROUPS)}, "warning"),
     ("Порт назначения в зоне риска", "dest_zone", {"scope": "layer:any"}, "warning"),
-    ("Заход без отметки о заявке", "visit_undeclared", {"hours": 6, "layer": "jwc"}, "warning"),   # [журнал-заходов]
 ]
 
 
@@ -629,7 +599,3 @@ def _quiet_start(r: dict) -> None:
             pos = db.query_one("SELECT ts FROM ais_state WHERE mmsi=? AND ts IS NOT NULL", (mmsi,))
             if pos and (now - datetime.fromisoformat(pos["ts"])).total_seconds() / 3600 >= r["params"]["hours"]:
                 _save(r["id"], mmsi, "lost", fired=1)
-    elif r["kind"] == "visit_undeclared":                                                     # [журнал-заходов] начало
-        for mmsi, _ in targets_of(r):
-            for v in db.query("SELECT id FROM zone_visits WHERE mmsi=? AND reminded=1", (mmsi,)):
-                _save(r["id"], f"{mmsi}#visit{v['id']}", "fired", fired=1)                # [журнал-заходов] конец

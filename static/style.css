@@ -461,12 +461,8 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .log-list { list-style: none; margin: 0; padding: 0; }
 .log-item { padding: 9px 10px; margin-bottom: 6px; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; }
 .log-item.open { border-left-color: var(--amber); }
-.log-item.late { border-left-color: var(--red); background: rgba(255, 90, 78, .06); }
 .log-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.log-mark { max-width: 52%; padding: 3px 4px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
-.log-item.st-declared .log-mark { color: var(--green); } .log-item.st-not_required .log-mark { color: var(--muted); }
-.log-item.st-unmarked .log-mark { color: var(--amber); }
-.log-skip { margin-bottom: 8px; font-size: 12px; } .log-skip .tag { margin: 2px 2px 0 0; }
+.log-now { font-size: 11px; color: var(--amber); white-space: nowrap; }
 .log-item .zin { color: var(--amber); }
 /* [журнал-заходов] конец */
 
