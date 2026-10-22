@@ -80,7 +80,46 @@ def for_map() -> Optional[dict]:
     for f in _raw["features"]:
         geom = _seamless(f.get("display") or f["geometry"])
         feats.append({"type": "Feature", "properties": {**(f.get("properties") or {}), **_label(geom)}, "geometry": geom})
-    return {**_raw, "features": feats, "outlines": _outlines(feats)}
+    outlines = _outlines(feats)
+    for f in feats:
+        f["geometry"] = _slim(f["geometry"], f["properties"].get("layer") or "jwc")
+    for o in outlines:
+        o["geometry"] = _slim(o["geometry"], o["properties"]["layer"])
+    return {**_raw, "features": feats, "outlines": outlines}
+
+
+# Упрощение контуров ТОЛЬКО для карты (проверка «судно в зоне» идёт по точным контурам в индексе):
+# слой → (допуск упрощения, °; мельче какой площади, кв. °, убираем островки и дырки).
+# JWC/IBF: ~0,6 мили — 12-мильные полосы выглядят так же; INL — огромные ледовые районы: ~1,8 мили и без
+# островков меньше ~50 км². Вместе с округлением координат до ~100 м — вдвое меньше точек и данных.
+SLIM = {"jwc": (0.01, 0.001), "ibf": (0.01, 0.001), "inl": (0.03, 0.005)}
+
+
+def _slim(geom: dict, layer: str) -> dict:
+    from shapely.geometry import MultiPolygon, Polygon, mapping, shape
+    from .geo.builder import polygonal
+    tol, min_area = SLIM.get(layer, SLIM["jwc"])
+    try:
+        g = shape(geom)
+        parts = []
+        for p in getattr(g, "geoms", [g]):
+            if p.area < min_area:
+                continue
+            parts.append(Polygon(p.exterior, [h for h in p.interiors if Polygon(h).area >= min_area]))
+        if not parts:
+            return geom
+        g = polygonal(MultiPolygon(parts) if len(parts) > 1 else parts[0])
+        g = polygonal(g.simplify(tol, preserve_topology=True))
+        if g.is_empty:
+            return geom
+        out = json.loads(json.dumps(mapping(g)))
+
+        def rnd(c):
+            return [round(c[0], 3), round(c[1], 3)] if isinstance(c[0], (int, float)) else [rnd(x) for x in c]
+        return {**out, "coordinates": rnd(out["coordinates"])}
+    except Exception:  # noqa: BLE001 — лучше показать точный контур, чем ничего
+        log.exception("Не удалось упростить контур для карты")
+        return geom
 
 
 # Порядок видов внутри слоя: более важный рисуется целиком, из следующих вырезается то, что он уже покрыл
