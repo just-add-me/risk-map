@@ -38,6 +38,8 @@ KINDS = {
     "sanction_new": {"label": "Новое судно в санкционном списке", "severity": "info"},
     "detention": {"label": "Задержание в порту", "severity": "warning"},
 }
+# События «про судно», а не «в точке»: на карте показываются там, где судно сейчас
+VESSEL_KINDS = {"sanction", "sanction_new", "detention"}
 DEVICE_PREFIX = {"970": "sart", "972": "mob", "974": "epirb"}
 NAV_KIND = {6: "aground", 2: "nuc", 14: "sart"}
 KEEP_DAYS = 14
@@ -123,7 +125,13 @@ def cleanup() -> None:
 def recent(days: int = 7) -> list[dict]:
     rows = db.query("SELECT * FROM incidents WHERE last_seen > ? ORDER BY last_seen DESC LIMIT 2000",
                     (_ago(days=max(1, min(days, KEEP_DAYS))),))
+    from . import traffic
     for r in rows:
         r["label"] = KINDS.get(r["kind"], {}).get("label", r["kind"])
         r["severity"] = KINDS.get(r["kind"], {}).get("severity", "info")
+        if r["kind"] in VESSEL_KINDS:
+            r["vessel_bound"] = True
+            pos = traffic.get(r["mmsi"]) or db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (r["mmsi"],))
+            if pos and pos.get("lat") is not None:
+                r["lat"], r["lon"] = pos["lat"], pos["lon"]
     return rows

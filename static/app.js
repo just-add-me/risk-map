@@ -204,15 +204,28 @@ function bindZone(f, layer) {
   layer.on("popupclose", () => { if (state.selectedZone === f.properties.id) selectZone(null); });
 }
 
-function shipIcon(level, cog, selected) {
+// badges — пометки на значке судна (санкции, задержание): едут вместе с судном
+function shipIcon(level, cog, selected, badges = []) {
   const color = { inside: "#ff5a4e", near: "#f5b13d", safe: "#4fd18b" }[level] || "#7f9aa6";
   const size = selected ? 26 : 20;
   const rot = Number.isFinite(cog) ? cog : 0;
   return L.divIcon({
     className: "ship-icon", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
     html: `<svg width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${rot}deg)">
-      <path d="M10 1 16 18 10 14 4 18z" fill="${color}" stroke="${selected ? "#fff" : "#0b1a22"}" stroke-width="${selected ? 1.6 : 1}"/></svg>`,
+      <path d="M10 1 16 18 10 14 4 18z" fill="${color}" stroke="${selected ? "#fff" : "#0b1a22"}" stroke-width="${selected ? 1.6 : 1}"/></svg>
+      ${badges.length ? `<span class="ship-badges">${badges.map((k) =>
+        `<i style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</i>`).join("")}</span>` : ""}`,
   });
+}
+
+// Пометки судна флота по спискам: санкции — всегда, задержание — пока не освобождено или за последние 30 дней
+function vesselBadges(v) {
+  const sc = v.screening || {};
+  const out = [];
+  if (sc.sanctions?.length) out.push("sanction");
+  const det = sc.detentions?.[0];
+  if (det && (!det.released_on || Date.now() - Date.parse(det.detained_on) < 30 * 86400e3)) out.push("detention");
+  return out;
 }
 
 map.on("mousemove", (e) => {
@@ -575,6 +588,7 @@ async function loadFleets() {
   }
   renderFleet();
   renderVessels();
+  if (state.inc?.items.length) renderIncidents();     // санкции судов флота — пометкой на их значках
 }
 
 // Доступ к флоту: список тех, кому открыт, и добавление нового пользователя
@@ -681,7 +695,7 @@ function renderVessels() {
     live.add(v.mmsi);
     const ll = [v.position.lat, v.position.lon];
     const sel = v.mmsi === state.selectedMmsi;
-    const icon = shipIcon(v.status.level, v.position.cog ?? v.position.heading, sel);
+    const icon = shipIcon(v.status.level, v.position.cog ?? v.position.heading, sel, vesselBadges(v));
     let m = markers.get(v.mmsi);
     if (!m) {
       m = L.marker(ll, { icon, zIndexOffset: 1000 }).addTo(vesselsLayer);
@@ -1305,7 +1319,7 @@ function incPopup(it) {
     ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
     ${it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
     <dl class="kv"><dt>MMSI</dt><dd>${esc(it.mmsi)}</dd>
-      ${it.lat != null ? `<dt>Позиция</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
+      ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
       <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>`;
 }
 
@@ -1326,8 +1340,10 @@ function renderIncidents() {
   });
   const shown = inc.items.filter(incVisible);
   incidentsLayer.clearLayers();
+  // санкции и задержания судов флота показаны пометкой на значке самого судна — отдельный значок не нужен
+  const ownMarker = (it) => it.vessel_bound && markers.has(it.mmsi);
   if ($("#inc-show").checked) {
-    shown.filter((it) => it.lat != null).forEach((it) =>
+    shown.filter((it) => it.lat != null && !ownMarker(it)).forEach((it) =>
       L.marker([it.lat, it.lon], { icon: incIcon(it), zIndexOffset: 2000 })
         .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
@@ -1342,6 +1358,7 @@ function renderIncidents() {
     || `<li class="empty muted">За выбранный период ничего нет. Сообщения о происшествиях редкие — они появятся здесь, как только придут.</li>`;
   $$("#inc-list .inc").forEach((el) => el.onclick = () => {
     const it = shown[+el.dataset.i];
+    if (ownMarker(it)) { selectVessel(it.mmsi, true); return; }
     if (it.lat == null) return;
     map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
     setTimeout(() => incidentsLayer.eachLayer((m) => {
