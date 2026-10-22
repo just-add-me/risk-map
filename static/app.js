@@ -1743,8 +1743,20 @@ function markIncRead(it) {
   if (it.read) return;
   it.read = true;
   api("/api/feed/mark", { json: { items: [`i:${it.id}`], read: true } }).catch(() => {});
+  // происшествие с судном вашего флота пришло в ленту уведомлением правила — оно тоже прочитано
+  const notes = state.notifications.filter((n) => !n.is_read && sameEvent(n, it));
+  if (notes.length) {
+    notes.forEach((n) => { n.is_read = 1; });
+    setUnread(Math.max(0, state.unread - notes.length));
+    api("/api/notifications/read", { json: { ids: notes.map((n) => n.id) } }).catch(() => {});
+  }
   renderFeed();
   renderLegend();
+}
+// уведомление «СУДНО (MMSI …): Пропал AIS…» и происшествие того же судна с тем же названием — одно событие
+function sameEvent(n, it) {
+  return n.kind === "rule_event" && n.mmsi === it.mmsi
+    && (n.title || "").toLowerCase().endsWith(": " + (it.label || "").toLowerCase());
 }
 
 function incIcon(it) {
@@ -2109,6 +2121,9 @@ function setUnread(n) {
 function renderNotifications() { renderFeed(); }
 async function openNotification(n) {
   if (!n) return;
+  // то же событие на карте — отдельная метка происшествия: она тоже просмотрена и уходит с карты
+  const twins = (state.inc?.items || []).filter((it) => !it.read && sameEvent(n, it));
+  if (twins.length) { twins.forEach(markIncRead); if (!state.inc.showRead) renderIncidents(); }
   if (!n.is_read) {
     await api("/api/notifications/read", { json: { ids: [n.id] } });
     n.is_read = 1;
