@@ -346,7 +346,7 @@ def build(spec: dict, world=None, prev: Optional[dict] = None) -> tuple[dict, li
             logs.append(f"✖ {name}: {exc}")
     fc = {"type": "FeatureCollection", "features": features,
           "properties": {"list_date": spec.get("list_date"), "list_until": spec.get("list_until"),
-                         "source_url": spec.get("source_url"), "built_at": db.now_iso(), "display_v": 1}}
+                         "source_url": spec.get("source_url"), "built_at": db.now_iso(), "display_v": 2}}
     return fc, logs
 
 

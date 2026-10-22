@@ -347,7 +347,7 @@ def _feature(e: dict, extra: dict, geom: BaseGeometry) -> Optional[dict]:
 
 
 def add_display(w: World, feat: dict) -> None:
-    """Контур для карты: зона без суши (полоса ~1 мили у берега остаётся), как на jwla.ai.
+    """Контур для карты: зона без суши, граница идёт по берегу — как на jwla.ai.
 
     Проверки судов идут по полному контуру feature["geometry"] — в него входят речные порты
     (Басра, Херсон), поэтому сушу из него не вычитаем. Внутренние воды и озёра не трогаем:
@@ -358,7 +358,11 @@ def add_display(w: World, feat: dict) -> None:
     if str(props.get("template", "")).startswith("inland_") or props.get("layer") == "inl":
         return
     geom = shape(feat["geometry"])
-    sea = polygonal(w.sea(geom))
+    minx, miny, maxx, maxy = geom.bounds
+    land = w.land_in((minx - 1, miny - 1, maxx + 1, maxy + 1))
+    # суша чуть расширена (~0,6 мили): так закрываются зазоры между соседними странами,
+    # иначе вдоль сухопутных границ остаются тонкие полоски
+    sea = polygonal(geom.difference(land.buffer(0.01))) if not land.is_empty else geom
     if sea.is_empty or sea.area > 0.95 * geom.area:
         return
     sea = polygonal(sea.simplify(0.003, preserve_topology=True))
@@ -395,7 +399,7 @@ def build(spec: dict, world: Optional[World] = None,
             e["needs_review"] = True
     fc = {
         "type": "FeatureCollection",
-        "properties": {"ref": spec.get("ref"), "issued": spec.get("issued"), "display_v": 1},
+        "properties": {"ref": spec.get("ref"), "issued": spec.get("issued"), "display_v": 2},
         "features": features,
     }
     logs.append(f"Построено зон: {len(features)}")

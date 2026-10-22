@@ -25,6 +25,7 @@ LAYER_FILES = {
     "ibf": config.ZONES_DIR / "ibf.geojson",
     "inl": config.ZONES_DIR / "inl.geojson",
 }
+DISPLAY_V = 2              # версия контуров без суши: при изменении способа построения — увеличить
 _lock = threading.RLock()
 _index = ZoneIndex()
 _layers: dict[str, dict] = {}
@@ -84,7 +85,7 @@ def ensure_display() -> None:
     """Один раз дополняет уже построенные слои контуром без суши (новые зоны получают его при построении)."""
     from .geo.builder import World, add_display
     todo = [n for n in ("jwc", "ibf") if (_layers.get(n) or {}).get("features")
-            and not ((_layers[n].get("properties") or {}).get("display_v"))]
+            and (_layers[n].get("properties") or {}).get("display_v", 0) < DISPLAY_V]
     if not todo:
         return
     w = World()
@@ -92,7 +93,7 @@ def ensure_display() -> None:
         fc = json.loads(json.dumps(_layers[name]))
         for feat in fc["features"]:
             add_display(w, feat)
-        fc.setdefault("properties", {})["display_v"] = 1
+        fc.setdefault("properties", {})["display_v"] = DISPLAY_V
         set_layer(name, fc)
         log.info("Слой %s: добавлены контуры без суши", name)
 
