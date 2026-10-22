@@ -303,15 +303,18 @@ function fleetChips(mmsi) {
   return fleetsOf(mmsi).map((f) => `<span class="fleet-chip" style="--fc:${fleetColor(f.id)}">${esc(f.name)}</span>`).join("");
 }
 
-// badges — пометки на значке судна (санкции, задержание): едут вместе с судном; ring — цвет флота
-function shipIcon(level, cog, selected, badges = [], ring = null) {
-  const color = { inside: "#ff5a4e", near: "#f5b13d", safe: "#4fd18b" }[level] || "#7f9aa6";
-  const size = selected ? 26 : 20;
+// Значок судна флота: стрелка залита цветом флота (fill), статус — «лампочка» у кормы:
+// красная — в зоне, жёлтая — приближается, зелёная — вне зон. badges — санкции, задержание, новости.
+const STATUS_COLORS = { inside: "#ff5a4e", near: "#f5b13d", safe: "#4fd18b" };
+function shipIcon(level, cog, selected, badges = [], fill = null) {
+  const status = STATUS_COLORS[level] || "#7f9aa6";
+  const size = selected ? 28 : 23;
   const rot = Number.isFinite(cog) ? cog : 0;
   return L.divIcon({
     className: "ship-icon", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-    html: `${ring ? `<span class="ship-ring" style="border-color:${ring}"></span>` : ""}<svg width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${rot}deg)">
-      <path d="M10 1 16 18 10 14 4 18z" fill="${color}" stroke="${selected ? "#fff" : "#0b1a22"}" stroke-width="${selected ? 1.6 : 1}"/></svg>
+    html: `<svg width="${size}" height="${size}" viewBox="0 0 20 20" style="transform:rotate(${rot}deg)">
+      <path d="M10 1 16 18 10 14 4 18z" fill="${fill || status}" stroke="${selected ? "#fff" : "#0b1a22"}" stroke-width="${selected ? 1.6 : 1}"/>
+      ${fill ? `<circle cx="10" cy="16.6" r="2.9" fill="${status}" stroke="#0b1a22" stroke-width="1"/>` : ""}</svg>
       ${badges.length ? `<span class="ship-badges">${badges.map((k) =>
         `<i style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</i>`).join("")}</span>` : ""}`,
   });
@@ -494,11 +497,12 @@ function renderLegend() {
     cats[c] || { cargo: "Грузовые", tanker: "Танкеры", passenger: "Пассажирские", yacht: "Яхты и прогулочные",
                  fishing: "Рыболовные", service: "Буксиры и служебные", other: "Прочие" }[c], t.on && t.cats.has(c))).join("");
   html += head("fleet", "Суда флота", state.showFleet);
+  html += `<div class="lg-hint">Точка у кормы судна — статус:</div>`;
   html += [["safe", "Вне зон"], ["near", "Приближается"], ["inside", "В зоне"]].map(([lvl, label]) =>
     row(`lvl:${lvl}`, `<i class="dot s-${lvl}"></i>`, label, state.showFleet && state.fleetLevels.has(lvl))).join("");
   if (state.fleets.length > 1) {                    // флоты — цвет кольца вокруг значка судна
-    html += `<div class="lg-title">Флоты (кольцо вокруг судна)</div>`
-      + state.fleets.map((f) => row(`fl:${f.id}`, `<i class="ring-sw" style="border-color:${fleetColor(f.id)}"></i>`,
+    html += `<div class="lg-title">Флоты (цвет судна)</div>`
+      + state.fleets.map((f) => row(`fl:${f.id}`, SHIP_ICON(fleetColor(f.id)),
         f.name + (f.access === "owner" ? "" : ` (от ${f.owner})`), state.showFleet && !state.hiddenFleets.has(f.id))).join("");
   }
   html += `<div class="lg-title">Прочее</div>`
