@@ -65,7 +65,7 @@ const mapCanvas = L.canvas({ padding: 0.5, tolerance: 3 });
 // (несколько обводок с обрезкой по контуру, от широкой и прозрачной к узкой и яркой) и чёткая граница.
 // Зоны у 180-го меридиана разрезаны по нему (так устроен GeoJSON): отрезки, лежащие точно на
 // меридиане 180° (и его копиях), не обводятся и не светятся — иначе виден шов.
-const GLOW = [[18, 0.07], [10, 0.11], [5, 0.16]];        // [ширина, прозрачность] — от края внутрь
+const GLOW = [[14, 0.05], [8, 0.08], [4, 0.13]];         // [ширина, прозрачность] — от края внутрь
 
 mapCanvas._updatePoly = function (layer, closed) {
   const proto = L.Canvas.prototype, o = layer.options;
@@ -223,7 +223,7 @@ function zoneStyle(f) {
   if (t.dash) s.dashArray = t.dash;
   if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.02, glow: 0.35, opacity: 0.6 });   // вне сезона — бледнее
   if (isChanged(p)) Object.assign(s, { weight: s.weight + 0.6, dashArray: "7 4" });     // изменена: пунктир цветом самой зоны
-  if (state.selectedZone === p.id) Object.assign(s, { weight: 2.4, dashArray: null, fillOpacity: 0.2, glow: 2.2 });
+  if (state.selectedZone === p.id) Object.assign(s, { weight: 2.2, dashArray: null, fillOpacity: 0.14, glow: 1.6 });
   return s;
 }
 
