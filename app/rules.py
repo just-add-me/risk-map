@@ -71,7 +71,7 @@ _areas_version = 0
 def validate(kind: str, params: dict, owner: str) -> dict:
     """Приводит параметры к нужному виду; ValueError с понятным текстом — если что-то не так."""
     if kind not in KINDS:
-        raise ValueError("Неизвестный тип правила")
+        raise ValueError("Неизвестный тип уведомления")
     p: dict = {}
     if kind.startswith("zone_"):
         scope = str(params.get("scope") or "")
@@ -257,7 +257,7 @@ def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str]
     Тело уведомления: первая строка — подробности (переносы строк → отдельные предложения), вторая — правило."""
     title = f"{alerts.vessel_label(mmsi)}: {title or r['name']}"
     detail = ". ".join(x.strip().rstrip(".;") for x in (detail or "").splitlines() if x.strip())
-    body = f"{detail}.\nПравило «{r['name']}»: {describe(r)}." if detail else f"Правило «{r['name']}»: {describe(r)}."
+    body = f"{detail}.\nУведомление «{r['name']}»: {describe(r)}." if detail else f"Уведомление «{r['name']}»: {describe(r)}."
     if not at or at[0] is None:
         pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
         at = (pos.get("lat"), pos.get("lon"))

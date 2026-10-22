@@ -1260,9 +1260,9 @@ async function loadShipEvents(el) {
     const own = allVessels().some((v) => v.mmsi === el.dataset.mmsi);
     const note = own ? "" : `<div class="sc-evnote muted small">Судно не в вашем флоте — здесь только общие события:
       аварийные сигналы, посадка на мель, задержания в портах, попадание в санкционные списки. Входы в зоны риска,
-      срабатывания правил, новости и подозрительное поведение появятся после добавления судна во флот.</div>`;
+      ваши уведомления, новости и подозрительное поведение появятся после добавления судна во флот.</div>`;
     box.innerHTML = items.length ? items.map((e, i) => shipEventRow(e, i)).join("") + note
-      : own ? "Событий по этому судну пока нет: здесь появятся входы в зоны риска, срабатывания правил, аварийные сигналы, санкции, задержания и новости."
+      : own ? "Событий по этому судну пока нет: здесь появятся входы в зоны риска, сработавшие уведомления, аварийные сигналы, санкции, задержания и новости."
       : note.replace("здесь только общие события", "событий пока нет. Для таких судов здесь видны только общие события");
     $$(".feed-item", box).forEach((row) => row.onclick = (ev) => {
       if (ev.target.closest("a")) return;
@@ -1291,11 +1291,11 @@ function shipEventRow(e, i) {
   const title = /\(MMSI \d+\): /.test(e.title || "") ? e.title : (e.title || "").replace(/^[^«:]+: /, "");
   const t = splitTitle(title, /\(MMSI \d+\): /.test(title) ? e.mmsi || "x" : null);
   return `<div class="feed-item ${e.severity} read" data-i="${i}">
-    <div class="fi-meta"><span class="fi-src">${SYSTEM_KINDS.has(e.kind) ? "система" : "правило"}</span>${where}<span class="fi-time">${fmtTime(e.ts)}</span></div>
+    <div class="fi-meta"><span class="fi-src">${SYSTEM_KINDS.has(e.kind) ? "система" : "уведомление"}</span>${where}<span class="fi-time">${fmtTime(e.ts)}</span></div>
     <div class="fi-event">${esc(t.event)}</div>
     ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
     ${detailLines(first).length ? `<ul class="fi-lines">${detailLines(first).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
-    ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^(Правило «[^»]*»).*$/s, "$1").replace(/\.$/, ""))}</div>` : ""}</div>`;
+    ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^((?:Правило|Уведомление) «[^»]*»).*$/s, "$1").replace(/^Правило /, "Уведомление ").replace(/\.$/, ""))}</div>` : ""}</div>`;
 }
 
 function zoneLines(inside, near) {
@@ -1499,18 +1499,18 @@ function renderRules() {
       <input type="checkbox" class="ri-toggle" ${r.enabled ? "checked" : ""} title="Включено">
       <div class="ri-main">
         <div class="ri-name"><span class="ri-sev" style="background:${SEV_COLORS[r.severity]}"></span>${esc(r.name)}${
-          r.standard ? ` <span class="tag" title="Стандартное правило: его можно изменить, выключить или удалить">стандартное</span>` : ""}</div>
+          r.standard ? ` <span class="tag" title="Стандартное уведомление: его можно изменить, выключить или удалить">стандартное</span>` : ""}</div>
         <div class="small">${esc(r.description)}</div>
         <div class="muted small">${esc(r.target_name)} · ${r.audience === "fleet" ? "всем, кто видит флот" : "только мне"}
           · ${r.fired_count ? `сработало ${r.fired_count} раз, последний ${ago(r.last_fired)}` : "ещё не срабатывало"}</div>
       </div>
       <div class="ri-actions"><button class="text-btn ri-edit" type="button">Изменить</button>
         <button class="text-btn danger ri-del" type="button" title="Удалить">✕</button></div>
-    </li>`).join("") || `<li class="empty muted">Правил пока нет. Нажмите «+ Новое правило».</li>`;
+    </li>`).join("") || `<li class="empty muted">Уведомлений пока нет. Нажмите «+ Новое уведомление» или добавьте готовый набор.</li>`;
   renderPresets();
   const miss = state.rules.meta?.defaults_missing || 0;
   $("#btn-rules-defaults").hidden = !miss;
-  $("#btn-rules-defaults").textContent = `Вернуть стандартные правила (${miss})`;
+  $("#btn-rules-defaults").textContent = `Вернуть стандартные уведомления (${miss})`;
   $$("#rule-list .rule-item").forEach((el) => {
     const r = items.find((x) => x.id === +el.dataset.id);
     el.querySelector(".ri-toggle").onchange = async (e) => {
@@ -1519,7 +1519,7 @@ function renderRules() {
     };
     el.querySelector(".ri-edit").onclick = () => openRuleForm(r);
     el.querySelector(".ri-del").onclick = async () => {
-      if (!confirm(`Удалить правило «${r.name}»?`)) return;
+      if (!confirm(`Удалить уведомление «${r.name}»?`)) return;
       await api(`/api/rules/${r.id}`, { method: "DELETE" });
       await loadRules();
     };
@@ -1606,7 +1606,7 @@ async function openRuleForm(r = null) {
   form.elements.name.value = r ? r.name : "";
   form.severity.value = r ? r.severity : "warning";
   form.audience.value = r ? r.audience : "me";
-  $("#btn-rule-save").textContent = r ? "Сохранить изменения" : "Создать правило";
+  $("#btn-rule-save").textContent = r ? "Сохранить изменения" : "Создать уведомление";
   form.hidden = false;
   form.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -1648,7 +1648,7 @@ function renderPresets() {
   }).join("");
   $$("[data-preset]", box).forEach((b) => b.onclick = async () => {
     const { added } = await api("/api/rules/preset", { json: { id: b.dataset.preset } });
-    toast("Набор добавлен", `Новых правил: ${added}`);
+    toast("Набор добавлен", `Новых уведомлений: ${added}`);
     await loadRules();
   });
   // правил нет — наборы раскрыты; есть — свёрнуты (раскрыть можно самому)
@@ -1658,7 +1658,7 @@ $("#rule-presets").addEventListener("toggle", () => { state.rules.presetsTouched
 
 $("#btn-rules-defaults").onclick = async () => {
   const { added } = await api("/api/rules/defaults", { method: "POST" });
-  toast("Стандартные правила", added ? `Добавлено: ${added}` : "Все на месте");
+  toast("Стандартные уведомления", added ? `Добавлено: ${added}` : "Все на месте");
   await loadRules();
 };
 $("#btn-rule-cancel").onclick = () => { $("#rule-form").hidden = true; };
@@ -1688,7 +1688,7 @@ $("#rule-form").onsubmit = async (e) => {
   try {
     const id = state.rules.editId;
     await api(id ? `/api/rules/${id}` : "/api/rules", { method: id ? "PATCH" : "POST", json: body });
-    toast(id ? "Правило изменено" : "Правило создано", "Уведомления будут приходить на вкладку «Уведомления»");
+    toast(id ? "Уведомление изменено" : "Уведомление создано", "Сообщения будут приходить в «Ленту» и на колокольчик");
     form.hidden = true;
     await loadRules();
   } catch (err) { toast("Не удалось сохранить", err.message, "critical"); }
@@ -1709,7 +1709,7 @@ function renderAreas() {
       <div class="ri-actions"><button class="text-btn ar-show" type="button">Показать</button>
         <button class="text-btn ar-rename" type="button">Переименовать</button>
         <button class="text-btn danger ar-del" type="button" title="Удалить">✕</button></div></li>`).join("")
-    || `<li class="empty muted">Областей нет. Нарисуйте свою — её можно использовать в правилах «вход/выход/подход к зоне».</li>`;
+    || `<li class="empty muted">Областей нет. Нарисуйте свою — её можно использовать в уведомлениях «вход/выход/подход к зоне».</li>`;
   $$("#area-list .rule-item").forEach((el) => {
     const a = areas.find((x) => x.id === +el.dataset.id);
     const ll = a.geometry.coordinates[0].map(([x, y]) => [y, x]);
@@ -1779,7 +1779,7 @@ $("#btn-draw-done").onclick = async () => {
   ring.push(ring[0]);
   try {
     await api("/api/areas", { json: { name, geometry: { type: "Polygon", coordinates: [ring] } } });
-    toast("Область сохранена", "Её можно выбрать в правилах «вход / выход / подход к зоне»");
+    toast("Область сохранена", "Её можно выбрать в уведомлениях «вход / выход / подход к зоне»");
     stopDraw();
     await loadRules();
   } catch (err) { toast("Не удалось сохранить", err.message, "critical"); }
@@ -1988,7 +1988,7 @@ function feedRow(x, i) {
       ${t.vessel != null ? `<div class="fi-vessel">${t.vessel ? shipLink(t.vessel, t.mmsi) : ""} <span class="muted">MMSI ${esc(t.mmsi)}</span> ${n.mmsi ? fleetChips(n.mmsi) : ""}</div>` : ""}
       ${t.zone ? `<div class="fi-zone">${esc(t.zone)}</div>` : ""}
       ${lines.length ? `<ul class="fi-lines">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}
-      ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^(Правило «[^»]*»).*$/s, "$1").replace(/\.$/, ""))}</div>` : ""}</li>`;
+      ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^((?:Правило|Уведомление) «[^»]*»).*$/s, "$1").replace(/^Правило /, "Уведомление ").replace(/\.$/, ""))}</div>` : ""}</li>`;
   }
   const it = x.it, st = INC_STYLE[it.kind] || INC_STYLE.safety;
   const link = /^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
@@ -2068,7 +2068,7 @@ function renderFeed() {
   $("#panel-events .feed-tools").hidden = state.feedFilter === "trash";
   if (state.feedFilter === "trash") { renderTrash(); return; }
   const items = feedItems();
-  const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Правила».",
+  const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Уведомления».",
     world: "Происшествий в мире за выбранный период нет.", system: "Системных сообщений нет.",
     starred: "Важного пока нет. Нажмите ☆ на карточке события, чтобы оно попало сюда." }[state.feedFilter];
   $("#feed-list").innerHTML = items.map(feedRow).join("") || `<li class="empty muted">${empty}</li>`;
@@ -2602,12 +2602,12 @@ const TOUR = [
     text: "Суда, за которыми вы следите. Добавляйте по одному (MMSI или IMO) или загрузите список из Excel или CSV. "
       + "Флотов может быть несколько, у каждого свой цвет; флотом можно поделиться с коллегой.",
     ex: "заведите флот на каждого клиента-судовладельца и загрузите его список судов одним файлом." },
-  { tab: "rules", title: "Правила",
-    text: "Правила решают, о чём сообщать: вход в зону риска, приближение к ней, заход в порт, смена пункта назначения, пропажа AIS, санкции, задержание. "
-      + "Правило включается для всех судов, одного флота или одного судна. Не знаете, с чего начать, — выберите готовый набор.",
-    ex: "правило «Подход к зоне» за 50 миль предупредит заранее, и клиент успеет заявить заход страховщику." },
+  { tab: "rules", title: "Уведомления",
+    text: "Здесь задаётся, о чём сообщать: вход в зону риска, приближение к ней, заход в порт, смена пункта назначения, пропажа AIS, санкции, задержание. "
+      + "Уведомление включается для всех судов, одного флота или одного судна. Не знаете, с чего начать, — выберите готовый набор.",
+    ex: "уведомление «Подход к зоне» за 50 миль предупредит заранее, и клиент успеет заявить заход страховщику." },
   { tab: "events", title: "Лента",
-    text: "Всё, что произошло: «мои суда» — сработали ваши правила, «в мире» — происшествия с любыми судами, «система» — новые циркуляры и сбои. "
+    text: "Всё, что произошло: «мои суда» — сработали ваши уведомления, «в мире» — происшествия с любыми судами, «система» — новые циркуляры и сбои. "
       + "Новое — светлое, прочитанное — тёмное. Нажатие на событие покажет место на карте, на название судна — откроет его карточку.",
     ex: "утром отфильтруйте «Мои суда» и пройдитесь по светлым карточкам — это всё, что случилось за ночь." },
   { tab: "log", title: "Журнал",

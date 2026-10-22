@@ -807,7 +807,7 @@ async def api_rule(request: Request):
     user = _user(request)
     rid = int(request.path_params["rid"])
     if not db.query_one("SELECT id FROM rules WHERE id=? AND owner=?", (rid, user)):
-        raise ValueError("Правило не найдено")
+        raise ValueError("Уведомление не найдено")
     if request.method == "DELETE":
         db.execute("DELETE FROM rules WHERE id=?", (rid,))
         return JSONResponse({"ok": True})
@@ -856,7 +856,7 @@ async def api_area(request: Request):
     if request.method == "DELETE":
         used = db.query("SELECT name FROM rules WHERE owner=? AND params LIKE ?", (user, f'%"area:{aid}"%'))
         if used:
-            raise ValueError("Область используется в правилах: " + ", ".join(r["name"] for r in used))
+            raise ValueError("Область используется в уведомлениях: " + ", ".join(r["name"] for r in used))
         db.execute("DELETE FROM areas WHERE id=?", (aid,))
     else:
         body = await request.json()
@@ -911,7 +911,7 @@ async def api_notifications_export(request: Request):
             title = r["title"] or ""
             vessel, _, what = title.partition(": ") if r["mmsi"] else ("", "", title)
             ws.append([r["ts"][:16].replace("T", " "), sev.get(r["severity"], r["severity"]),
-                       "система" if r["kind"] in ("circular", "system") or not r["mmsi"] else "правило",
+                       "система" if r["kind"] in ("circular", "system") or not r["mmsi"] else "уведомление",
                        vessel, r["mmsi"] or "", what or title, (r["body"] or "").replace("\n", " ")])
         for col, w in zip("ABCDEFG", (17, 14, 10, 30, 11, 45, 80)):
             ws.column_dimensions[col].width = w

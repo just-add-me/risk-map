@@ -70,7 +70,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="fleet">Флот</button>
       <button class="tab" data-tab="zones">Зоны</button>
-      <button class="tab" data-tab="rules">Правила</button>
+      <button class="tab" data-tab="rules">Уведомления</button>
       <button class="tab" data-tab="events">Лента <span class="tab-count" id="tab-alert-count" hidden></span></button>
       <button class="tab" data-tab="log">Журнал <span class="tab-count" id="tab-log-count" hidden></span></button>
     </nav>
@@ -158,7 +158,7 @@
     <!-- ПРАВИЛА (конструктор отслеживания) -->
     <section class="panel" id="panel-rules">
       <div class="fleet-actions">
-        <button class="btn" type="button" id="btn-rule-new">+ Новое правило</button>
+        <button class="btn" type="button" id="btn-rule-new">+ Новое уведомление</button>
         <button class="btn ghost" type="button" id="btn-area-draw">✎ Нарисовать область</button>
       </div>
       <div class="card draw-hint" id="draw-hint" hidden>
@@ -181,21 +181,21 @@
           <label>Кому сообщать<select name="audience">
             <option value="me">только мне</option><option value="fleet">всем, кто видит флот</option></select></label>
         </div>
-        <p class="muted small">Правило срабатывает, когда условие начинает выполняться. Если оно уже выполнялось
-          в момент создания правила, уведомления не будет — до следующей смены.</p>
+        <p class="muted small">Уведомление приходит, когда условие начинает выполняться. Если оно уже выполнялось
+          в момент создания, сообщения не будет — до следующей смены.</p>
         <div class="row"><button class="btn" type="submit" id="btn-rule-save">Сохранить</button>
           <button class="text-btn" type="button" id="btn-rule-cancel">Отмена</button></div>
       </form>
       <details class="card presets" id="rule-presets">
-        <summary>Готовые наборы правил</summary>
-        <p class="muted small">Добавьте набор под свою задачу — правила появятся в списке ниже, их можно поменять или удалить.</p>
+        <summary>Готовые наборы уведомлений</summary>
+        <p class="muted small">Добавьте набор под свою задачу — уведомления появятся в списке ниже, их можно поменять или удалить.</p>
         <div id="preset-list"></div>
       </details>
-      <h3 class="sub-h">Правила уведомлений</h3>
+      <h3 class="sub-h">Ваши уведомления</h3>
       <p class="muted small" style="margin-top:0">Всё, о чём сообщает колокольчик и что попадает в «Ленту» по вашим
-        судам, задаётся здесь. Стандартные правила можно изменить, выключить или удалить.</p>
+        судам, задаётся здесь. Стандартные уведомления можно изменить, выключить или удалить.</p>
       <ul class="rule-list" id="rule-list"></ul>
-      <button class="text-btn" type="button" id="btn-rules-defaults" hidden>Вернуть стандартные правила</button>
+      <button class="text-btn" type="button" id="btn-rules-defaults" hidden>Вернуть стандартные уведомления</button>
       <h3 class="sub-h">Мои области
         <label class="check small"><input type="checkbox" id="areas-show" checked> на карте</label></h3>
       <ul class="rule-list" id="area-list"></ul>
@@ -232,7 +232,7 @@
           аварийный сигнал или сменившие статус на «на мели» / «не управляется» (видны только в зоне береговых станций).
           Санкционные списки и задержания Tokyo MoU — раз в сутки. Новости о судах флотов — раз в 6 часов из Google News
           и Bing News; одинаковые статьи собраны в одну, отбор по ключевым словам, возможен шум.
-          О событиях с вашими судами сообщают правила (вкладка «Правила»).</p>
+          О событиях с вашими судами сообщают уведомления, настроенные во вкладке «Уведомления».</p>
         <div id="screen-status"></div>
         <button class="btn ghost" type="button" id="btn-screen-refresh" style="margin-top:8px">Обновить санкционные списки сейчас</button>
       </details>
