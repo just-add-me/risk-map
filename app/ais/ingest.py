@@ -46,16 +46,23 @@ def resolve_imo(imo: str, mmsi: str) -> int:
 
 
 def backfill_from_traffic(mmsi: str) -> None:
-    """Если судно уже есть в общем потоке AIS — сразу берём его данные, не ждём нового сообщения."""
+    """Если судно уже есть в общем потоке AIS — сразу берём его данные, не ждём нового сообщения.
+    Сейчас не видно — паспорт и последняя позиция (со своим временем) из справочника всех судов."""
+    from . import registry
     s = traffic.get(mmsi)
+    if not s or s.get("lat") is None:
+        old = registry.get(mmsi)
+        if old:
+            s = {**old, **{k: v for k, v in (s or {}).items() if v is not None}}
     if not s:
         return
     static_data(mmsi, name=s.get("name"), imo=s.get("imo"), callsign=s.get("callsign"),
                 ship_type=s.get("ship_type"), destination=s.get("destination"), length=s.get("length"),
                 beam=s.get("beam"), draught=s.get("draught"), eta=s.get("eta"))
     if s.get("lat") is not None:
+        ts = datetime.fromtimestamp(s["ts"], timezone.utc).replace(microsecond=0).isoformat() if s.get("ts") else None
         position(mmsi, s["lat"], s["lon"], sog=s.get("sog"), cog=s.get("cog"), heading=s.get("heading"),
-                 source="aisstream", ais_name=s.get("name"), nav=s.get("nav"))
+                 ts=ts, source="aisstream", ais_name=s.get("name"), nav=s.get("nav"))
 
 
 def _dist_nm(lat1, lon1, lat2, lon2) -> float:

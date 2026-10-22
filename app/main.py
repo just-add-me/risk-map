@@ -585,7 +585,7 @@ def _add_vessel(fid: int, mmsi: str, imo: str, name: str, hin: str = "") -> str:
     if not mmsi and not imo:
         raise ValueError("Укажите MMSI или IMO")
     if not mmsi:
-        mmsi = traffic.find_imo(imo) or ingest.PENDING + imo
+        mmsi = traffic.find_imo(imo) or registry.find_imo(imo) or ingest.PENDING + imo
     old = db.query_one("SELECT id FROM vessels WHERE fleet_id=? AND (mmsi=? OR (? <> '' AND imo=?))", (fid, mmsi, imo, imo))
     if old:
         if hin:                                   # судно уже есть — допишем номер корпуса
