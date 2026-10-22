@@ -97,8 +97,8 @@ def _queries(name: str, imo: str) -> list[tuple[str, str]]:
     imo_q = f'"IMO {imo}" OR "IMO: {imo}"'
     q = [("google", _google(imo_q + when)),
          ("bing", "https://www.bing.com/news/search?q=" + quote_plus(imo_q) + "&format=rss")]
-    if name and len(name) >= 5:
-        words = " (tanker OR vessel OR ship OR carrier OR cargo)"
+    if name and len(re.sub(r"\W", "", name)) >= 4:
+        words = " (tanker OR vessel OR ship OR carrier OR cargo OR yacht OR superyacht)"
         q.append(("google", _google(f'"{name}"' + words + when)))
         q.append(("bing", "https://www.bing.com/news/search?q=" + quote_plus(f'"{name}"' + words) + "&format=rss"))
     return q
@@ -110,9 +110,31 @@ def _name_re(name: str) -> re.Pattern:
                       re.I)
 
 
+VESSEL_WORDS = (r"superyacht|yacht|vessel|ship|tanker|carrier|freighter|bulker|boat|ferry|trawler|"
+                r"m/?v|m/?t|m/?y|s/?y|судн\w*|танкер\w*|яхт\w*")
+
+
 def mentions(text: str, name: str, imo: str) -> bool:
-    return imo in text or bool(name and len(name) >= 5 and _name_re(name).search(text)
-                               and re.search(rf"\b(?:{MARITIME})", text, re.I))
+    """IMO в тексте, или название судна рядом со «судовым» словом (до 4 слов от него) или в кавычках.
+    Просто «название + где-то морское слово» мало: у «ENERGY», «DREAM» находились статьи про энергетику."""
+    if imo in text:
+        return True
+    if not name or len(re.sub(r"\W", "", name)) < 4:
+        return False
+    nm = _name_re(name).pattern
+    vw = rf"(?<!\bto )(?:{VESSEL_WORDS})\b"            # «to ship oil» — глагол, а не судно
+    near = rf"\b{vw}\W+(?:[\w’'\-]+\W+){{0,4}}?({nm})|({nm})\W+(?:[\w’'\-]+\W+){{0,4}}?{vw}"
+    quoted = rf"[\"“”«'‘]({nm})[\"“”»'’]"
+    single = len(re.split(r"[\s\-]+", name.strip())) == 1
+    for pat in (quoted, near):
+        for m in re.finditer(pat, text, re.I):
+            start = next(m.start(g) for g in range(1, (m.re.groups or 0) + 1) if m.group(g))
+            # однословное название сразу после слова с заглавной — часть чужого названия («Century Dream»)
+            prev = re.search(r"([A-Za-zА-Яа-яЁё]+)\W{1,2}$", text[max(0, start - 30):start])
+            if single and prev and prev.group(1)[0].isupper() and not re.fullmatch(VESSEL_WORDS, prev.group(1), re.I):
+                continue
+            return True
+    return False
 
 
 def relevant(item: dict, name: str, imo: str) -> bool:
