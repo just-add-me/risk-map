@@ -568,7 +568,8 @@ function portCard(p, d) {
       <div><span>У причала</span><b>${d.status.moored}</b></div>
       <div><span>На якоре</span><b>${d.status.anchored}</b></div></div>
       ${cats ? `<div class="pc-cats">${cats}</div>` : ""}
-      ${near ? `<div class="pc-list"><div class="muted small pc-h">Суда рядом — ${d.ships.length}, ближние сверху</div>${near}</div>`
+      ${near ? `<div class="pc-list"><div class="muted small pc-h">${d.ships_total > d.ships.length
+          ? `Ближайшие ${d.ships.length} из ${d.ships_total}` : `Суда рядом — ${d.ships.length}`}, по расстоянию</div>${near}</div>`
         : `<div class="sc-foot">В 5 милях судов по AIS нет: порт может быть вне зоны береговых станций, или суда выключили AIS.</div>`}
       ${wide ? `<div class="pc-list"><div class="muted small pc-h">Ближайшие в радиусе ${d.wide_nm} миль</div>${wide}</div>` : ""}`
     : `<div class="sc-foot">Загружаю суда рядом…</div>`}
