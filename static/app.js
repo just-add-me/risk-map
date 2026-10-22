@@ -907,7 +907,12 @@ async function selectVessel(mmsi, fly) {
   renderFleet();
   renderVessels();
   trackLayer.clearLayers();
-  if (!v || !v.position) { toast("Позиция ещё не получена", "Ждём первое сообщение AIS от этого судна."); return; }
+  if (!v) return;
+  if (!v.position) {                     // вне покрытия AIS: карточка с паспортом из справочника, без позиции
+    if (/^\d+$/.test(mmsi)) openTrafficShip(mmsi, map.getCenter());
+    else toast("Позиция ещё не получена", "Ждём первое сообщение AIS от этого судна.");
+    return;
+  }
   if (fly) map.flyTo([v.position.lat, v.position.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
   if (shipPanel.isOpen() && shipPanel.mmsi === mmsi) return;
   setTimeout(() => openFleetCard(v), fly ? 850 : 0);
