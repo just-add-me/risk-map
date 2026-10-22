@@ -474,10 +474,10 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 /* новое — светлая карточка с яркой полосой и точкой; прочитанное — тёмное и приглушённое */
 .feed-item.unread { background: #1b3d4c; box-shadow: inset 0 0 0 1px rgba(79, 195, 217, .18); }
 .feed-item.unread .fi-src::before { content: "● "; color: var(--accent); }
-.feed-item.read:not(.world) { background: #08141a; border-left-color: #2a3b43; }
-.feed-item.read:not(.world) > * { opacity: .55; }
-.feed-item.read:not(.world) .fi-event { color: var(--text); }
-.feed-item.read:not(.world):hover > * { opacity: .85; }
+.feed-item.read { background: #08141a; border-left-color: #2a3b43; }
+.feed-item.read > * { opacity: .55; }
+.feed-item.read .fi-event { color: var(--text); }
+.feed-item.read:hover > * { opacity: .85; }
 .fi-meta { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--muted); margin-bottom: 4px; }
 .fi-meta .inc-dot { width: 16px; height: 16px; font-size: 9px; line-height: 16px; }
 .fi-src { text-transform: uppercase; letter-spacing: .05em; }
@@ -584,7 +584,8 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .fi-act[data-act=del]:hover { color: var(--red); }
 .fi-star.on { color: #ffd166; opacity: 1; }
 .feed-item.starred { box-shadow: inset 0 0 0 1px rgba(255, 209, 102, .45); }
-.feed-item.read:not(.world) > .fi-meta { opacity: 1; }
-.feed-item.read:not(.world) > .fi-meta > :not(.fi-acts) { opacity: .55; }
+.feed-item.read > .fi-meta { opacity: 1; }
+.feed-item.read > .fi-meta > :not(.fi-acts) { opacity: .55; }
 @media (hover: none) { .fi-act { opacity: .8; } }
 .fi-src { white-space: nowrap; }
+.lg-read { background: #4b5d66 !important; font-size: 10px; }

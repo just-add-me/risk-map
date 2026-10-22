@@ -71,7 +71,7 @@ def _unread(user: str) -> int:
 
 
 def _marks(user: str) -> dict[str, dict]:
-    return {r["item"]: r for r in db.query("SELECT item, starred, hidden FROM feed_marks WHERE username=?", (user,))}
+    return {r["item"]: r for r in db.query("SELECT item, starred, hidden, read FROM feed_marks WHERE username=?", (user,))}
 
 
 def _authed(request: Request) -> bool:
@@ -415,7 +415,8 @@ async def api_incidents(request: Request):
              if (i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine)     # чужие флоты не раскрываем
              and not marks.get(f"i:{i['id']}", {}).get("hidden")]                   # удалено из своей ленты
     for i in items:
-        i["starred"] = bool(marks.get(f"i:{i['id']}", {}).get("starred"))
+        m = marks.get(f"i:{i['id']}", {})
+        i["starred"], i["read"] = bool(m.get("starred")), bool(m.get("read"))
     return JSONResponse({"items": items, "kinds": incidents.KINDS}, headers={"Cache-Control": "no-store"})
 
 
@@ -939,19 +940,20 @@ async def api_notifications_read(request: Request):
 
 @api
 async def api_feed_mark(request: Request):
-    """Личные отметки в ленте: {"items": ["n:12", "i:5"], "starred": true} или {"hidden": true} (удалить из своей ленты)."""
+    """Личные отметки в ленте: {"items": ["n:12", "i:5"], "starred": true}, {"hidden": true} (удалить из своей ленты)
+    или {"read": true} (происшествие просмотрено — его метка уходит с карты)."""
     body = await request.json()
     user = _user(request)
-    items = [str(x) for x in body.get("items", [])][:200]
+    items = [str(x) for x in body.get("items", [])][:2000]
     if not items or not all(re.fullmatch(r"[ni]:\d+", x) for x in items):
         raise ValueError("Не указано, какие события отметить")
-    for field in ("starred", "hidden"):
+    for field in ("starred", "hidden", "read"):
         if field in body:
             for it in items:
                 db.execute(f"INSERT INTO feed_marks(username, item, {field}) VALUES(?,?,?) "
                            f"ON CONFLICT(username, item) DO UPDATE SET {field}=excluded.{field}",
                            (user, it, int(bool(body[field]))))
-    db.execute("DELETE FROM feed_marks WHERE username=? AND starred=0 AND hidden=0", (user,))
+    db.execute("DELETE FROM feed_marks WHERE username=? AND starred=0 AND hidden=0 AND read=0", (user,))
     return JSONResponse({"ok": True, "unread": _unread(user)})
 
 

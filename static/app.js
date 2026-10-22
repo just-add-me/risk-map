@@ -510,6 +510,8 @@ function renderLegend() {
   (state.inc?.items || []).forEach((it) => { if (!it.test || $("#inc-tests").checked) counts[it.kind] = (counts[it.kind] || 0) + 1; });
   const kinds = Object.entries(state.inc?.kinds || {}).filter(([k]) => counts[k] && INC_STYLE[k]);
   html += head("incidents", "Происшествия", incOn, "Скрыть или показать все происшествия на карте");
+  const nRead = (state.inc?.items || []).filter((it) => it.read && it.lat != null).length;
+  if (nRead) html += row("incread", `<span class="inc-dot lg-read">✓</span>`, `Просмотренные (${nRead})`, incOn && state.inc.showRead);
   html += kinds.map(([k, d]) => row(`inck:${k}`, `<span class="inc-dot" style="background:${INC_STYLE[k].color}">${INC_STYLE[k].glyph}</span>`,
     d.label, incOn && !state.inc.hidden.has(k)).replace("</span></button>", `</span><em class="lg-n">${counts[k]}</em></button>`)).join("")
     || `<div class="lg-hint">За выбранный период происшествий нет</div>`;
@@ -561,6 +563,9 @@ $("#legend-items").addEventListener("click", async (e) => {
   } else if (kind === "incidents") {
     $("#inc-show").checked = !$("#inc-show").checked;
     renderIncidents();
+  } else if (kind === "incread") {
+    if (!$("#inc-show").checked) $("#inc-show").checked = true;
+    setIncShowRead(!state.inc.showRead);
   } else if (kind === "inck") {
     const h = state.inc.hidden;
     if (!$("#inc-show").checked) { $("#inc-show").checked = true; h.clear(); Object.keys(state.inc.kinds).forEach((k) => k !== val && h.add(k)); }
@@ -1719,7 +1724,27 @@ const INC_STYLE = {
 };
 const incidentsLayer = L.layerGroup().addTo(map);
 // «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
-state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0 };
+state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0,
+  showRead: localStorageGet("incShowRead") === "1",   // просмотренные происшествия на карте
+  peek: null };                                       // открыли из ленты — метку показываем, даже если просмотрена
+$("#inc-read-show").checked = state.inc.showRead;
+$("#inc-read-show").onchange = (e) => setIncShowRead(e.target.checked);
+function setIncShowRead(on) {
+  state.inc.showRead = on;
+  $("#inc-read-show").checked = on;
+  localStorageSet("incShowRead", on ? "1" : "0");
+  renderIncidents();
+  renderLegend();
+}
+
+// Происшествие просмотрено (открыли на карте или в ленте): его метка уйдёт с карты, когда окно закроется
+function markIncRead(it) {
+  if (it.read) return;
+  it.read = true;
+  api("/api/feed/mark", { json: { items: [`i:${it.id}`], read: true } }).catch(() => {});
+  renderFeed();
+  renderLegend();
+}
 
 function incIcon(it) {
   const st = INC_STYLE[it.kind] || INC_STYLE.safety;
@@ -1777,10 +1802,15 @@ function renderIncidents() {
   // санкции и задержания судов флота показаны пометкой на значке самого судна — отдельный значок не нужен
   const ownMarker = (it) => it.vessel_bound && markers.has(it.mmsi);
   if ($("#inc-show").checked) {
-    shown.filter((it) => it.lat != null && !ownMarker(it)).forEach((it) =>
+    shown.filter((it) => it.lat != null && !ownMarker(it) && (inc.showRead || !it.read || it.id === inc.peek)).forEach((it) =>
       L.marker([it.lat, it.lon], { icon: incIcon(it), zIndexOffset: 2000 })
         .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
+        .on("popupopen", () => markIncRead(it))
+        .on("popupclose", () => {
+          if (inc.peek === it.id) inc.peek = null;
+          if (!inc.showRead) setTimeout(renderIncidents, 0);      // просмотренное убираем с карты
+        })
         .addTo(incidentsLayer));
   }
   renderFeed();
@@ -1804,9 +1834,10 @@ function feedItems() {
       out.push({ type: "notif", ts: n.ts, n, sys });
     }
   }
-  if ((f === "all" || f === "world" || starOnly) && !unreadOnly) {
+  if (f === "all" || f === "world" || starOnly) {
     for (const it of state.inc?.items || []) {
       if (starOnly ? !it.starred : (!incVisible(it) || mine.has(it.mmsi))) continue;
+      if (unreadOnly && it.read) continue;
       out.push({ type: "inc", ts: it.last_seen, it });
     }
   }
@@ -1847,7 +1878,7 @@ function feedRow(x, i) {
   const it = x.it, st = INC_STYLE[it.kind] || INC_STYLE.safety;
   const link = /^https?:\/\//.test(it.extra || "") ? `<a class="small" href="${esc(it.extra)}" target="_blank" rel="noopener">${esc(it.source || "статья")} ↗</a>${
     isNews(it.kind) && it.count > 1 ? ` <span class="muted small">и ещё ${sourcesText(it.count - 1)}</span>` : ""}` : "";
-  return `<li class="feed-item ${it.severity} read world${it.starred ? " starred" : ""}" data-i="${i}">
+  return `<li class="feed-item ${it.severity} ${it.read ? "read" : "unread"} world${it.starred ? " starred" : ""}" data-i="${i}">
     <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span><span class="fi-time">${fmtTime(it.last_seen)}${
       it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span>${feedActs(it.starred)}</div>
     <div class="fi-event">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
@@ -1895,7 +1926,8 @@ function renderFeed() {
     }
     if (x.type === "notif") { openNotification(x.n); return; }
     const it = x.it;
-    if (it.lat == null) return;
+    if (it.lat == null) { markIncRead(it); return; }
+    if (it.read && !state.inc.showRead) { state.inc.peek = it.id; renderIncidents(); }   // просмотренное — вернём метку на время
     map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
     setTimeout(() => incidentsLayer.eachLayer((m) => {
       const ll = m.getLatLng(); if (ll.lat === it.lat && ll.lng === it.lon) m.openPopup();
@@ -2334,7 +2366,18 @@ const drop = $("#drop");
 ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", (e) => uploadFleetFile(e.dataTransfer.files[0]));
 
-$("#btn-read-all").onclick = async () => { await api("/api/notifications/read", { json: { all: true } }); await loadNotifications(); };
+$("#btn-read-all").onclick = async () => {
+  await api("/api/notifications/read", { json: { all: true } });
+  // и происшествия в мире, которые сейчас в ленте, — их метки уйдут с карты (вернуть: «Просмотренные» в легенде)
+  const fresh = (state.inc?.items || []).filter((it) => !it.read && incVisible(it));
+  if (fresh.length) {
+    await api("/api/feed/mark", { json: { items: fresh.map((it) => `i:${it.id}`), read: true } });
+    fresh.forEach((it) => { it.read = true; });
+    renderIncidents();
+    renderLegend();
+  }
+  await loadNotifications();
+};
 
 $("#btn-circ-check").onclick = async (e) => {
   const b = e.target; b.disabled = true; b.textContent = "Проверяю…";
