@@ -9,12 +9,14 @@
 """
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import logging
 import math
 import threading
 import time
+import zlib
 from typing import Optional
 
 import numpy as np
@@ -109,16 +111,22 @@ def _expired(s: dict, now: float) -> bool:
     return now - s.get("ts", 0) > POSITION_TTL and now - s.get("static_ts", 0) > STATIC_TTL
 
 
+_save_lock = threading.Lock()
+
+
 def save() -> int:
-    """Снимок на диск: сначала во временный файл, потом rename — файл никогда не бывает оборванным."""
-    now = time.time()
-    with _lock:
-        data = [dict(s) for s in _ships.values() if not _expired(s, now)]
-    tmp = SNAPSHOT_FILE.with_suffix(".tmp")
-    with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=5) as f:
-        json.dump({"saved": now, "ships": data}, f, separators=(",", ":"))
-    tmp.replace(SNAPSHOT_FILE)
-    return len(data)
+    """Снимок на диск: сначала во временный файл, потом rename — файл никогда не бывает оборванным.
+    Сохранения идут строго по одному: при остановке плановое (из фонового потока) и финальное
+    совпали по времени, писали в один временный файл — и снимок 22.10.2026 оказался испорчен."""
+    with _save_lock:
+        now = time.time()
+        with _lock:
+            data = [dict(s) for s in _ships.values() if not _expired(s, now)]
+        tmp = SNAPSHOT_FILE.with_suffix(".tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=5) as f:
+            json.dump({"saved": now, "ships": data}, f, separators=(",", ":"))
+        tmp.replace(SNAPSHOT_FILE)
+        return len(data)
 
 
 def load() -> int:
@@ -127,8 +135,12 @@ def load() -> int:
     try:
         with gzip.open(SNAPSHOT_FILE, "rt", encoding="utf-8") as f:
             snap = json.load(f)
-    except (OSError, ValueError) as exc:
-        log.warning("Снимок судов не прочитан: %s", exc)
+    except (OSError, ValueError, EOFError, zlib.error) as exc:
+        # испорченный снимок не должен останавливать приложение: откладываем его и стартуем без него
+        bad = SNAPSHOT_FILE.with_suffix(f".bad-{int(time.time())}")
+        with contextlib.suppress(OSError):
+            SNAPSHOT_FILE.replace(bad)
+        log.warning("Снимок судов не прочитан (%s) — отложен в %s, суда наберутся заново из потока AIS", exc, bad.name)
         return 0
     now = time.time()
     with _lock:

@@ -820,3 +820,13 @@ def test_feed_read_star_hide_per_user():
     assert c.get("/api/feed/trash").json()["items"] == []
     assert get()[nid]["starred"] is True                    # вернули — звёздочка на месте
     assert c.post("/api/feed/mark", json={"items": ["x:1"], "hidden": True}).status_code == 400
+
+
+def test_traffic_snapshot_corrupt_does_not_crash(tmp_path, monkeypatch):
+    """Испорченный снимок судов — приложение стартует без него, файл откладывается (22.10.2026 сайт падал по кругу)."""
+    from app.ais import traffic
+    snap = tmp_path / "traffic.json.gz"
+    snap.write_bytes(b"\x1f\x8b\x08\x00garbage-not-gzip" * 50)
+    monkeypatch.setattr(traffic, "SNAPSHOT_FILE", snap)
+    assert traffic.load() >= 0
+    assert not snap.exists() and list(tmp_path.glob("traffic.json.bad-*"))
