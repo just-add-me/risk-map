@@ -587,3 +587,4 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .feed-item.read:not(.world) > .fi-meta { opacity: 1; }
 .feed-item.read:not(.world) > .fi-meta > :not(.fi-acts) { opacity: .55; }
 @media (hover: none) { .fi-act { opacity: .8; } }
+.fi-src { white-space: nowrap; }
