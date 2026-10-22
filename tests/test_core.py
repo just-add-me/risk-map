@@ -398,7 +398,7 @@ def test_incidents():
     assert not any(i["mmsi"] == "211000001" for i in incidents.recent(1))
     assert items["safety"]["text"] == "NAVIGATIONAL WARNING MINE DANGER" and items["safety"]["lat"] == 44.6
     assert len([i for i in incidents.recent(1) if i["kind"] == "safety"]) == 1      # повторы не плодят записи
-    note = db.query_one("SELECT severity, title FROM notifications WHERE kind='rule' AND mmsi='273000555'")
+    note = db.query_one("SELECT severity, title FROM notifications WHERE kind='rule_event' AND mmsi='273000555'")
     assert note["severity"] == "warning" and "мели" in note["title"]       # правило «Событие с судном»
     aisstream._tracked = None
 

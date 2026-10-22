@@ -253,14 +253,19 @@ def _recipients(r: dict, via: list[int]) -> set[str]:
 def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str] = None,
          title: Optional[str] = None, severity: Optional[str] = None,
          at: Optional[tuple[Optional[float], Optional[float]]] = None) -> None:
-    """at — где произошло (lat, lon); по умолчанию — позиция судна в момент срабатывания."""
+    """at — где произошло (lat, lon); по умолчанию — позиция судна в момент срабатывания.
+    Тело уведомления: первая строка — подробности (переносы строк → отдельные предложения), вторая — правило."""
     title = f"{alerts.vessel_label(mmsi)}: {title or r['name']}"
-    body = f"{detail}\nПравило «{r['name']}»: {describe(r)}."
+    detail = ". ".join(x.strip().rstrip(".;") for x in (detail or "").splitlines() if x.strip())
+    body = f"{detail}.\nПравило «{r['name']}»: {describe(r)}." if detail else f"Правило «{r['name']}»: {describe(r)}."
     if not at or at[0] is None:
         pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
         at = (pos.get("lat"), pos.get("lon"))
     for user in _recipients(r, via):
-        db.notify("rule", severity or r["severity"], title, body, mmsi, zone_id, username=user, lat=at[0], lon=at[1])
+        # rule_event — уведомление о событии с самим судном: в карточке судна его не показываем отдельно,
+        # там уже есть само происшествие (санкции, новость, авария)
+        kind = "rule_event" if r["kind"] == "vessel_event" else "rule"
+        db.notify(kind, severity or r["severity"], title, body, mmsi, zone_id, username=user, lat=at[0], lon=at[1])
     db.execute("UPDATE rules SET last_fired=?, fired_count=fired_count+1 WHERE id=?", (db.now_iso(), r["id"]))
 
 

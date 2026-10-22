@@ -385,13 +385,10 @@ async def api_ship_events(request: Request):
                 "url": r["extra"] if str(r["extra"] or "").startswith("http") else None, "lat": r["lat"], "lon": r["lon"]}
                for r in db.query("SELECT kind, text, last_seen, count, source, extra, lat, lon FROM incidents WHERE mmsi=? "
                                  "ORDER BY last_seen DESC LIMIT 100", (mmsi,))]
-        # уведомление правила «Событие с судном» повторяет само происшествие — его не показываем
-        seen = {e["body"].strip() for e in out if e["body"]}
+        # уведомления правила «Событие с судном» (rule_event) повторяют само происшествие — их не показываем
         for r in db.query(f"SELECT n.id, n.ts, n.kind, n.severity, n.title, n.body, n.zone_id, n.lat, n.lon FROM notifications n "
-                          f"WHERE n.mmsi=? AND n.kind <> 'incident' AND {NOTIF_VISIBLE} ORDER BY n.id DESC LIMIT 100",
-                          (mmsi, user, user, user)):
-            if (r["body"] or "").split("\n")[0].strip() in seen:
-                continue
+                          f"WHERE n.mmsi=? AND n.kind NOT IN ('incident', 'rule_event') AND {NOTIF_VISIBLE} "
+                          f"ORDER BY n.id DESC LIMIT 100", (mmsi, user, user, user)):
             out.append({"ts": r["ts"], "severity": r["severity"], "title": r["title"], "body": r["body"] or "",
                         "source": "notification", "id": r["id"], "kind": r["kind"], "zone_id": r["zone_id"],
                         "lat": r["lat"], "lon": r["lon"], "mmsi": mmsi})
