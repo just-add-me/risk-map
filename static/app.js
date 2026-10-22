@@ -1723,6 +1723,7 @@ const INC_STYLE = {
   spoof: { color: "#ef4444", glyph: "⌁" }, identity: { color: "#38bdf8", glyph: "ID" },  // [подозрительное-поведение]
 };
 const incidentsLayer = L.layerGroup().addTo(map);
+const incMarkers = new Map();          // id происшествия → его метка (в одной точке их бывает несколько)
 // «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
 state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0,
   showRead: localStorageGet("incShowRead") === "1",   // просмотренные происшествия на карте
@@ -1799,11 +1800,13 @@ function renderIncidents() {
   });
   const shown = inc.items.filter(incVisible);
   incidentsLayer.clearLayers();
+  incMarkers.clear();
   // санкции и задержания судов флота показаны пометкой на значке самого судна — отдельный значок не нужен
   const ownMarker = (it) => it.vessel_bound && markers.has(it.mmsi);
   if ($("#inc-show").checked) {
     shown.filter((it) => it.lat != null && !ownMarker(it) && (inc.showRead || !it.read || it.id === inc.peek)).forEach((it) =>
-      L.marker([it.lat, it.lon], { icon: incIcon(it), zIndexOffset: 2000 })
+      incMarkers.set(it.id, L.marker([it.lat, it.lon], { icon: incIcon(it), zIndexOffset: 2000 }))
+        .get(it.id)
         .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
         .on("popupopen", () => markIncRead(it))
@@ -1929,9 +1932,7 @@ function renderFeed() {
     if (it.lat == null) { markIncRead(it); return; }
     if (it.read && !state.inc.showRead) { state.inc.peek = it.id; renderIncidents(); }   // просмотренное — вернём метку на время
     map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
-    setTimeout(() => incidentsLayer.eachLayer((m) => {
-      const ll = m.getLatLng(); if (ll.lat === it.lat && ll.lng === it.lon) m.openPopup();
-    }), 900);
+    setTimeout(() => incMarkers.get(it.id)?.openPopup(), 900);
   });
 }
 $$("#panel-events [data-feed]").forEach((b) => b.onclick = () => {
