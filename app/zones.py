@@ -71,6 +71,32 @@ def set_layer(name: str, fc: dict) -> None:
     load_active()
 
 
+def for_map() -> Optional[dict]:
+    """Зоны для карты: вместо полного контура — контур без суши (feature["display"]), если он есть."""
+    if not _raw:
+        return None
+    feats = [{"type": "Feature", "properties": f.get("properties") or {}, "geometry": f.get("display") or f["geometry"]}
+             for f in _raw["features"]]
+    return {**_raw, "features": feats}
+
+
+def ensure_display() -> None:
+    """Один раз дополняет уже построенные слои контуром без суши (новые зоны получают его при построении)."""
+    from .geo.builder import World, add_display
+    todo = [n for n in ("jwc", "ibf") if (_layers.get(n) or {}).get("features")
+            and not ((_layers[n].get("properties") or {}).get("display_v"))]
+    if not todo:
+        return
+    w = World()
+    for name in todo:
+        fc = json.loads(json.dumps(_layers[name]))
+        for feat in fc["features"]:
+            add_display(w, feat)
+        fc.setdefault("properties", {})["display_v"] = 1
+        set_layer(name, fc)
+        log.info("Слой %s: добавлены контуры без суши", name)
+
+
 def index() -> ZoneIndex:
     return _index
 

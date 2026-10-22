@@ -298,7 +298,7 @@ def slug(text: str) -> str:
 
 # --------------------------------------------------------------------------- построение слоя
 def build(spec: dict, world=None, prev: Optional[dict] = None) -> tuple[dict, list[str]]:
-    from ..geo.builder import World
+    from ..geo.builder import World, add_display
     s = _shapes()
     w = world or World()
     prev_by_tpl = {d["template"]: d for d in (prev or {}).get("designations", []) if d.get("template")}
@@ -336,6 +336,7 @@ def build(spec: dict, world=None, prev: Optional[dict] = None) -> tuple[dict, li
             props.update({k: v for k, v in extra.items() if k in ("approximate", "note")})
             feat = s.feature(props, geom)
             if feat:
+                add_display(w, feat)
                 features.append(feat)
                 logs.append(f"✓ {name}")
             else:
@@ -345,7 +346,7 @@ def build(spec: dict, world=None, prev: Optional[dict] = None) -> tuple[dict, li
             logs.append(f"✖ {name}: {exc}")
     fc = {"type": "FeatureCollection", "features": features,
           "properties": {"list_date": spec.get("list_date"), "list_until": spec.get("list_until"),
-                         "source_url": spec.get("source_url"), "built_at": db.now_iso()}}
+                         "source_url": spec.get("source_url"), "built_at": db.now_iso(), "display_v": 1}}
     return fc, logs
 
 

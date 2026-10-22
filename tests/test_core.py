@@ -527,3 +527,19 @@ def test_supervisor_restarts_and_notifications_cleanup():
     ids = {r["id"] for r in db.query("SELECT id FROM notifications")}
     assert old not in ids and fresh in ids
     assert not db.query("SELECT 1 FROM notification_reads WHERE notification_id=?", (old,))
+
+
+def test_display_geometry_drops_land():
+    """Карта получает контур без суши, проверки судов — полный контур страны."""
+    from shapely.geometry import box, mapping, shape
+    from app.geo.builder import World, add_display
+    land = {"a3": "AAA", "name": "Land", "geometry": mapping(box(0, 0, 2, 2))}
+    w = World([land])
+    feat = {"type": "Feature", "properties": {"template": "country"}, "geometry": mapping(box(-0.2, -0.2, 2.2, 2.2))}
+    add_display(w, feat)
+    d = shape(feat["display"])
+    assert d.area < shape(feat["geometry"]).area * 0.5
+    assert not d.contains(shape({"type": "Point", "coordinates": (1, 1)}))
+    inland = {"type": "Feature", "properties": {"template": "inland_ukraine"}, "geometry": mapping(box(0, 0, 2, 2))}
+    add_display(w, inland)
+    assert "display" not in inland

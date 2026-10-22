@@ -164,7 +164,7 @@ async def api_status(request: Request):
 @api
 async def api_zones(request: Request):
     def build() -> object:
-        return zones.raw() or {"type": "FeatureCollection", "features": [], "properties": {}}
+        return zones.for_map() or {"type": "FeatureCollection", "features": [], "properties": {}}
     return await _versioned_json(request, "zones", zones.version(), build)
 
 
@@ -768,6 +768,10 @@ async def _circular_loop(stop: asyncio.Event):
         await asyncio.to_thread(inl.ensure_built)
     except Exception:  # noqa: BLE001
         log.exception("Не удалось построить слой INL")
+    try:
+        await asyncio.to_thread(zones.ensure_display)
+    except Exception:  # noqa: BLE001
+        log.exception("Не удалось построить контуры зон без суши")
     await asyncio.sleep(20)
     while not stop.is_set():
         try:

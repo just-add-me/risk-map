@@ -346,6 +346,26 @@ def _feature(e: dict, extra: dict, geom: BaseGeometry) -> Optional[dict]:
     return {"type": "Feature", "properties": props, "geometry": mapping(geom)}
 
 
+def add_display(w: World, feat: dict) -> None:
+    """Контур для карты: зона без суши (полоса ~1 мили у берега остаётся), как на jwla.ai.
+
+    Проверки судов идут по полному контуру feature["geometry"] — в него входят речные порты
+    (Басра, Херсон), поэтому сушу из него не вычитаем. Внутренние воды и озёра не трогаем:
+    без суши от них ничего не останется.
+    """
+    feat.pop("display", None)
+    props = feat.get("properties") or {}
+    if str(props.get("template", "")).startswith("inland_") or props.get("layer") == "inl":
+        return
+    geom = shape(feat["geometry"])
+    sea = polygonal(w.sea(geom))
+    if sea.is_empty or sea.area > 0.95 * geom.area:
+        return
+    sea = polygonal(sea.simplify(0.003, preserve_topology=True))
+    if not sea.is_empty:
+        feat["display"] = mapping(shapely.set_precision(sea, 0.0001))
+
+
 def build(spec: dict, world: Optional[World] = None,
           progress: Optional[Callable[[str], None]] = None) -> tuple[dict, list[str]]:
     """Возвращает (FeatureCollection, журнал). Ошибка по одной зоне не валит остальные."""
@@ -364,6 +384,7 @@ def build(spec: dict, world: Optional[World] = None,
             for extra, geom in tpl(w, e):
                 feat = _feature(e, extra, geom)
                 if feat:
+                    add_display(w, feat)
                     features.append(feat)
                 else:
                     logs.append(f"⚠ {e['name']}: получилась пустая геометрия")
@@ -374,7 +395,7 @@ def build(spec: dict, world: Optional[World] = None,
             e["needs_review"] = True
     fc = {
         "type": "FeatureCollection",
-        "properties": {"ref": spec.get("ref"), "issued": spec.get("issued")},
+        "properties": {"ref": spec.get("ref"), "issued": spec.get("issued"), "display_v": 1},
         "features": features,
     }
     logs.append(f"Построено зон: {len(features)}")
