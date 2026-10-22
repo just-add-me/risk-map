@@ -215,10 +215,27 @@ function inSeason(p) {
 const fmtDate = (iso) => (iso ? iso.split("-").reverse().join(".") : "—");
 const today = () => new Date().toISOString().slice(0, 10);
 
+// Склеенные «территории» (с сервера, fc.outlines): зоны JWC и IBF одного вида — один контур, граница
+// только по внешнему краю, без наложений между видами. Отдельные зоны лежат над ними невидимыми —
+// для нажатия, выделения и пометки «изменена». При поиске по названию или «только изменённые» — по отдельности.
+const territoryLayer = L.geoJSON(null, { renderer: mapCanvas, interactive: false, style: territoryStyle }).addTo(map);
+const dissolved = () => !!state.zonesFC?.outlines?.length && !state.zoneFilter.q.trim() && !state.zoneFilter.changedOnly;
+
+function territoryStyle(f) {
+  const t = ZONE_TYPES[f.properties.type], layer = f.properties.layer;
+  return { color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
+    fillOpacity: layer === "ibf" ? 0 : 0.07, glow: layer === "ibf" ? 0.8 : 1, dashArray: t.dash || null, interactive: false };
+}
+
 function zoneStyle(f) {
   const p = f.properties;
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
+  if (dissolved() && layer !== "inl") {        // видна «территория», сама зона — только для нажатия и выделения
+    if (state.selectedZone === p.id) return { color: t.color, weight: 2.2, opacity: 1, fillColor: t.color, fillOpacity: 0.14, glow: 1.6 };
+    if (isChanged(p)) return { color: t.color, weight: 1.8, opacity: 0.9, dashArray: "7 4", fillOpacity: 0, glow: 0 };
+    return { stroke: false, fill: true, fillOpacity: 0, glow: 0 };
+  }
   const s = { color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
     // IBF лежит поверх JWC — без заливки (только граница и свечение), иначе полупрозрачные слои складываются в кашу
     fillOpacity: { jwc: 0.07, ibf: 0, inl: 0.035 }[layer], glow: { jwc: 1, ibf: 0.8, inl: 0.7 }[layer] };
@@ -336,6 +353,12 @@ function renderZoneLayer() {
     .sort((a, b) => order[layerOf(a.properties)] - order[layerOf(b.properties)]);
   zonesLayer.addData({ ...state.zonesFC, features: [...feats, ...wrapCopies(feats)] });
   zonesLayer.bringToBack();
+  territoryLayer.clearLayers();
+  if (dissolved()) {
+    const outs = state.zonesFC.outlines.filter((o) => state.zoneFilter.types.has(o.properties.type));
+    territoryLayer.addData({ type: "FeatureCollection", features: [...outs, ...wrapCopies(outs)] });
+    territoryLayer.bringToBack();               // под отдельными зонами (они принимают нажатия)
+  }
   state.zoneEmblemFeats = feats.filter((f) => f.properties.label_pt);
   updateZoneEmblems();
   if (document.body.classList.contains("drawing")) setMapInteractive(false);
