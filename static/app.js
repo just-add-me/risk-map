@@ -1088,6 +1088,7 @@ const shipPanel = {
     this.body.innerHTML = content;
     this.el.hidden = false;
     this.el.scrollTop = 0;
+    setShipOpen(true);
     return this;
   },
   setContent(content) { this.body.innerHTML = content; return this; },
@@ -1100,6 +1101,7 @@ const shipPanel = {
     this.el.hidden = true;
     this.body.innerHTML = "";
     this.mmsi = null;
+    setShipOpen(false);
     const hs = this.handlers;
     this.handlers = [];
     hs.forEach((fn) => fn());
@@ -1112,6 +1114,55 @@ const shipPanel = {
   },
 };
 $("#ship-panel-close").onclick = () => shipPanel.close();
+
+/* ------------------------------------------------------------------ телефон: панели-«шторки» */
+// Узкий экран: панель с вкладками — снизу, карточка судна — шторкой поверх карты. Пока открыта карточка,
+// панель с вкладками спрятана (карте и карточке — весь экран), закрыли карточку — панель возвращается.
+// Обе можно растянуть за ручку вплоть до всего экрана; короткое нажатие на ручку — «половина / весь экран».
+const isPhone = () => matchMedia("(max-width: 820px)").matches;
+function setShipOpen(on) {
+  document.body.classList.toggle("ship-open", on);
+  if (isPhone()) setTimeout(() => map.invalidateSize(), 0);      // карта поменяла размер
+}
+
+function sheetGrip(grip, { box, cssVar, target, initial, min = 0.18, snaps, storeKey, onDone }) {
+  const avail = () => box().getBoundingClientRect().height;
+  const set = (frac) => {
+    target.style.setProperty(cssVar, `${Math.round(frac * 1000) / 10}%`);
+    target.classList.toggle("full", frac > 0.98);
+  };
+  let cur = +(storeKey && localStorageGet(storeKey)) || initial;
+  set(cur);
+  let start = null;
+  grip.addEventListener("pointerdown", (e) => {
+    start = { y: e.clientY, h: target.getBoundingClientRect().height, moved: false };
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dy) > 4) start.moved = true;
+    if (start.moved) { cur = Math.min(1, Math.max(min, (start.h - dy) / avail())); set(cur); }
+  });
+  const end = () => {
+    if (!start) return;
+    if (!start.moved) cur = cur > 0.9 ? initial : 1;                       // нажатие: на весь экран и обратно
+    else cur = snaps.reduce((a, b) => (Math.abs(b - cur) < Math.abs(a - cur) ? b : a));   // к ближайшему положению
+    set(cur);
+    start = null;
+    if (storeKey) localStorageSet(storeKey, String(cur));
+    onDone && onDone();
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+}
+// панель с вкладками: доля высоты под шапкой
+sheetGrip($("#sidebar-grip"), { box: () => $(".layout"), cssVar: "--sb-h", target: $("#sidebar"), initial: 0.48,
+  snaps: [0.25, 0.48, 0.75, 1], storeKey: "sidebarH", onDone: () => map.invalidateSize() });
+// карточка судна: доля высоты карты (а карта при открытой карточке — весь экран под шапкой)
+sheetGrip($("#ship-grip"), { box: () => $(".map-wrap"), cssVar: "--sp-h", target: $("#ship-panel"), initial: 0.58,
+  snaps: [0.3, 0.58, 1] });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shipPanel.isOpen()) shipPanel.close(); });
 
 // Путь судна в карточке: пройденный трек (сплошная линия) + типовой путь до порта назначения (пунктир).

@@ -65,6 +65,8 @@
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
+    <div class="sheet-grip" id="sidebar-grip" role="separator" aria-orientation="horizontal"
+      title="Потяните, чтобы изменить высоту панели; нажмите — на весь экран"><span></span></div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="fleet">Флот</button>
       <button class="tab" data-tab="zones">Зоны</button>
@@ -269,6 +271,8 @@
   <main class="map-wrap">
     <div id="map"></div>
     <aside class="ship-panel" id="ship-panel" hidden aria-label="Карточка судна">
+      <div class="sheet-grip" id="ship-grip" role="separator" aria-orientation="horizontal"
+        title="Потяните, чтобы изменить высоту карточки; нажмите — на весь экран"><span></span></div>
       <button class="sp-close" id="ship-panel-close" type="button" title="Закрыть (Esc)">×</button>
       <div class="sp-body"></div>
     </aside>
