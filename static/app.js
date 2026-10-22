@@ -2152,7 +2152,7 @@ async function loadZoneLog() {
   const fmtH = (h) => h < 48 ? `${Math.round(h)} ч` : `${(h / 24).toFixed(1).replace(".", ",")} сут`;
   $("#log-list").innerHTML = items.map((v) => `
     <li class="log-item ${v.open ? "open" : ""}">
-      <div class="log-top"><b>${esc(v.vessel)}</b>${v.open ? `<span class="log-now">в зоне сейчас</span>` : ""}</div>
+      <div class="log-top"><span>${shipLink(v.vessel.replace(/ \(MMSI \d+\)$/, ""), v.mmsi)} <span class="muted small">MMSI ${esc(v.mmsi)}</span></span>${v.open ? `<span class="log-now">в зоне сейчас</span>` : ""}</div>
       <div class="small">${esc(v.zone_name)} <span class="muted">· ${esc((v.layer || "").toUpperCase())}</span></div>
       <div class="small muted">${fmtTime(v.entered_at)}${v.initial ? " (уже было в зоне)" : ""} → ${v.open ? "сейчас" : fmtTime(v.exited_at)}
         · <b>${fmtH(v.span_h)}</b>${v.days ? ` · суток: ${v.days}` : ""}</div>
