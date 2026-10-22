@@ -1,4 +1,4 @@
-# WarRisk Monitor
+# FleetRisk
 
 Внутренний сервис мониторинга флота в зонах **JWC Listed Areas** (Hull War, Piracy, Terrorism and Related Perils).
 Аналог jwla.ai, работающий на вашем сервере: список судов и клиентов никуда не уходит.

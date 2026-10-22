@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="warrisk-test-")
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="fleetrisk-test-")
 
 from app import alerts, db, zones  # noqa: E402
 from app.ais import ingest, simulator  # noqa: E402

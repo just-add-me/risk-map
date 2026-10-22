@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 API = "https://commons.wikimedia.org/w/api.php"
 # Wikimedia просит указывать в User-Agent, как связаться (без этого ограничивает строже) — адрес сайта, не email
-UA = f"WarRiskMonitor/0.1 (https://{config.DOMAIN or 'localhost'}; vessel risk map, photos shown with attribution)"
+UA = f"FleetRisk/0.1 (https://{config.DOMAIN or 'localhost'}; vessel risk map, photos shown with attribution)"
 TTL_FOUND = 30 * 86400
 TTL_NONE = 7 * 86400
 _lock = threading.Lock()          # Commons отвечает 429 на частые запросы: не чаще раза в секунду
