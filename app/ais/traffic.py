@@ -339,6 +339,15 @@ def search(q: str, limit: int = 12) -> list[dict]:
     return [details(r[3]) for r in found[:limit]]
 
 
+def live_with_imos(imos: set[str]) -> list[dict]:
+    """Суда с живой позицией, чей IMO в наборе (санкционные списки)."""
+    now = time.time()
+    with _lock:
+        hits = [dict(s) for s in _ships.values() if s.get("ts") and now - s["ts"] <= POSITION_TTL
+                and s.get("lat") is not None and str(s.get("imo") or "") in imos]
+    return [details(s) for s in hits]
+
+
 def near(lat: float, lon: float, nm: float) -> list[dict]:
     """Суда с живой позицией в радиусе nm миль от точки (для карточки порта)."""
     now = time.time()

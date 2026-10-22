@@ -361,6 +361,14 @@ async def api_port(request: Request):
 
 
 @api
+async def api_sanctioned(request: Request):
+    """Слой карты «Суда под санкциями»: все суда из списков, видимые в AIS; свои помечены."""
+    items = await asyncio.to_thread(screening.live_sanctioned)
+    mine = await asyncio.to_thread(access.mmsis, _user(request))
+    return JSONResponse({"items": [{**i, "mine": i["mmsi"] in mine} for i in items]}, headers={"Cache-Control": "no-store"})
+
+
+@api
 async def api_screening(request: Request):
     if request.method == "POST":
         if screening.state["running"]:
@@ -1111,6 +1119,7 @@ routes = [
     Route("/api/zones", api_zones),
     Route("/api/ports", api_ports),
     Route("/api/incidents", api_incidents),
+    Route("/api/sanctioned", api_sanctioned),
     Route("/api/zone-visits", api_zone_visits),       # [журнал-заходов]
     Route("/api/screening", api_screening, methods=["GET", "POST"]),
     Route("/api/rules", api_rules, methods=["GET", "POST"]),

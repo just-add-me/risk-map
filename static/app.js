@@ -509,6 +509,7 @@ function renderLegend() {
     + row("ports", `<svg width="14" height="14" viewBox="-7 -7 14 14"><rect x="-5" y="-5" width="10" height="10" rx="3" fill="#8fa6b0"/></svg>`,
       "Порты (красный — в зоне JWC)", state.showPorts)
     + row("incidents", `<span class="inc-dot" style="background:#ff3b30">!</span>`, "Происшествия", $("#inc-show").checked)
+    + row("sanctioned", `<span class="inc-dot sanc-dot">$</span>`, "Суда под санкциями (в AIS)", state.showSanctioned)
     + row("areas", `<i class="sw" style="border:1.5px dashed #fff;background:transparent"></i>`, "Мои области", $("#areas-show").checked);
   box.innerHTML = html;
 }
@@ -551,6 +552,11 @@ $("#legend-items").addEventListener("click", async (e) => {
     localStorageSet("showPorts", state.showPorts ? "1" : "0");
     updatePortsVisibility();
     renderZoneFilters();
+  } else if (kind === "sanctioned") {
+    state.showSanctioned = !state.showSanctioned;
+    localStorageSet("showSanctioned", state.showSanctioned ? "1" : "0");
+    state.sanctionedAt = 0;
+    loadSanctioned().catch(() => {});
   } else if (kind === "incidents") {
     $("#inc-show").checked = !$("#inc-show").checked;
     renderIncidents();
@@ -1712,6 +1718,34 @@ function renderIncidents() {
   renderFeed();
 }
 
+/* ------------------------------------------------------------------ суда под санкциями */
+// Все суда из санкционных списков, видимые в AIS, — одинаково для всех пользователей. Свои суда флота
+// здесь не рисуем: у них «$» на самом значке судна.
+const sanctionedLayer = L.layerGroup().addTo(map);
+state.showSanctioned = localStorageGet("showSanctioned") !== "0";
+state.sanctionedAt = 0;
+async function loadSanctioned() {
+  if (!state.showSanctioned) { sanctionedLayer.clearLayers(); return; }
+  if (Date.now() - state.sanctionedAt < 120000) return;       // раз в 2 минуты достаточно
+  state.sanctionedAt = Date.now();
+  const { items } = await api("/api/sanctioned");
+  sanctionedLayer.clearLayers();
+  items.filter((s) => !s.mine).forEach((s) => {
+    const m = L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: "sanc-icon", iconSize: [20, 20], iconAnchor: [10, 10], html: `<span><b>$</b></span>` }),
+      zIndexOffset: 900, keyboard: false,
+    }).bindTooltip(esc(`${s.name || "MMSI " + s.mmsi} — под санкциями`), { direction: "top", offset: [0, -8] })
+      .bindPopup(`<h4>${esc(s.name || "MMSI " + s.mmsi)}</h4>
+        <div class="muted small">${esc(s.type_name || "")}${s.flag ? ` · ${esc(s.flag)}` : ""} · IMO ${esc(s.imo)}</div>
+        <p class="small"><b>В санкционных списках:</b> ${s.lists.map(esc).join(", ")}</p>
+        <button class="btn ghost sanc-open" type="button">Открыть карточку судна</button>`, { minWidth: 220 })
+      .addTo(sanctionedLayer);
+    m.on("popupopen", (e) => {
+      e.popup.getElement().querySelector(".sanc-open").onclick = () => { map.closePopup(); openTrafficShip(s.mmsi, L.latLng(s.lat, s.lon)); };
+    });
+  });
+}
+
 /* ------------------------------------------------------------------ лента */
 // Одна лента: уведомления (что сообщили ваши правила, системные сообщения) + происшествия в мире.
 // События с вашими судами приходят только как уведомления правил, чтобы не дублировались.
@@ -2050,6 +2084,7 @@ async function refreshAll(forceZones = false) {
     await Promise.all([loadZones(forceZones), loadFleets(), loadNotifications(), loadIncidents().catch(() => {})]);
     if ($("#panel-log").classList.contains("active")) loadZoneLog().catch(() => {});   // [журнал-заходов]
     await loadTraffic();                         // после флотов: суда флотов рисуются отдельно
+    loadSanctioned().catch(() => {});
     if (!$("#circ-modal").hidden) { await loadCirculars(); await loadIbf(); }
   } catch (e) { if (e.message !== "unauthorized") console.warn(e); }
   finally { refreshing = false; }

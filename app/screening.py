@@ -349,3 +349,25 @@ def due() -> bool:
         return True
     return (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() > 20 * 3600
 
+
+
+_live_cache: tuple[float, list[dict]] = (0.0, [])
+
+
+def live_sanctioned(max_age_s: int = 60) -> list[dict]:
+    """Суда из санкционных списков, которые сейчас видны в AIS (для слоя карты; одинаково для всех
+    пользователей — так по нему нельзя понять, какие суда отслеживают другие). Кэш на минуту."""
+    global _live_cache
+    import time as _t
+    if _t.time() - _live_cache[0] < max_age_s:
+        return _live_cache[1]
+    from .ais import traffic
+    lists: dict[str, list[str]] = {}
+    for r in db.query("SELECT imo, source FROM sanctions"):
+        lists.setdefault(r["imo"], []).append(SOURCES.get(r["source"], {}).get("label", r["source"]))
+    out = [{"mmsi": d["mmsi"], "imo": d["imo"], "name": d["name"], "lat": d["lat"], "lon": d["lon"],
+            "cog": d["cog"], "type_name": d["type_name"], "flag": d["flag"], "flag_iso": d["flag_iso"],
+            "lists": sorted(lists[str(d["imo"])])}
+           for d in traffic.live_with_imos(set(lists))]
+    _live_cache = (_t.time(), out)
+    return out

@@ -536,3 +536,9 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .preset-head .btn { padding: 4px 10px; font-size: 12.5px; white-space: nowrap; }
 .preset-rules { list-style: none; margin: 5px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
 .preset-rules li.on { color: var(--green); }
+
+/* ---------- суда под санкциями (слой) ---------- */
+.sanc-icon span { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; transform: rotate(45deg);
+  background: #2a1d45; border: 1.5px solid #a78bfa; border-radius: 4px; box-shadow: 0 0 6px rgba(167, 139, 250, .6); }
+.sanc-icon b { transform: rotate(-45deg); font: 700 11px/1 var(--mono, monospace); color: #d0bfff; }
+.sanc-dot { background: #2a1d45 !important; border: 1.5px solid #a78bfa; color: #d0bfff; }
