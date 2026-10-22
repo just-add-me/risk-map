@@ -814,6 +814,9 @@ def test_feed_read_star_hide_per_user():
     assert get()[nid]["starred"] is True
     r = c.post("/api/feed/mark", json={"items": [f"n:{nid}"], "hidden": True})
     assert r.status_code == 200 and nid not in get()
+    trash = c.get("/api/feed/trash").json()["items"]
+    assert [t["item"] for t in trash] == [f"n:{nid}"] and trash[0]["deleted_at"]     # лежит в корзине
     c.post("/api/feed/mark", json={"items": [f"n:{nid}"], "hidden": False})
+    assert c.get("/api/feed/trash").json()["items"] == []
     assert get()[nid]["starred"] is True                    # вернули — звёздочка на месте
     assert c.post("/api/feed/mark", json={"items": ["x:1"], "hidden": True}).status_code == 400

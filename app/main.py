@@ -953,8 +953,43 @@ async def api_feed_mark(request: Request):
                 db.execute(f"INSERT INTO feed_marks(username, item, {field}) VALUES(?,?,?) "
                            f"ON CONFLICT(username, item) DO UPDATE SET {field}=excluded.{field}",
                            (user, it, int(bool(body[field]))))
+    if "hidden" in body:                       # корзина: когда удалили (вернули — отметка снимается)
+        now = db.now_iso() if body["hidden"] else None
+        for it in items:
+            db.execute("UPDATE feed_marks SET hidden_at=? WHERE username=? AND item=?", (now, user, it))
     db.execute("DELETE FROM feed_marks WHERE username=? AND starred=0 AND hidden=0 AND read=0", (user,))
     return JSONResponse({"ok": True, "unread": _unread(user)})
+
+
+TRASH_DAYS = 7
+
+
+@api
+async def api_feed_trash(request: Request):
+    """Корзина: что пользователь удалил из ленты за последние TRASH_DAYS дней (потом удалено насовсем)."""
+    user = _user(request)
+    since = (datetime.now(timezone.utc) - timedelta(days=TRASH_DAYS)).replace(microsecond=0).isoformat()
+
+    def load() -> list[dict]:
+        out = []
+        for m in db.query("SELECT item, hidden_at FROM feed_marks WHERE username=? AND hidden=1 AND hidden_at > ? "
+                          "ORDER BY hidden_at DESC LIMIT 500", (user, since)):
+            kind, _, ident = m["item"].partition(":")
+            if kind == "n":
+                r = db.query_one("SELECT id, ts, kind, severity, title, body, mmsi FROM notifications WHERE id=?", (int(ident),))
+                if r:
+                    out.append({"item": m["item"], "deleted_at": m["hidden_at"], "type": "notif", "ts": r["ts"],
+                                "severity": r["severity"], "title": r["title"], "text": (r["body"] or "").split("\n")[0],
+                                "mmsi": r["mmsi"]})
+            else:
+                r = db.query_one("SELECT id, kind, name, mmsi, text, last_seen FROM incidents WHERE id=?", (int(ident),))
+                if r:
+                    k = incidents.KINDS.get(r["kind"], {})
+                    out.append({"item": m["item"], "deleted_at": m["hidden_at"], "type": "inc", "ts": r["last_seen"],
+                                "severity": k.get("severity", "info"), "title": k.get("label", r["kind"]),
+                                "name": r["name"], "text": r["text"] or "", "mmsi": r["mmsi"], "kind": r["kind"]})
+        return out
+    return JSONResponse({"items": await asyncio.to_thread(load), "days": TRASH_DAYS}, headers={"Cache-Control": "no-store"})
 
 
 # --------------------------------------------------------------------------- API: циркуляры
@@ -1216,6 +1251,7 @@ routes = [
     Route("/api/notifications", api_notifications),
     Route("/api/notifications/read", api_notifications_read, methods=["POST"]),
     Route("/api/feed/mark", api_feed_mark, methods=["POST"]),
+    Route("/api/feed/trash", api_feed_trash),
     Route("/api/notifications/export", api_notifications_export),
     Route("/api/circulars", api_circulars),
     Route("/api/circulars/check", api_circular_check, methods=["POST"]),

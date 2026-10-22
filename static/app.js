@@ -1903,7 +1903,8 @@ async function feedMark(x, change) {
     if (x.n) state.notifications = state.notifications.filter((n) => n !== x.n);
     else { state.inc.items = state.inc.items.filter((it) => it !== x.it); renderIncidents(); }
     setUnread(r.unread);
-    toast("Удалено из ленты", "Нажмите здесь, чтобы вернуть", "info", async () => {
+    loadTrash().then(updateTrashCount).catch(() => {});
+    toast("Удалено в корзину", "Нажмите здесь, чтобы вернуть. В корзине хранится 7 дней", "info", async () => {
       const back = await api("/api/feed/mark", { json: { items: [key], hidden: false } });
       setUnread(back.unread);
       await Promise.all([loadNotifications(), loadIncidents(true)]);
@@ -1912,7 +1913,47 @@ async function feedMark(x, change) {
   renderFeed();
 }
 
+// Корзина: удалённое за 7 дней, у каждого — «Вернуть»
+state.trash = [];
+async function loadTrash() {
+  const d = await api("/api/feed/trash");
+  state.trash = d.items;
+  if (state.feedFilter === "trash") renderFeed();
+}
+function renderTrash() {
+  const sevCls = (x) => x.severity || "info";
+  $("#feed-list").innerHTML = (state.trash.length ? `<li class="trash-note muted small">Удалённое хранится здесь 7 дней, потом удаляется насовсем.</li>` : "")
+    + state.trash.map((x, i) => `<li class="feed-item ${sevCls(x)} read trash" data-i="${i}">
+      <div class="fi-meta"><span class="fi-src">${x.type === "inc" ? "в мире" : x.mmsi ? "мои суда" : "система"}</span>
+        <span class="fi-time">удалено ${fmtTime(x.deleted_at)}</span></div>
+      <div class="fi-event">${esc(x.type === "inc" ? x.title : splitTitle(x.title, x.mmsi).event)}</div>
+      ${x.mmsi ? `<div class="fi-vessel">${shipLink(x.type === "inc" ? (x.name || x.mmsi) : (splitTitle(x.title, x.mmsi).vessel || x.mmsi), x.mmsi)}
+        <span class="muted">${shipIdText(x.mmsi)}</span></div>` : ""}
+      ${x.text ? `<div class="fi-quote">${esc(x.text.slice(0, 200))}</div>` : ""}
+      <div class="trash-row"><span class="muted small">событие от ${fmtTime(x.ts)}</span>
+        <button class="btn ghost" type="button" data-restore="${i}">Вернуть в ленту</button></div></li>`).join("")
+    || `<li class="empty muted">Корзина пуста. Удалённое из ленты (✕ на карточке) хранится здесь 7 дней.</li>`;
+  $$("#feed-list [data-restore]").forEach((b) => b.onclick = async () => {
+    const x = state.trash[+b.dataset.restore];
+    b.disabled = true;
+    try {
+      const r = await api("/api/feed/mark", { json: { items: [x.item], hidden: false } });
+      setUnread(r.unread);
+      state.trash = state.trash.filter((t) => t !== x);
+      renderFeed();
+      toast("Возвращено в ленту", x.title);
+      await Promise.all([loadNotifications(), loadIncidents(true)]);
+    } catch (e) { b.disabled = false; toast("Не получилось", e.message, "critical"); }
+  });
+  updateTrashCount();
+}
+function updateTrashCount() {
+  const b = $("#panel-events [data-feed=trash]");
+  b.textContent = state.trash.length ? `Корзина ${state.trash.length}` : "Корзина";
+}
+
 function renderFeed() {
+  if (state.feedFilter === "trash") { renderTrash(); return; }
   const items = feedItems();
   const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Правила».",
     world: "Происшествий в мире за выбранный период нет.", system: "Системных сообщений нет.",
@@ -1938,7 +1979,8 @@ function renderFeed() {
 $$("#panel-events [data-feed]").forEach((b) => b.onclick = () => {
   state.feedFilter = b.dataset.feed;
   $$("#panel-events [data-feed]").forEach((x) => x.classList.toggle("on", x === b));
-  if (state.feedFilter !== "mine" && state.feedFilter !== "system") loadIncidents(true).catch(() => {});
+  if (state.feedFilter === "trash") loadTrash().catch((e) => toast("Ошибка", e.message, "critical"));
+  else if (state.feedFilter !== "mine" && state.feedFilter !== "system") loadIncidents(true).catch(() => {});
   renderFeed();
 });
 function renderScreeningStatus(sc) {
@@ -2546,3 +2588,5 @@ function tickClock() {
 }
 tickClock();
 setInterval(tickClock, 15000);
+
+loadTrash().then(updateTrashCount).catch(() => {});

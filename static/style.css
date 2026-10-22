@@ -589,3 +589,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 @media (hover: none) { .fi-act { opacity: .8; } }
 .fi-src { white-space: nowrap; }
 .lg-read { background: #4b5d66 !important; font-size: 10px; }
+.feed-item.trash { cursor: default; }
+.trash-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.feed-item.trash > .trash-row { opacity: 1; }
+.trash-note { padding: 0 2px 8px; list-style: none; }

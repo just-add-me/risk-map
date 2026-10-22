@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS feed_marks(
     starred INTEGER NOT NULL DEFAULT 0,
     hidden INTEGER NOT NULL DEFAULT 0,
     read INTEGER NOT NULL DEFAULT 0,       -- происшествие «в мире» просмотрено (уведомления — в notification_reads)
+    hidden_at TEXT,                        -- когда удалили: 7 дней событие лежит в корзине, его можно вернуть
     PRIMARY KEY(username, item)
 );
 CREATE TABLE IF NOT EXISTS vessels(
@@ -242,8 +243,11 @@ def connect() -> sqlite3.Connection:
                     _conn.execute(f"ALTER TABLE notifications ADD COLUMN {col} REAL")
             if "color" not in {r[1] for r in _conn.execute("PRAGMA table_info(fleets)")}:   # цвет флота на карте
                 _conn.execute("ALTER TABLE fleets ADD COLUMN color TEXT")
-            if "read" not in {r[1] for r in _conn.execute("PRAGMA table_info(feed_marks)")}:   # просмотренные происшествия
+            fm_cols = {r[1] for r in _conn.execute("PRAGMA table_info(feed_marks)")}
+            if "read" not in fm_cols:                                                       # просмотренные происшествия
                 _conn.execute("ALTER TABLE feed_marks ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
+            if "hidden_at" not in fm_cols:                                                  # корзина
+                _conn.execute("ALTER TABLE feed_marks ADD COLUMN hidden_at TEXT")
             if "hin" not in {r[1] for r in _conn.execute("PRAGMA table_info(vessels)")}:    # номер корпуса (яхты)
                 _conn.execute("ALTER TABLE vessels ADD COLUMN hin TEXT")
             news_cols = {r[1] for r in _conn.execute("PRAGMA table_info(news)")}
