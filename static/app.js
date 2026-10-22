@@ -1953,6 +1953,7 @@ function updateTrashCount() {
 }
 
 function renderFeed() {
+  $("#panel-events .feed-tools").hidden = state.feedFilter === "trash";
   if (state.feedFilter === "trash") { renderTrash(); return; }
   const items = feedItems();
   const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Правила».",
