@@ -775,3 +775,20 @@ def test_private_incidents_not_leaked():
     seen = [i for i in incidents.recent(7) if i["mmsi"] == "273000991"
             and (i["kind"] not in incidents.PRIVATE_KINDS or i["mmsi"] in mine)]
     assert seen == []
+
+
+def test_registry_keeps_ships_out_of_coverage():
+    """Судно ушло из памяти (вне покрытия) — находится поиском, паспорт и последняя позиция на месте."""
+    from app.ais import registry, traffic
+    traffic.update_position("636099999", 10.5, 60.25, 12.0, 90.0, None, "REGTEST STAR", "A")
+    traffic.update_static("636099999", name="REGTEST STAR", imo="9123451", ship_type=80, length=180.0)
+    assert registry.flush() >= 1
+    traffic.update_static("636099999", destination="SINGAPORE")      # позднее пришёл только паспорт
+    registry.flush()
+    with traffic._lock:
+        traffic._ships.pop("636099999")
+    s = registry.get("636099999")
+    assert s["lat"] == 10.5 and s["length"] == 180.0 and s["destination"] == "SINGAPORE"
+    assert registry.find_imo("9123451") == "636099999"
+    assert registry.search("regtest")[0]["mmsi"] == "636099999"
+    assert registry.search("9123451")[0]["name"] == "REGTEST STAR"

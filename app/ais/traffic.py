@@ -311,6 +311,13 @@ def find_imo(imo: str) -> Optional[str]:
     return best
 
 
+def changed_since(t: float) -> list[dict]:
+    """Суда, у которых с момента t обновилась позиция или паспорт (для справочника registry), без следа."""
+    with _lock:
+        return [{k: v for k, v in s.items() if k != "trail"} for s in _ships.values()
+                if max(s.get("ts", 0), s.get("static_ts", 0)) > t]
+
+
 def search(q: str, limit: int = 12) -> list[dict]:
     """Поиск по названию, MMSI, IMO или позывному. Сначала точные совпадения, потом начало, потом вхождение."""
     q = q.strip().upper()

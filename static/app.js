@@ -972,6 +972,7 @@ function shipCard(d, zonesHtml, opts = {}) {
     <div class="sc-actions">${opts.actions ? `<div class="sc-row">${opts.actions}</div>` : ""}
       <div class="sc-row"><button class="btn ghost sc-track" type="button">Скрыть путь</button>
       <a class="btn ghost" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div></div>
+    ${opts.note ? `<div class="sc-note">${esc(opts.note)}</div>` : ""}
     <div class="sc-tabs"><button type="button" class="on" data-tab="info">Судно</button>
       <button type="button" data-tab="events">События <span class="sc-evn"></span></button></div>
     <div class="sc-pane" data-pane="events" hidden><div class="sc-events muted small">Загружаю…</div></div>
@@ -1347,7 +1348,9 @@ async function openTrafficShip(mmsi, latlng, fly = false, name = "") {
       : state.fleets.some((f) => f.access !== "view") ? `<button class="btn" type="button" data-add-fleet>+ Добавить во флот</button>
         <select class="sc-fleet" title="В какой флот добавить">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>` : "";
     popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
-      { actions, ageS: s.age_s }));
+      { actions, ageS: s.age_s, note: s.archived ? (s.lat != null
+        ? `Сейчас судно вне зоны покрытия AIS. Показано последнее, что о нём известно: позиция ${fmtAge(s.age_s)}.`
+        : "Сейчас судно вне зоны покрытия AIS, позиция неизвестна. Показан паспорт из справочника.") : "" }));
     hydrateCard(popup, `/api/traffic/${encodeURIComponent(mmsi)}/track`);
     const btn = popup.getElement()?.querySelector("[data-add-fleet]");
     if (btn) btn.onclick = async () => {
@@ -1898,15 +1901,16 @@ async function runShipSearch(q) {
     <button class="sr-item" type="button" data-i="${i}">
       ${flagImg(s.flag_iso, s.flag)}
       <span class="sr-main"><b>${esc(s.name || "Без названия")}</b>${s.in_fleet ? ` <span class="tag">во флоте</span>` : ""}
-        <span class="muted small">${esc(s.type_name || "")} · MMSI ${esc(s.mmsi)}${s.imo ? ` · IMO ${esc(s.imo)}` : ""}${s.hin ? ` · HIN ${esc(s.hin)}` : ""}</span></span>
-      <span class="muted small">${s.lat != null ? fmtAge(s.age_s) : "нет позиции"}</span>
+        <span class="muted small">${esc(s.type_name || "")}${/^IMO:/.test(s.mmsi) ? "" : ` · MMSI ${esc(s.mmsi)}`}${s.imo ? ` · IMO ${esc(s.imo)}` : ""}${s.hin ? ` · HIN ${esc(s.hin)}` : ""}</span></span>
+      <span class="muted small">${s.lat != null ? (s.age_s > 7200 ? `видели ${fmtAge(s.age_s)}` : fmtAge(s.age_s)) : "нет позиции"}</span>
     </button>`).join("")
-    : `<div class="sr-empty muted small">Не найдено. Судно может быть вне зоны покрытия береговых станций AIS.</div>`;
+    : `<div class="sr-empty muted small">Не найдено. Такое судно ни разу не попадало в зону покрытия береговых станций AIS
+      с тех пор, как сайт ведёт справочник, и его нет в санкционных списках и задержаниях.</div>`;
   box.hidden = false;
   $$(".sr-item", box).forEach((b) => b.onclick = () => {
     const s = items[+b.dataset.i];
     box.hidden = true;
-    if (s.lat == null) { toast("Позиции нет", "Судно сейчас не передаёт AIS или вне зоны покрытия."); return; }
+    if (s.lat == null) { openShip(s.mmsi, s.name); return; }     // позиции нет — карточка с тем, что знаем
     map.flyTo([s.lat, s.lon], Math.max(map.getZoom(), 11), { duration: 0.8 });
     trackLayer.clearLayers();
     L.circleMarker([s.lat, s.lon], { radius: 14, weight: 2.5, color: "#ffffff", fill: false, dashArray: "4 3" })

@@ -29,7 +29,7 @@ from starlette.staticfiles import StaticFiles
 from . import access, alerts, config, db, fleet_import, news, rules, screening, users, zones
 from . import zone_log    # [журнал-заходов]
 from . import anomalies   # [подозрительное-поведение]
-from .ais import destination, incidents, ingest, photos, shipinfo, traffic
+from .ais import destination, incidents, ingest, photos, registry, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
 
@@ -265,6 +265,10 @@ async def api_ship_search(request: Request):
                      (user, user, f"{q}%", f"{q}%", like, like, hin, f"%{hin}%"))
     fleet_mmsi = {r["mmsi"] for r in fleet}
     items = await asyncio.to_thread(traffic.search, q, 12)
+    # суда, которые сейчас вне покрытия: из справочника всех когда-либо виденных
+    seen = {it["mmsi"] for it in items}
+    if len(items) < 12:
+        items += [it for it in await asyncio.to_thread(registry.search, q, 12) if it["mmsi"] not in seen][:12 - len(items)]
     for it in items:
         it["in_fleet"] = it["mmsi"] in fleet_mmsi
         if it["in_fleet"]:                                 # HIN есть только у судов флотов (в AIS его нет)
@@ -280,6 +284,17 @@ async def api_ship_search(request: Request):
         items.insert(0, {"mmsi": v["mmsi"], "imo": v["imo"], "hin": v["hin"], "name": v["name"], "lat": v["lat"], "lon": v["lon"],
                          "category": shipinfo.category(v["ship_type"]), "type_name": shipinfo.type_name(v["ship_type"]),
                          "flag": shipinfo.flag(m), "flag_iso": shipinfo.flag_iso(m), "in_fleet": True})
+    # в AIS не встречалось, но есть в санкционных списках или задержаниях — откроется карточка по IMO
+    if len(items) < 12:
+        imos = {str(it.get("imo") or "") for it in items}
+        num = q if q.isdigit() else None
+        for r in db.query("SELECT imo, name, 'санкционные списки' AS src FROM sanctions WHERE imo=? OR UPPER(name) LIKE ? "
+                          "UNION SELECT imo, name, 'задержание в порту' FROM detentions WHERE imo=? OR UPPER(name) LIKE ? "
+                          "LIMIT 12", (num, like, num, like)):
+            if r["imo"] and r["imo"] not in imos and len(items) < 12:
+                imos.add(r["imo"])
+                items.append({"mmsi": f"IMO:{r['imo']}", "imo": r["imo"], "name": r["name"], "lat": None, "lon": None,
+                              "type_name": f"в AIS не встречалось · {r['src']}", "in_fleet": False})
     items.sort(key=lambda it: not it.get("in_fleet"))
     return JSONResponse({"items": items[:12]})
 
@@ -289,8 +304,14 @@ async def api_traffic_ship(request: Request):
     mmsi = request.path_params["mmsi"]
     imo = mmsi[4:] if mmsi.startswith("IMO:") else ""
     if imo:                                    # судно из списков, известно только по IMO — ищем его MMSI в AIS
-        mmsi = traffic.find_imo(imo) or mmsi
+        mmsi = traffic.find_imo(imo) or await asyncio.to_thread(registry.find_imo, imo) or mmsi
     s = traffic.get(mmsi)
+    archived = False
+    if not s or s.get("lat") is None:          # сейчас не видно — последняя позиция и паспорт из справочника
+        old = await asyncio.to_thread(registry.get, mmsi)
+        if old:
+            s = {**old, **{k: v for k, v in (s or {}).items() if v is not None}}
+            archived = True
     if not s:
         # сейчас не видно в AIS — карточка из того, что знаем: последнее имя, IMO, санкции, задержания
         last = None if imo else db.query_one("SELECT ais_name, imo FROM ais_state WHERE mmsi=?", (mmsi,))
@@ -298,6 +319,7 @@ async def api_traffic_ship(request: Request):
         return JSONResponse({"offline": True, "mmsi": None if mmsi.startswith("IMO:") else mmsi, "imo": imo,
                              "name": last["ais_name"] if last else None, "screening": screening.lookup(imo)})
     d = traffic.details(s)
+    d["archived"] = archived
     if d["lat"] is not None:
         idx = zones.index()
         found = idx.evaluate(d["lon"], d["lat"], config.WARN_DISTANCE_NM)
@@ -1003,6 +1025,10 @@ async def _traffic_snapshot_loop(stop: asyncio.Event):
             await asyncio.to_thread(traffic.save)
         except Exception:  # noqa: BLE001
             log.exception("Не удалось сохранить снимок судов")
+        try:
+            await asyncio.to_thread(registry.flush)
+        except Exception:  # noqa: BLE001
+            log.exception("Не удалось обновить справочник судов")
 
 
 async def _screening_loop(stop: asyncio.Event):
@@ -1090,6 +1116,7 @@ async def lifespan(app):
         log.warning("ADMIN_PASSWORD не задан — вход в панель невозможен. Укажите его в .env")
     stop = asyncio.Event()
     await asyncio.to_thread(traffic.load)
+    await asyncio.to_thread(registry.flush)          # справочник сразу пополняется судами из снимка
     if config.AIS_MODE == "aisstream":
         from .ais import aisstream as ais_source
     else:
@@ -1109,6 +1136,7 @@ async def lifespan(app):
         try:
             n = traffic.save()
             log.info("Снимок судов сохранён при остановке: %d", n)
+            registry.flush()
         except Exception:  # noqa: BLE001
             log.exception("Не удалось сохранить снимок судов")
 
