@@ -791,3 +791,14 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .tab.active { background: var(--bg-3); border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
   [data-theme=light] .tab.active { background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
 }
+
+/* шапка на телефоне: «Выйти» — значком, название короче — чтобы поиску хватило места */
+.logout-btn svg { display: none; width: 20px; height: 20px; }
+@media (max-width: 820px) {
+  .topbar { gap: 8px; padding: 0 10px; }
+  .brand { font-size: 15px; }
+  .logout-btn span { display: none; }
+  .logout-btn svg { display: block; }
+  .theme-btn { width: 30px; height: 30px; }
+  .ship-search { min-width: 0; flex: 1 1 auto; }
+}
