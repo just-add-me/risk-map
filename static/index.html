@@ -299,6 +299,20 @@
       <button type="button" class="rb new" data-rb="new" title="Новые события по вашим судам — открыть в ленте"><i></i><b>0</b><span>новых событий</span></button>
       <div class="rb-pop" id="rb-pop" hidden></div>
     </div>
+    <!-- свёрнутая панель: узкая полоска со значками вкладок — видно, что панель есть, и можно открыть сразу нужную вкладку -->
+    <nav class="sb-rail" id="sb-rail" aria-label="Панель (свёрнута)">
+      <button type="button" data-open="" title="Развернуть панель" aria-label="Развернуть панель" class="rail-open">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button" data-open="fleet" title="Флот" aria-label="Флот">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15h18l-2.5 5h-13zM6 15V9h9l3 6M9 9V5h4v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
+      <button type="button" data-open="events" title="Лента" aria-label="Лента">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span class="rail-n" id="rail-count" hidden></span></button>
+      <button type="button" data-open="zones" title="Зоны" aria-label="Зоны">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
+      <button type="button" data-open="rules" title="Настройка уведомлений" aria-label="Настройка уведомлений">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.1-2.4.1-1.1-.1-1.1 2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.9-1.1L15.5 3h-4l-.4 2.6c-.7.3-1.3.6-1.9 1.1l-2.4-1-2 3.4 2 1.6-.1 1.1.1 1.1-2 1.6 2 3.4 2.4-1c.6.5 1.2.8 1.9 1.1l.4 2.6h4l.4-2.6c.7-.3 1.3-.6 1.9-1.1l2.4 1 2-3.4z" fill="currentColor"/></svg></button>
+    </nav>
     <button class="sb-toggle" id="sb-toggle" type="button" title="Свернуть панель" aria-label="Свернуть панель"
       aria-controls="sidebar" aria-expanded="true">‹</button>
     <aside class="ship-panel" id="ship-panel" hidden aria-label="Карточка судна">

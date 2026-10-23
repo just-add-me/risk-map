@@ -640,7 +640,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
     color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; box-shadow: 2px 0 8px rgba(0, 0, 0, .3); }
   .sb-toggle:hover { color: var(--text); background: var(--bg-3); width: 22px; }
 }
-@media (max-width: 820px) { .sb-toggle { display: none; } }
+@media (max-width: 820px) { .sb-toggle, .sb-rail { display: none !important; } }
 
 /* ---------- лента: одна строка фильтров ---------- */
 .feed-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
@@ -780,8 +780,27 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .leaflet-left, .riskbar, .legend { transition: transform .22s ease; }
   body:not(.sb-collapsed) .leaflet-left, body:not(.sb-collapsed) .legend { transform: translateX(416px); }
   body:not(.sb-collapsed) .riskbar { transform: translateX(416px); max-width: calc(100% - 500px); }
-  .sb-toggle { top: 22px; transform: none; left: 0; height: 40px; transition: left .22s ease; }
-  body:not(.sb-collapsed) .sb-toggle { left: 404px; }
+  /* свёрнуто — справа от полоски со значками */
+  body.sb-collapsed .leaflet-left, body.sb-collapsed .legend, body.sb-collapsed .riskbar { transform: translateX(58px); }
+  /* ярлычок «свернуть» — «ушко» на правом краю панели посередине высоты, далеко от кнопок масштаба */
+  .sb-toggle { top: 50%; transform: translateY(-50%); left: 403px; width: 16px; height: 64px; padding: 0; z-index: 1002;
+    background: var(--bg-2); border: 1px solid var(--line); border-left: 0; border-radius: 0 10px 10px 0;
+    color: var(--muted); font-size: 15px; box-shadow: 4px 0 10px rgba(0, 0, 0, .25); }
+  .sb-toggle:hover { width: 20px; color: var(--text); background: var(--bg-3); }
+  [data-theme=light] .sb-toggle { border-color: transparent; box-shadow: 4px 0 12px rgba(15, 23, 42, .1); }
+  body.sb-collapsed .sb-toggle { display: none; }
+  /* полоска со значками вкладок, пока панель свёрнута */
+  .sb-rail { position: absolute; z-index: 1001; top: 12px; left: 12px; display: none; flex-direction: column; gap: 4px; padding: 6px;
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 28px rgba(0, 0, 0, .35); }
+  [data-theme=light] .sb-rail { border-color: transparent; box-shadow: 0 8px 28px rgba(15, 23, 42, .12); }
+  body.sb-collapsed .sb-rail { display: flex; }
+  .sb-rail button { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px;
+    background: none; color: var(--muted); cursor: pointer; }
+  .sb-rail button:hover { background: var(--bg-3); color: var(--text); }
+  .sb-rail svg { width: 18px; height: 18px; }
+  .sb-rail .rail-open { color: var(--accent); border-bottom: 1px solid var(--line); border-radius: 9px 9px 4px 4px; margin-bottom: 2px; }
+  .rail-n { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+    background: var(--red); color: #fff; font: 700 9px/15px var(--font); }
   .ship-panel { top: 12px; right: 12px; border-radius: 16px; max-height: calc(100% - 24px); }
   [data-theme=light] .ship-panel { border-color: transparent; box-shadow: 0 10px 40px rgba(15, 23, 42, .14); }
   /* вкладки — переключатель-«таблетка» */
@@ -802,3 +821,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .theme-btn { width: 30px; height: 30px; }
   .ship-search { min-width: 0; flex: 1 1 auto; }
 }
+
+/* кнопки масштаба: неактивная (на пределе масштаба) — приглушённая, а не белая */
+.leaflet-bar a.leaflet-disabled { background: var(--bg-2); color: var(--muted); opacity: .45; cursor: default; }
+[data-theme=light] .leaflet-bar a.leaflet-disabled { background: #fff; }

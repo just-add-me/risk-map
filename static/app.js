@@ -2320,6 +2320,8 @@ function setUnread(n) {
   $("#bell-count").textContent = n > 99 ? "99+" : n;
   $("#tab-alert-count").hidden = !n;
   $("#tab-alert-count").textContent = n;
+  $("#rail-count").hidden = !n;                              // и на свёрнутой панели
+  $("#rail-count").textContent = n > 99 ? "99+" : n;
   document.title = n ? `(${n}) FleetRisk` : "FleetRisk";
 }
 
@@ -2867,6 +2869,12 @@ function setSidebarCollapsed(on) {
   setTimeout(() => map.invalidateSize(), 230);         // после анимации ширины
 }
 $("#sb-toggle").onclick = () => setSidebarCollapsed(!document.body.classList.contains("sb-collapsed"));
+$("#sb-rail").addEventListener("click", (e) => {        // значок на свёрнутой панели — развернуть сразу на этой вкладке
+  const b = e.target.closest("[data-open]");
+  if (!b) return;
+  setSidebarCollapsed(false);
+  if (b.dataset.open) switchTab(b.dataset.open);
+});
 if (localStorageGet("sidebarCollapsed") === "1") setSidebarCollapsed(true);
 
 /* ------------------------------------------------------------------ тема: светлая / тёмная */
