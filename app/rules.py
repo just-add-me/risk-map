@@ -477,6 +477,8 @@ def on_incident(inc: dict) -> None:
         return
     if inc["kind"] in incidents.ANOMALY_KINDS:      # [подозрительное-поведение]
         return                                       # [подозрительное-поведение]
+    if inc["kind"] in incidents.WORLD_NEWS_KINDS:   # «рядом с судном» по приблизительному месту — ложные срабатывания  [мировые-новости]
+        return                                       # [мировые-новости]
     for row in db.query("SELECT * FROM rules WHERE enabled=1 AND kind='incident'"):
         r = _load(row)
         if inc["kind"] not in r["params"]["kinds"]:

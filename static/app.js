@@ -1873,6 +1873,7 @@ const INC_STYLE = {
   news_risk: { color: "#f472b6", glyph: "N" }, news: { color: "#64748b", glyph: "N" },
   dark: { color: "#a78bfa", glyph: "◐" }, sts: { color: "#f59e0b", glyph: "⇄" },         // [подозрительное-поведение]
   spoof: { color: "#ef4444", glyph: "⌁" }, identity: { color: "#38bdf8", glyph: "ID" },  // [подозрительное-поведение]
+  world_critical: { color: "#e11d48", glyph: "◉" }, world_news: { color: "#0891b2", glyph: "◉" },  // [мировые-новости]
 };
 const incidentsLayer = L.layerGroup().addTo(map);
 const incMarkers = new Map();          // id происшествия → его метка (в одной точке их бывает несколько)
@@ -1943,13 +1944,13 @@ async function loadIncidents(force = false) {
 
 function incPopup(it) {
   return `<h4>${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</h4>
-    <div class="muted small">${shipLink(it.name || "MMSI " + it.mmsi, it.mmsi)} · ${fmtTime(it.ts)}${it.count > 1 ? (isNews(it.kind) ? ` · ${sourcesText(it.count)}, последний ${ago(it.last_seen)}`
+    <div class="muted small">${it.mmsi ? `${shipLink(it.name || "MMSI " + it.mmsi, it.mmsi)} · ` : it.name ? `${esc(it.name)} · ` : ""}${fmtTime(it.ts)}${it.count > 1 ? (isNews(it.kind) ? ` · ${sourcesText(it.count)}, последний ${ago(it.last_seen)}`
       : ` · повторялось ${it.count} раз, последний ${ago(it.last_seen)}`) : ""}</div>
     ${it.text ? `<p class="inc-text">«${esc(it.text)}»</p>` : ""}
     ${/^https?:\/\//.test(it.extra || "") ? `<p><a href="${esc(it.extra)}" target="_blank" rel="noopener">Открыть статью ↗</a></p>`
       : it.extra ? `<p class="muted small">${esc(it.extra)}</p>` : ""}
-    <dl class="kv"><dt>${/^IMO:/.test(it.mmsi) ? "IMO" : "MMSI"}</dt><dd>${esc(it.mmsi.replace(/^IMO:/, ""))}</dd>
-      ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
+    <dl class="kv">${it.mmsi ? `<dt>${/^IMO:/.test(it.mmsi) ? "IMO" : "MMSI"}</dt><dd>${esc(it.mmsi.replace(/^IMO:/, ""))}</dd>` : ""}
+      ${it.lat != null ? `<dt>${it.vessel_bound ? "Сейчас" : it.kind.startsWith("world_") ? "Место (примерно)" : "Позиция"}</dt><dd>${it.lat.toFixed(4)}, ${it.lon.toFixed(4)}</dd>` : ""}
       <dt>Источник</dt><dd>${esc(it.source || "AIS")}</dd></dl>
     ${popActs(it.starred)}`;
 }
@@ -2118,7 +2119,7 @@ function feedRow(x, i) {
     <div class="fi-meta"><span class="inc-dot" style="background:${st.color}">${st.glyph}</span><span class="fi-src">в мире</span><span class="fi-time">${fmtTime(it.last_seen)}${
       it.count > 1 && !isNews(it.kind) ? ` · повторялось ${it.count} раз` : ""}</span>${feedActs(it.starred)}</div>
     <div class="fi-event">${esc(it.label)}${it.test ? ` <span class="tag">тест</span>` : ""}</div>
-    <div class="fi-vessel">${it.name ? `${shipLink(it.name, it.mmsi)} ` : ""}<span class="muted">${shipIdText(it.mmsi)}</span></div>
+    ${it.mmsi || it.name ? `<div class="fi-vessel">${it.name ? `${shipLink(it.name, it.mmsi)} ` : ""}${it.mmsi ? `<span class="muted">${shipIdText(it.mmsi)}</span>` : ""}</div>` : ""}
     ${it.text ? `<div class="fi-quote">${esc(it.text)}</div>` : ""}${link ? `<div class="fi-link">${link}</div>` : ""}</li>`;
 }
 

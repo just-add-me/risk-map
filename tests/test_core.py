@@ -853,3 +853,56 @@ def test_route_starts_at_ship():
     assert fix < 0                                                             # путь стал короче на «хвост» назад
     out, _ = from_ship([[10.0, 179.9], [10.0, 181.0]], 10.0, -179.5)           # судно за 180-м меридианом
     assert out[0] == [10.0, 180.5]
+
+
+# [мировые-новости] начало
+RSS_SAMPLE = """<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>Iran Claims More Ships Struck Near Hormuz</title><link>https://gcaptain.com/a1</link>
+<pubDate>Thu, 22 Oct 2026 10:00:00 +0000</pubDate><description>&lt;p&gt;Revolutionary Guards claimed&lt;/p&gt;</description></item>
+<item><title>HD Hyundai to Build US Shipyard</title><link>https://gcaptain.com/a2</link>
+<pubDate>Thu, 22 Oct 2026 11:00:00 +0000</pubDate><description>Deal with Kiewit</description></item>
+</channel></rss>"""
+ATOM_SAMPLE = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>Oil Prices Jump After Houthi Strikes</title><link href="https://maritime-executive.com/b1"/>
+<published>2026-10-22T12:00:00Z</published><summary>Houthi attacks on Saudi energy targets</summary></entry>
+</feed>"""
+
+
+def test_world_news_feeds_and_answer():
+    """Ленты RSS и Atom разбираются; ответ ИИ находится и в ```json```, и после вступительной фразы."""
+    from app import world_news as wn
+    rss = wn.parse_feed(RSS_SAMPLE, "gCaptain")
+    assert [x["url"] for x in rss] == ["https://gcaptain.com/a1", "https://gcaptain.com/a2"]
+    assert rss[0]["summary"] == "Revolutionary Guards claimed" and rss[0]["published"].day == 22
+    atom = wn.parse_feed(ATOM_SAMPLE, "The Maritime Executive")
+    assert atom[0]["url"] == "https://maritime-executive.com/b1" and atom[0]["published"].hour == 12
+    assert wn.parse_answer('```json\n[{"n": 3, "importance": "high"}]\n```') == [{"n": 3, "importance": "high"}]
+    assert wn.parse_answer('Вот важное:\n[{"n": 1}, {"x": 2}]') == [{"n": 1}]
+    assert wn.parse_answer("[]") == []
+    import pytest
+    with pytest.raises(ValueError):
+        wn.parse_answer("Не могу ответить")
+
+
+def test_world_news_apply_to_feed():
+    """Оценка: важное → происшествие «в мире» с местом и ссылкой, остальное — «не важно», повторно не оценивается."""
+    from app import world_news as wn
+    db.connect()
+    wn.ensure()
+    for i, (url, title) in enumerate([("https://x/1", "Ships struck near Hormuz"), ("https://x/2", "Shipyard deal")]):
+        db.execute("INSERT INTO world_news(url, title, summary, outlet, found_at) VALUES(?,?,?,?,?)",
+                   (url, title, "", "gCaptain", db.now_iso()))
+    p = wn.pending()
+    assert len(p["ids"]) == 2 and f"[{p['ids'][0]}] gCaptain | Ships struck near Hormuz" in p["prompt"]
+    hormuz = p["ids"][0]
+    answer = json.dumps([{"n": hormuz, "importance": "critical", "place": "Ормузский пролив", "lat": 26.5, "lon": 56.3,
+                          "vessel": None, "summary_ru": "КСИР заявил об ударах по семи судам."}], ensure_ascii=False)
+    assert wn.apply(p["ids"], answer) == {"judged": 2, "important": 1}
+    inc = db.query_one("SELECT * FROM incidents WHERE kind='world_critical'")
+    assert inc["text"] == "Ормузский пролив: КСИР заявил об ударах по семи судам." and inc["extra"] == "https://x/1"
+    assert (inc["lat"], inc["lon"], inc["mmsi"], inc["source"]) == (26.5, 56.3, "", "gCaptain")
+    assert {r["status"] for r in db.query("SELECT status FROM world_news")} == {"important", "skip"}
+    assert wn.pending()["ids"] == [] and wn.apply(p["ids"], answer)["judged"] == 0      # повтор — без дублей
+    from app.ais import incidents
+    assert "world_critical" not in incidents.PRIVATE_KINDS                              # видно всем пользователям
+# [мировые-новости] конец

@@ -2,6 +2,7 @@
 
     python3 tools/remove_feature.py журнал-заходов
     python3 tools/remove_feature.py подозрительное-поведение
+    python3 tools/remove_feature.py мировые-новости
 
 Метка в коде — «[имя-функции]»: строка с меткой удаляется целиком, а строки между
 «[имя-функции] начало» и «[имя-функции] конец» — вместе с этими строками. Данные в базе
@@ -20,6 +21,10 @@ FEATURES = {
     "подозрительное-поведение": {"files": ["app/anomalies.py"],
                                  "drop_sql": "DROP TABLE IF EXISTS anomaly_state; "
                                              "DELETE FROM incidents WHERE kind IN ('dark','sts','spoof','identity');"},
+    "мировые-новости": {"files": ["app/world_news.py", "deploy/news_judge.sh"],
+                        "drop_sql": "DROP TABLE IF EXISTS world_news; "
+                                    "DELETE FROM incidents WHERE kind IN ('world_critical','world_news');",
+                        "note": "Уберите строку news_judge.sh из расписания: crontab -e"},
 }
 
 
@@ -53,6 +58,8 @@ def main(name: str) -> None:
             p.write_text(strip(text, tag), encoding="utf-8")
             print("очищен", p.relative_to(ROOT))
     print(f"Готово. Данные в базе остались; удалить их можно так:\n  {FEATURES[name]['drop_sql']}")
+    if FEATURES[name].get("note"):
+        print(FEATURES[name]["note"])
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from starlette.staticfiles import StaticFiles
 from . import access, alerts, config, db, fleet_import, news, rules, screening, users, zones
 from . import zone_log    # [журнал-заходов]
 from . import anomalies   # [подозрительное-поведение]
+from . import world_news  # [мировые-новости]
 from .ais import destination, incidents, ingest, photos, registry, shipinfo, traffic
 from .circular import pipeline
 from .layers import ibf, inl, ports
@@ -1126,6 +1127,20 @@ async def _news_loop(stop: asyncio.Event):
             await asyncio.wait_for(stop.wait(), timeout=news.INTERVAL_S)
 
 
+# [мировые-новости] начало
+async def _world_news_loop(stop: asyncio.Event):
+    """Мировые морские новости: собрать ленты раз в 30 минут; оценивает их deploy/news_judge.sh."""
+    await asyncio.sleep(60)
+    while not stop.is_set():
+        try:
+            log.info("Мировые новости: новых статей %s", await asyncio.to_thread(world_news.collect))
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка сбора мировых новостей")
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=world_news.INTERVAL_S)
+# [мировые-новости] конец
+
+
 async def _maintenance_loop(stop: asyncio.Event):
     while not stop.is_set():
         try:
@@ -1195,6 +1210,7 @@ async def lifespan(app):
         ("приём AIS", ais_source.run), ("циркуляры и IBF", _circular_loop), ("обслуживание", _maintenance_loop),
         ("снимок судов", _traffic_snapshot_loop), ("санкции и задержания", _screening_loop),
         ("новости о судах", _news_loop), ("данные карты", _map_warm_loop))]
+    tasks.append(asyncio.create_task(_supervise("мировые новости", _world_news_loop, stop)))  # [мировые-новости]
     try:
         yield
     finally:
