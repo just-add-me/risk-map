@@ -989,8 +989,8 @@ function shipCard(d, zonesHtml, opts = {}) {
     <div class="sc-head">${flagImg(d.flag_iso, d.flag)}
       <div><div class="sc-name">${esc(d.name || "Без названия")}</div>
       <div class="sc-type"><i class="dot" style="background:${TRAFFIC_COLORS[d.category] || TRAFFIC_COLORS.other}"></i> ${esc(d.type_name || "Тип не передан")}</div></div></div>
+    <div class="sc-risk ${riskClass(zonesHtml)}">${zonesHtml}</div>
     ${screeningBlock(d.screening)}
-    <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
     <div class="sc-actions">${opts.actions ? `<div class="sc-row">${opts.actions}</div>` : ""}
       <div class="sc-row"><button class="btn ghost sc-track" type="button">Скрыть путь</button>
       <a class="btn ghost" href="${mt}" target="_blank" rel="noopener">Подробнее ↗</a></div></div>
@@ -1002,7 +1002,6 @@ function shipCard(d, zonesHtml, opts = {}) {
     <div class="sc-route"><div><span class="muted small">Пункт назначения</span><b>${esc(d.destination || "не указан")}</b></div>
       <div class="sc-eta"><span class="muted small">ETA</span><b>${esc(d.eta || "—")}</b></div></div>
     <div class="sc-dest"></div>
-    <div class="sc-zones">${zonesHtml}</div>
     <div class="sc-grid">
       <div><span>Статус</span><b>${esc(d.nav_status || "—")}</b></div>
       <div><span>Скорость / курс</span><b>${sogCog}</b></div>
@@ -1011,6 +1010,7 @@ function shipCard(d, zonesHtml, opts = {}) {
       <div><span>Флаг</span><b>${esc(d.flag || "—")}</b></div>
       <div><span>IMO / MMSI${d.hin ? " / HIN" : ""}</span><b>${esc(d.imo || "—")}<br>${esc(d.mmsi)}${d.hin ? `<br><span class="sc-hin">${esc(d.hin)}</span>` : ""}</b></div>
     </div>
+    <div class="sc-photo">${shipSilhouette(d.category)}<div class="sc-credit"></div></div>
     <div class="sc-foot">Обновлено: <b>${fmtAge(opts.ageS)}</b>${d.ais_class ? ` · AIS класс ${esc(d.ais_class)}` : ""}${d.callsign ? ` · позывной ${esc(d.callsign)}` : ""}</div>
     <div class="sc-links">Тоннаж, год постройки, владелец:
       <a href="${mt}" target="_blank" rel="noopener">MarineTraffic</a> ·
@@ -1298,6 +1298,10 @@ function shipEventRow(e, i) {
     ${rest.length ? `<div class="fi-rule">${esc(rest.join(" ").replace(/^((?:Правило|Уведомление) «[^»]*»).*$/s, "$1").replace(/^Правило /, "Уведомление ").replace(/\.$/, ""))}</div>` : ""}</div>`;
 }
 
+// Карточка судна начинается с главного для брокера — где судно относительно зон риска
+function riskClass(zonesHtml) {
+  return zonesHtml.includes('class="zin"') ? "in" : zonesHtml.includes('class="znr"') ? "near" : "ok";
+}
 function zoneLines(inside, near) {
   return [
     ...inside.map((z) => `<div class="zin">● В зоне: ${esc(z.name)}${z.since ? ` <span class="muted">с ${fmtTime(z.since)}</span>` : ""}</div>`),
