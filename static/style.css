@@ -640,3 +640,20 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .sb-toggle:hover { color: var(--text); background: var(--bg-3); width: 22px; }
 }
 @media (max-width: 820px) { .sb-toggle { display: none; } }
+
+/* ---------- лента: одна строка фильтров ---------- */
+.feed-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); }
+.seg-b { border: 0; background: none; color: var(--muted); padding: 5px 10px; border-radius: 7px; cursor: pointer; font-size: 12.5px; white-space: nowrap; }
+.seg-b:hover { color: var(--text); }
+.seg-b.on { background: var(--bg-3); color: var(--text); font-weight: 600; }
+.feed-icons { display: inline-flex; gap: 2px; }
+.ico-b { position: relative; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px;
+  background: none; color: var(--muted); cursor: pointer; }
+.ico-b svg { width: 17px; height: 17px; fill: currentColor; stroke: currentColor; stroke-width: 0; }
+#btn-read-all svg { fill: none; stroke-width: 2.2; }
+.ico-b:hover { background: var(--bg-3); color: var(--text); }
+.ico-b.on, .ico-b[aria-pressed=true] { background: var(--bg-3); color: var(--accent); }
+.ico-b[data-feed=starred].on { color: #ffd166; }
+.ico-n { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--muted); color: var(--bg); font: 700 9px/14px var(--font); }

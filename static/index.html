@@ -204,17 +204,24 @@
 
     <!-- ЛЕНТА: всё, что сообщили правила по вашим судам, происшествия в мире и системные сообщения -->
     <section class="panel" id="panel-events">
-      <div class="feed-filters" role="tablist">
-        <button class="fchip on" type="button" data-feed="all">Всё</button>
-        <button class="fchip" type="button" data-feed="mine">Мои суда</button>
-        <button class="fchip" type="button" data-feed="world">В мире</button>
-        <button class="fchip" type="button" data-feed="system">Система</button>
-        <button class="fchip" type="button" data-feed="starred">★ Важное</button>
-        <button class="fchip" type="button" data-feed="trash" title="Удалённые за последние 7 дней — можно вернуть">Корзина</button>
-      </div>
-      <div class="row between feed-tools">
-        <label class="check"><input type="checkbox" id="n-unread-only"> Только непрочитанные</label>
-        <button class="text-btn" id="btn-read-all">Прочитать все</button>
+      <!-- одна строка: что показывать (переключатель) + значки: только новые, важное, корзина, прочитать всё -->
+      <div class="feed-bar">
+        <div class="seg" role="tablist" aria-label="Что показывать">
+          <button class="seg-b on" type="button" data-feed="all">Всё</button>
+          <button class="seg-b" type="button" data-feed="mine">Мои суда</button>
+          <button class="seg-b" type="button" data-feed="world">В мире</button>
+        </div>
+        <div class="feed-icons">
+          <button class="ico-b" type="button" id="feed-new" aria-pressed="false" title="Только новые (непрочитанные)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/></svg></button>
+          <button class="ico-b" type="button" data-feed="starred" title="Важное (отмеченное звёздочкой)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
+          <button class="ico-b" type="button" data-feed="trash" title="Корзина: удалённое за 7 дней — можно вернуть">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zM6 9h12l-1 12H7z"/></svg><span class="ico-n" hidden></span></button>
+          <button class="ico-b" type="button" id="btn-read-all" title="Отметить всё прочитанным">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 13l4 4 8-9M10 15l2 2 9-10" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <input type="checkbox" id="n-unread-only" hidden>
+        </div>
       </div>
       <ul class="feed-list" id="feed-list"></ul>
       <details class="card feed-more">

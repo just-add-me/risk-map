@@ -2064,12 +2064,16 @@ function renderTrash() {
   updateTrashCount();
 }
 function updateTrashCount() {
-  const b = $("#panel-events [data-feed=trash]");
+  const b = $("#panel-events [data-feed=trash] .ico-n");
+  b.hidden = !state.trash.length;
+  b.textContent = state.trash.length;
+  return;
   b.textContent = state.trash.length ? `Корзина ${state.trash.length}` : "Корзина";
 }
 
 function renderFeed() {
-  $("#panel-events .feed-tools").hidden = state.feedFilter === "trash";
+  // в корзине «только новые» и «прочитать всё» ни к чему
+  $("#feed-new").hidden = $("#btn-read-all").hidden = state.feedFilter === "trash";
   if (state.feedFilter === "trash") { renderTrash(); return; }
   const items = feedItems();
   const empty = { all: "Пока ничего нет.", mine: "По вашим судам событий нет. О чём сообщать — настраивается во вкладке «Уведомления».",
@@ -2424,6 +2428,13 @@ $("#legend-toggle").onclick = () => {
 };
 $("#z-search").oninput = (e) => { state.zoneFilter.q = e.target.value; applyZoneFilter(); };
 $("#n-unread-only").onchange = loadNotifications;
+$("#feed-new").onclick = () => {
+  const cb = $("#n-unread-only");
+  cb.checked = !cb.checked;
+  $("#feed-new").setAttribute("aria-pressed", String(cb.checked));
+  $("#feed-new").classList.toggle("on", cb.checked);
+  loadNotifications().catch(() => {});
+};
 $("#fleet-select").onchange = (e) => { state.fleetId = +e.target.value; localStorageSet("fleetId", state.fleetId); renderFleet(); };
 
 $("#btn-fleet-new").onclick = async () => {
