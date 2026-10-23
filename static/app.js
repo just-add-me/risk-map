@@ -570,6 +570,7 @@ $("#legend-items").addEventListener("click", async (e) => {
     const h = state.inc.hidden;
     if (!$("#inc-show").checked) { $("#inc-show").checked = true; h.clear(); Object.keys(state.inc.kinds).forEach((k) => k !== val && h.add(k)); }
     else if (h.has(val)) h.delete(val); else h.add(val);
+    saveIncHidden();
     renderIncidents();
   } else if (kind === "areas") {
     $("#areas-show").checked = !$("#areas-show").checked;
@@ -770,6 +771,7 @@ async function loadFleets() {
   const data = await api("/api/fleets");
   state.fleets = data.fleets;
   state.me = data.user;
+  state.mineSet = null;                             // суда своих флотов — пересчитать
   if (!state.fleets.find((f) => f.id === state.fleetId)) {
     const saved = +localStorageGet("fleetId");
     state.fleetId = (state.fleets.find((f) => f.id === saved) || state.fleets[0] || {}).id ?? null;
@@ -1803,8 +1805,16 @@ const INC_STYLE = {
 };
 const incidentsLayer = L.layerGroup().addTo(map);
 const incMarkers = new Map();          // id происшествия → его метка (в одной точке их бывает несколько)
-// «не управляется» бывает часто и обычно не авария — по умолчанию скрыто
-state.inc = { items: [], kinds: {}, hidden: new Set(["nuc"]), loadedAt: 0,
+// По умолчанию скрыто то, что чаще всего шум: «не управляется», аварийные маяки (обычно буи рыболовных сетей
+// и тесты), служебные сообщения. Выбор пользователя запоминается. У судов своих флотов видно всё.
+const INC_HIDDEN_DEFAULT = ["nuc", "sart", "epirb", "mob", "sar", "safety"];
+function savedIncHidden() {
+  try { const v = JSON.parse(localStorageGet("incHidden")); return Array.isArray(v) ? v : INC_HIDDEN_DEFAULT; }
+  catch { return INC_HIDDEN_DEFAULT; }
+}
+function saveIncHidden() { localStorageSet("incHidden", JSON.stringify([...state.inc.hidden])); }
+const isMine = (mmsi) => (state.mineSet ||= new Set(allVessels().map((v) => v.mmsi))).has(mmsi);
+state.inc = { items: [], kinds: {}, hidden: new Set(savedIncHidden()), loadedAt: 0,
   showRead: localStorageGet("incShowRead") === "1",   // просмотренные происшествия на карте
   peek: null };                                       // открыли из ленты — метку показываем, даже если просмотрена
 $("#inc-read-show").checked = state.inc.showRead;
@@ -1846,7 +1856,7 @@ function incIcon(it) {
 }
 
 function incVisible(it) {
-  return !state.inc.hidden.has(it.kind) && (it.test ? $("#inc-tests").checked : true);
+  return (isMine(it.mmsi) || !state.inc.hidden.has(it.kind)) && (it.test ? $("#inc-tests").checked : true);
 }
 
 async function loadIncidents(force = false) {
@@ -1906,6 +1916,7 @@ function renderIncidents() {
       <span class="muted">${counts[k] || 0}</span></button>`).join("");
   $$("#inc-kinds .fchip").forEach((b) => b.onclick = () => {
     if (inc.hidden.has(b.dataset.kind)) inc.hidden.delete(b.dataset.kind); else inc.hidden.add(b.dataset.kind);
+    saveIncHidden();
     renderIncidents();
     renderLegend();
   });
@@ -1929,11 +1940,47 @@ function renderIncidents() {
         .on("popupclose", () => {
           if (inc.peek === it.id) inc.peek = null;
           if (!inc.showRead) setTimeout(renderIncidents, 0);      // просмотренное убираем с карты
-        })
-        .addTo(incidentsLayer));
+        }));
+    placeIncMarkers();
   }
   renderFeed();
 }
+
+// На мелком масштабе соседние метки (ближе INC_CELL пикселей) — одним кружком с числом; нажатие — приблизить
+const INC_CLUSTER_UNTIL = 8, INC_CELL = 46;
+const SEV_RANK = { critical: 2, warning: 1, info: 0 };
+function placeIncMarkers() {
+  const z = map.getZoom();
+  const items = state.inc.items.filter((it) => incMarkers.has(it.id));
+  if (z >= INC_CLUSTER_UNTIL) { items.forEach((it) => incMarkers.get(it.id).addTo(incidentsLayer)); return; }
+  const cells = new Map();
+  for (const it of items) {
+    const p = map.latLngToLayerPoint(incMarkers.get(it.id).getLatLng());
+    const key = `${Math.floor(p.x / INC_CELL)}:${Math.floor(p.y / INC_CELL)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(it);
+  }
+  for (const g of cells.values()) {
+    if (g.length < 2 || g.some((it) => it.id === state.inc.peek)) { g.forEach((it) => incMarkers.get(it.id).addTo(incidentsLayer)); continue; }
+    const sev = g.reduce((a, it) => (SEV_RANK[it.severity] > SEV_RANK[a] ? it.severity : a), "info");
+    const kinds = {};
+    g.forEach((it) => { kinds[it.label] = (kinds[it.label] || 0) + 1; });
+    const b = L.latLngBounds(g.map((it) => [it.lat, it.lon]));
+    L.marker(b.getCenter(), {
+      icon: L.divIcon({ className: `inc-cluster ${sev}`, iconSize: [30, 30], iconAnchor: [15, 15], html: `<span>${g.length}</span>` }),
+      zIndexOffset: 1900, keyboard: false,
+    }).bindTooltip(Object.entries(kinds).sort((a, c) => c[1] - a[1]).map(([k, n]) => `${esc(k)}: ${n}`).join("<br>"),
+      { direction: "top", offset: [0, -14] })
+      .on("click", () => map.fitBounds(b.pad(0.6), { maxZoom: Math.max(z + 3, 7) }))
+      .addTo(incidentsLayer);
+  }
+}
+let incZoomWasClustered = true;
+map.on("zoomend", () => {                       // перегруппировка нужна только на мелком масштабе (или при переходе через порог)
+  const now = map.getZoom() < INC_CLUSTER_UNTIL;
+  if ((now || incZoomWasClustered) && state.inc?.items.length) renderIncidents();
+  incZoomWasClustered = now;
+});
 
 /* ------------------------------------------------------------------ лента */
 // Одна лента: уведомления (что сообщили ваши правила, системные сообщения) + происшествия в мире.
@@ -2011,17 +2058,26 @@ function feedActs(starred) {
       title="${starred ? "Убрать из важного" : "Пометить важным"}" aria-pressed="${!!starred}">${starred ? "★" : "☆"}</button><button
       type="button" class="fi-act" data-act="del" title="Удалить из моей ленты" aria-label="Удалить">✕</button></span>`;
 }
+// Событие судна своего флота живёт в двух видах — уведомлением в ленте и меткой происшествия на карте.
+// Для пользователя это одно событие: «важное» и «удалить» применяются к обоим сразу.
+function eventTwins(x) {
+  return x.n ? (state.inc?.items || []).filter((it) => sameEvent(x.n, it)).map((it) => ({ type: "inc", it }))
+    : state.notifications.filter((n) => sameEvent(n, x.it)).map((n) => ({ type: "notif", n }));
+}
 async function feedMark(x, change) {
-  const key = x.type === "notif" ? `n:${x.n.id}` : `i:${x.it.id}`;
-  const r = await api("/api/feed/mark", { json: { items: [key], ...change } });
-  if ("starred" in change) (x.n || x.it).starred = change.starred;
+  const all = [x, ...eventTwins(x)];
+  const keys = all.map((y) => (y.type === "notif" ? `n:${y.n.id}` : `i:${y.it.id}`));
+  const r = await api("/api/feed/mark", { json: { items: keys, ...change } });
+  if ("starred" in change) all.forEach((y) => { (y.n || y.it).starred = change.starred; });
   if (change.hidden) {
-    if (x.n) state.notifications = state.notifications.filter((n) => n !== x.n);
-    else { state.inc.items = state.inc.items.filter((it) => it !== x.it); renderIncidents(); }
+    const gone = new Set(all.map((y) => y.n || y.it));
+    state.notifications = state.notifications.filter((n) => !gone.has(n));
+    state.inc.items = state.inc.items.filter((it) => !gone.has(it));
+    renderIncidents();
     setUnread(r.unread);
     loadTrash().then(updateTrashCount).catch(() => {});
     toast("Удалено в корзину", "Нажмите здесь, чтобы вернуть. В корзине хранится 7 дней", "info", async () => {
-      const back = await api("/api/feed/mark", { json: { items: [key], hidden: false } });
+      const back = await api("/api/feed/mark", { json: { items: keys, hidden: false } });
       setUnread(back.unread);
       await Promise.all([loadNotifications(), loadIncidents(true)]);
     });
@@ -2036,10 +2092,17 @@ async function loadTrash() {
   state.trash = d.items;
   if (state.feedFilter === "trash") renderFeed();
 }
+// пара «уведомление + метка» одного события своего судна — в корзине одной строкой (уведомлением)
+function trashTwin(a, b) {
+  const [n, i] = a.type === "notif" ? [a, b] : [b, a];
+  return n.type === "notif" && i.type === "inc" && n.mmsi && n.mmsi === i.mmsi
+    && (n.title || "").toLowerCase().endsWith(": " + (i.title || "").toLowerCase());
+}
 function renderTrash() {
   const sevCls = (x) => x.severity || "info";
-  $("#feed-list").innerHTML = (state.trash.length ? `<li class="trash-note muted small">Удалённое хранится здесь 7 дней, потом удаляется насовсем.</li>` : "")
-    + state.trash.map((x, i) => `<li class="feed-item ${sevCls(x)} read trash" data-i="${i}">
+  const list = state.trash.filter((t) => !(t.type === "inc" && state.trash.some((o) => o !== t && trashTwin(o, t))));
+  $("#feed-list").innerHTML = (list.length ? `<li class="trash-note muted small">Удалённое хранится здесь 7 дней, потом удаляется насовсем.</li>` : "")
+    + list.map((x, i) => `<li class="feed-item ${sevCls(x)} read trash" data-i="${i}">
       <div class="fi-meta"><span class="fi-src">${x.type === "inc" ? "в мире" : x.mmsi ? "мои суда" : "система"}</span>
         <span class="fi-time">удалено ${fmtTime(x.deleted_at)}</span></div>
       <div class="fi-event">${esc(x.type === "inc" ? x.title : splitTitle(x.title, x.mmsi).event)}</div>
@@ -2050,10 +2113,13 @@ function renderTrash() {
         <button class="btn ghost" type="button" data-restore="${i}">Вернуть в ленту</button></div></li>`).join("")
     || `<li class="empty muted">Корзина пуста. Удалённое из ленты (✕ на карточке) хранится здесь 7 дней.</li>`;
   $$("#feed-list [data-restore]").forEach((b) => b.onclick = async () => {
-    const x = state.trash[+b.dataset.restore];
+    const x = list[+b.dataset.restore];
     b.disabled = true;
     try {
-      const r = await api("/api/feed/mark", { json: { items: [x.item], hidden: false } });
+      // вместе с «двойником» (уведомление ↔ метка того же события), если он тоже в корзине
+      const twins = state.trash.filter((t) => t !== x && trashTwin(x, t));
+      const r = await api("/api/feed/mark", { json: { items: [x.item, ...twins.map((t) => t.item)], hidden: false } });
+      state.trash = state.trash.filter((t) => !twins.includes(t));
       setUnread(r.unread);
       state.trash = state.trash.filter((t) => t !== x);
       renderFeed();
@@ -2064,11 +2130,10 @@ function renderTrash() {
   updateTrashCount();
 }
 function updateTrashCount() {
+  const n = state.trash.filter((t) => !(t.type === "inc" && state.trash.some((o) => o !== t && trashTwin(o, t)))).length;
   const b = $("#panel-events [data-feed=trash] .ico-n");
-  b.hidden = !state.trash.length;
-  b.textContent = state.trash.length;
-  return;
-  b.textContent = state.trash.length ? `Корзина ${state.trash.length}` : "Корзина";
+  b.hidden = !n;
+  b.textContent = n;
 }
 
 function renderFeed() {
