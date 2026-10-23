@@ -11,12 +11,13 @@
   --green: #4fd18b;
   --violet: #b48cff;
   --radius: 8px;
-  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;   /* цифры — моноширинные за счёт tnum */
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font);
+  font-feature-settings: "tnum" 1, "cv11" 1; letter-spacing: -0.003em; }
 button, input, select { font: inherit; color: inherit; }
 a { color: var(--accent); }
 [hidden] { display: none !important; }
@@ -696,4 +697,97 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .rb { height: 30px; padding: 0 9px 0 7px; }
   .rb span { display: none; }                         /* на телефоне — только числа с цветной точкой */
   .rb-pop { width: min(330px, calc(100vw - 70px)); }
+}
+
+/* =====================================================================================
+   ТЕМЫ: тёмная (по умолчанию в стилях выше) и светлая — [data-theme=light] на <html>.
+   Выбор — кнопкой в шапке (запоминается), без выбора — как в системе.
+   ===================================================================================== */
+:root[data-theme=light] {
+  --bg: #f4f6f9; --bg-2: #ffffff; --bg-3: #eef2f6; --line: #e2e8ef;
+  --text: #0f172a; --muted: #64748b; --accent: #0e7490;
+  --red: #dc2626; --amber: #c2410c; --green: #15803d; --violet: #7c3aed;
+  color-scheme: light;
+}
+[data-theme=light] .topbar { background: #fff; border-bottom-color: transparent; box-shadow: 0 1px 0 #e9edf2, 0 2px 12px rgba(15, 23, 42, .04); }
+[data-theme=light] .chip { background: var(--bg-3); border-color: transparent; }
+[data-theme=light] .chip.live { background: #dcfce7; color: #15803d; }
+[data-theme=light] .chip.demo { background: #ffedd5; color: #c2410c; }
+[data-theme=light] .ship-search input { background: var(--bg-3); border-color: transparent; }
+[data-theme=light] .ship-search input:focus { background: #fff; border-color: #a5d8e6; box-shadow: 0 0 0 3px rgba(14, 116, 144, .12); }
+[data-theme=light] #map { background: #e9edf1; }
+[data-theme=light] .btn { color: #fff; }
+[data-theme=light] .btn.ghost { color: var(--text); background: #fff; }
+[data-theme=light] .fchip.on { background: #ecfeff; border-color: #a5e3ee; color: #0e7490; }
+[data-theme=light] .tag.amended, [data-theme=light] .tag.added { border-color: #fdba74; }
+[data-theme=light] .legend { background: rgba(255, 255, 255, .96); border-color: transparent; box-shadow: 0 6px 24px rgba(15, 23, 42, .12); }
+[data-theme=light] .statusbar { background: rgba(255, 255, 255, .82); color: #94a3b8; }
+[data-theme=light] .leaflet-control-attribution { background: rgba(255, 255, 255, .7) !important; color: #94a3b8 !important; }
+[data-theme=light] .leaflet-control-attribution a { color: #64748b; }
+[data-theme=light] .leaflet-popup-content-wrapper, [data-theme=light] .leaflet-popup-tip,
+[data-theme=light] .leaflet-tooltip { border-color: transparent; box-shadow: 0 8px 28px rgba(15, 23, 42, .16); }
+[data-theme=light] .login-body { background: radial-gradient(1200px 600px at 70% 20%, #e0f2f7, var(--bg)); }
+[data-theme=light] .sc-photo { background: #eef3f6; }
+[data-theme=light] #sc-sky stop:first-child { stop-color: #f1f6f9; }
+[data-theme=light] #sc-sky stop:last-child { stop-color: #e2ebf0; }
+[data-theme=light] .sc-sil > path:last-child { fill: #c9dbe5; opacity: 1; }
+[data-theme=light] .sc-credit { color: #64748b; text-shadow: none; }
+[data-theme=light] .sc-credit a { color: #475569; }
+[data-theme=light] .modal { background: rgba(15, 23, 42, .35); }
+[data-theme=light] .rb { background: rgba(255, 255, 255, .96); border-color: transparent; box-shadow: 0 4px 14px rgba(15, 23, 42, .12); }
+[data-theme=light] .rb-pop { box-shadow: 0 12px 34px rgba(15, 23, 42, .16); border-color: transparent; }
+[data-theme=light] .ico-n { color: #fff; }
+[data-theme=light] .ship-icon svg { filter: drop-shadow(0 1px 1.5px rgba(15, 23, 42, .35)); }
+[data-theme=light] .inc-icon span { box-shadow: 0 1px 4px rgba(15, 23, 42, .25); }
+[data-theme=light] .zone-emblem span { background: #fff; box-shadow: 0 2px 6px rgba(15, 23, 42, .2); }
+[data-theme=light] .zone-emblem.sel span { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--c); }
+[data-theme=light] .sc-risk.in { background: #fef2f2; } [data-theme=light] .sc-risk.near { background: #fff7ed; }
+[data-theme=light] .sc-risk { background: #f0fdf4; }
+[data-theme=light] .toast { box-shadow: 0 10px 30px rgba(15, 23, 42, .16); }
+[data-theme=light] .tour-spot { box-shadow: 0 0 0 9999px rgba(15, 23, 42, .45); }
+/* лента: белые карточки без толстых цветных полос; новое — голубоватое с полоской, прочитанное — серое */
+[data-theme=light] .feed-item { background: #fff; border: 1px solid var(--line); border-left-width: 1px; border-radius: 12px; position: relative; }
+[data-theme=light] .feed-item.unread { background: #f0fbfd; border-color: #bfe7ef; box-shadow: none; }
+[data-theme=light] .feed-item.unread::before { content: ""; position: absolute; left: -1px; top: 12px; bottom: 12px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent); }
+[data-theme=light] .feed-item.read { background: #fff; border-color: var(--line); }
+[data-theme=light] .feed-item.read > * { opacity: .75; }
+[data-theme=light] .feed-item.critical .fi-event { color: #b91c1c; } [data-theme=light] .feed-item.warning .fi-event { color: #b45309; }
+[data-theme=light] .feed-item.starred { box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .45); }
+[data-theme=light] .fi-zone { background: var(--bg-3); border-left: 0; border-radius: 8px; }
+[data-theme=light] .fi-star.on, [data-theme=light] .ico-b[data-feed=starred].on { color: #d97706; }
+[data-theme=light] .inc-cluster span { border-color: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .3); }
+
+/* кнопка темы в шапке */
+.theme-btn { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 0; background: none;
+  color: var(--muted); cursor: pointer; }
+.theme-btn:hover { background: var(--bg-3); color: var(--text); }
+.theme-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.theme-btn .i-sun { display: none; } [data-theme=light] .theme-btn .i-sun { display: block; } [data-theme=light] .theme-btn .i-moon { display: none; }
+
+/* =====================================================================================
+   КОМПЬЮТЕР: карта на всю ширину, левая панель и карточка судна — «острова» над ней
+   ===================================================================================== */
+@media (min-width: 821px) {
+  .layout { position: relative; }
+  .map-wrap { position: absolute; inset: 0; }
+  .sidebar { position: absolute; z-index: 1001; top: 12px; left: 12px; bottom: 12px; width: 392px; border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); overflow: hidden;
+    transition: transform .22s ease, opacity .22s ease; }
+  [data-theme=light] .sidebar { border-color: transparent; box-shadow: 0 10px 40px rgba(15, 23, 42, .12), 0 1px 3px rgba(15, 23, 42, .06); }
+  body.sb-collapsed .sidebar { width: 392px; transform: translateX(-420px); opacity: 0; pointer-events: none; }
+  /* всё, что на карте у левого края, — правее панели */
+  .leaflet-left, .riskbar, .legend { transition: transform .22s ease; }
+  body:not(.sb-collapsed) .leaflet-left, body:not(.sb-collapsed) .legend { transform: translateX(416px); }
+  body:not(.sb-collapsed) .riskbar { transform: translateX(416px); max-width: calc(100% - 500px); }
+  .sb-toggle { top: 22px; transform: none; left: 0; height: 40px; transition: left .22s ease; }
+  body:not(.sb-collapsed) .sb-toggle { left: 404px; }
+  .ship-panel { top: 12px; right: 12px; border-radius: 16px; max-height: calc(100% - 24px); }
+  [data-theme=light] .ship-panel { border-color: transparent; box-shadow: 0 10px 40px rgba(15, 23, 42, .14); }
+  /* вкладки — переключатель-«таблетка» */
+  .tabs { margin: 12px 12px 6px; padding: 3px; background: var(--bg); border: 0; border-radius: 11px; flex-wrap: nowrap; }
+  [data-theme=light] .tabs { background: var(--bg-3); }
+  .tab { border: 0; border-radius: 8px; padding: 7px 8px; font-size: 13px; }
+  .tab.active { background: var(--bg-3); border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+  [data-theme=light] .tab.active { background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
 }

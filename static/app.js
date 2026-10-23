@@ -52,8 +52,10 @@ const ago = (iso) => {
 
 /* ------------------------------------------------------------------ карта */
 const map = L.map("map", { zoomControl: true, worldCopyJump: true, minZoom: 2 }).setView([25, 40], 4);
-// Тёмная подложка Esri: работает без ключа (CARTO стал требовать API-ключ)
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+// Подложка Esri (работает без ключа; CARTO стал требовать API-ключ) — тёмная или светлая, по теме
+const isLight = () => document.documentElement.dataset.theme === "light";
+const baseUrl = () => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${isLight() ? "Light" : "Dark"}_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
+const baseLayer = L.tileLayer(baseUrl(), {
   attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
   maxNativeZoom: 16, maxZoom: 18,
 }).addTo(map);
@@ -223,8 +225,13 @@ const dissolved = () => !!state.zonesFC?.outlines?.length && !state.zoneFilter.q
 
 function territoryStyle(f) {
   const t = ZONE_TYPES[f.properties.type], layer = f.properties.layer;
-  return { color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
-    fillOpacity: layer === "ibf" ? 0 : 0.07, glow: layer === "ibf" ? 0.8 : 1, dashArray: t.dash || null, interactive: false };
+  return lightZone({ color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
+    fillOpacity: layer === "ibf" ? 0 : 0.07, glow: layer === "ibf" ? 0.8 : 1, dashArray: t.dash || null, interactive: false });
+}
+// светлая тема: зоны тонкой линией без неонового свечения, заливка чуть плотнее (на светлой карте 7% не видно)
+function lightZone(s) {
+  if (!isLight()) return s;
+  return { ...s, glow: 0, weight: Math.min(s.weight || 1.2, 1.6), fillOpacity: s.fillOpacity ? Math.min(0.2, s.fillOpacity * 1.7) : s.fillOpacity };
 }
 
 function zoneStyle(f) {
@@ -232,7 +239,7 @@ function zoneStyle(f) {
   const t = ZONE_TYPES[zoneType(p)];
   const layer = layerOf(p);
   if (dissolved() && layer !== "inl") {        // видна «территория», сама зона — только для нажатия и выделения
-    if (state.selectedZone === p.id) return { color: t.color, weight: 2.2, opacity: 1, fillColor: t.color, fillOpacity: 0.14, glow: 1.6 };
+    if (state.selectedZone === p.id) return lightZone({ color: t.color, weight: 2.2, opacity: 1, fillColor: t.color, fillOpacity: 0.14, glow: 1.6 });
     if (isChanged(p)) return { color: t.color, weight: 1.8, opacity: 0.9, dashArray: "7 4", fillOpacity: 0, glow: 0 };
     return { stroke: false, fill: true, fillOpacity: 0, glow: 0 };
   }
@@ -243,7 +250,7 @@ function zoneStyle(f) {
   if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.02, glow: 0.35, opacity: 0.6 });   // вне сезона — бледнее
   if (isChanged(p)) Object.assign(s, { weight: s.weight + 0.6, dashArray: "7 4" });     // изменена: пунктир цветом самой зоны
   if (state.selectedZone === p.id) Object.assign(s, { weight: 2.2, dashArray: null, fillOpacity: 0.14, glow: 1.6 });
-  return s;
+  return lightZone(s);
 }
 
 function selectZone(id) {
@@ -1159,7 +1166,9 @@ const shipPanel = {
   padding() {
     const m = map.getContainer().getBoundingClientRect(), r = this.el.getBoundingClientRect();
     const bottom = r.width > m.width * 0.6;
-    return { paddingTopLeft: [40, 40], paddingBottomRight: bottom ? [40, m.bottom - r.top + 20] : [m.right - r.left + 20, 40] };
+    const sb = $("#sidebar").getBoundingClientRect();             // на компьютере панель «парит» над картой слева
+    const left = !isPhone() && !document.body.classList.contains("sb-collapsed") ? Math.max(40, sb.right - m.left + 30) : 40;
+    return { paddingTopLeft: [left, 40], paddingBottomRight: bottom ? [40, m.bottom - r.top + 20] : [m.right - r.left + 20, 40] };
   },
 };
 $("#ship-panel-close").onclick = () => shipPanel.close();
@@ -2856,3 +2865,17 @@ function setSidebarCollapsed(on) {
 }
 $("#sb-toggle").onclick = () => setSidebarCollapsed(!document.body.classList.contains("sb-collapsed"));
 if (localStorageGet("sidebarCollapsed") === "1") setSidebarCollapsed(true);
+
+/* ------------------------------------------------------------------ тема: светлая / тёмная */
+function setTheme(t, save = true) {
+  document.documentElement.dataset.theme = t;
+  if (save) localStorageSet("theme", t);
+  baseLayer.setUrl(baseUrl());
+  zonesLayer.setStyle(zoneStyle);
+  territoryLayer.setStyle(territoryStyle);
+}
+$("#btn-theme").onclick = () => setTheme(isLight() ? "dark" : "light");
+// пользователь тему не выбирал — следуем за системой (например, ночной режим по расписанию)
+matchMedia("(prefers-color-scheme: light)").addEventListener?.("change", (e) => {
+  if (!["light", "dark"].includes(localStorageGet("theme"))) setTheme(e.matches ? "light" : "dark", false);
+});
