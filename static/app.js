@@ -52,6 +52,17 @@ const ago = (iso) => {
 
 /* ------------------------------------------------------------------ карта */
 const map = L.map("map", { zoomControl: true, worldCopyJump: true, minZoom: 2 }).setView([25, 40], 4);
+// Плавные переходы к судну, событию, зоне. Обычный fitBounds/setView при разнице масштабов больше 4
+// не анимируется, а перескакивает — с обзора мира к судну это резкий скачок. Перелёт — всегда плавный.
+const FLY = { duration: 1.1, easeLinearity: 0.3 };
+function smoothFit(bounds, opts = {}) {
+  const b = L.latLngBounds(bounds);
+  const target = map.getBoundsZoom(b, false, L.point(0, 0));
+  // уже почти на месте — короткое движение без «подлёта» через отдаление
+  if (Math.abs(target - map.getZoom()) < 1 && map.getBounds().contains(b)) return map.fitBounds(b, { ...opts, animate: true });
+  return map.flyToBounds(b, { ...opts, ...FLY });
+}
+const smoothTo = (latlng, zoom) => map.flyTo(latlng, zoom, FLY);
 // Подложка Esri (работает без ключа; CARTO стал требовать API-ключ) — тёмная или светлая, по теме
 const isLight = () => document.documentElement.dataset.theme === "light";
 const baseUrl = () => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${isLight() ? "Light" : "Dark"}_Gray_Base/MapServer/tile/{z}/{y}/{x}`;
@@ -650,7 +661,7 @@ function renderZonesPanel() {
 function focusZone(i) {
   const f = state.zonesFC.features[i];
   const layer = L.geoJSON(f);
-  map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 7 });
+  smoothFit(layer.getBounds(), { padding: [30, 30], maxZoom: 7 });
   zonesLayer.eachLayer((l) => { if (!l.feature.wrapCopy && l.feature.properties.id === f.properties.id) l.openPopup(layer.getBounds().getCenter()); });
 }
 
@@ -768,7 +779,7 @@ function portSearch(q) {
 
 function focusPort(idx) {
   const p = state.ports[idx];
-  map.setView([p.lat, p.lon], Math.max(map.getZoom(), 8));
+  smoothTo([p.lat, p.lon], Math.max(map.getZoom(), 8));
   if (!state.showPorts) { state.showPorts = true; updatePortsVisibility(); renderZoneFilters(); }
   openPort(p);
 }
@@ -986,9 +997,9 @@ async function selectVessel(mmsi, fly) {
     else toast("Позиция ещё не получена", "Ждём первое сообщение AIS от этого судна.");
     return;
   }
-  if (fly) map.flyTo([v.position.lat, v.position.lon], Math.max(map.getZoom(), 6), { duration: 0.8 });
+  if (fly) smoothTo([v.position.lat, v.position.lon], Math.max(map.getZoom(), 6));
   if (shipPanel.isOpen() && shipPanel.mmsi === mmsi) return;
-  setTimeout(() => openFleetCard(v), fly ? 850 : 0);
+  setTimeout(() => openFleetCard(v), fly ? 1150 : 0);
 }
 
 function openFleetCard(v) {
@@ -1294,7 +1305,7 @@ async function loadShipPath(el, popup, trackUrl) {
   // весь путь — в свободной части карты, не под панелью; совсем короткий путь не приближаем сильнее 10
   const bounds = L.latLngBounds([here]);
   pathLayer.eachLayer((l) => bounds.extend(l.getBounds ? l.getBounds() : l.getLatLng()));
-  if (map.hasLayer(pathLayer)) map.fitBounds(bounds, { ...popup.padding(), maxZoom: Math.max(map.getZoom(), 10) });
+  if (map.hasLayer(pathLayer)) smoothFit(bounds, { ...popup.padding(), maxZoom: Math.max(map.getZoom(), 10) });
 }
 
 // Новость — сюжет: одинаковые статьи разных изданий схлопнуты, count — сколько изданий написали
@@ -1408,7 +1419,7 @@ function renderTraffic() {
   for (const c of t.data.clusters) {
     L.marker([c.lat, c.lon], { icon: clusterIcon(c), zIndexOffset: 500 })
       .bindTooltip(clusterTooltip(c), { direction: "top", offset: [0, -14] })
-      .on("click", () => map.fitBounds([[c.bbox[1], c.bbox[0]], [c.bbox[3], c.bbox[2]]], { padding: [50, 50], maxZoom: 12 }))
+      .on("click", () => smoothFit([[c.bbox[1], c.bbox[0]], [c.bbox[3], c.bbox[2]]], { padding: [50, 50], maxZoom: 12 }))
       .addTo(trafficLayer);
   }
   const fleet = new Set(allVessels().map((v) => v.mmsi));
@@ -1500,7 +1511,7 @@ async function openTrafficShip(mmsi, latlng, fly = false, name = "") {
     if (s.offline) { popup.setContent(offlineCard(s, name)); return; }
     if (fly && s.lat != null) {                      // открыли по названию — показываем, где судно сейчас
       shipPanel.latlng = L.latLng(s.lat, s.lon);
-      map.fitBounds(L.latLngBounds([shipPanel.latlng, shipPanel.latlng]), { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
+      smoothFit([shipPanel.latlng, shipPanel.latlng], { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
     }
     const zs = s.zones || [];
     const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
@@ -2027,7 +2038,7 @@ function placeIncMarkers() {
       zIndexOffset: 1900, keyboard: false,
     }).bindTooltip(Object.entries(kinds).sort((a, c) => c[1] - a[1]).map(([k, n]) => `${esc(k)}: ${n}`).join("<br>"),
       { direction: "top", offset: [0, -14] })
-      .on("click", () => map.fitBounds(b.pad(0.6), { maxZoom: Math.max(z + 3, 7) }))
+      .on("click", () => smoothFit(b.pad(0.6), { maxZoom: Math.max(z + 3, 7) }))
       .addTo(incidentsLayer);
   }
 }
@@ -2214,8 +2225,8 @@ function renderFeed() {
     const it = x.it;
     if (it.lat == null) { markIncRead(it); return; }
     if (it.read && !state.inc.showRead) { state.inc.peek = it.id; renderIncidents(); }   // просмотренное — вернём метку на время
-    map.flyTo([it.lat, it.lon], Math.max(map.getZoom(), 9), { duration: 0.8 });
-    setTimeout(() => incMarkers.get(it.id)?.openPopup(), 900);
+    smoothTo([it.lat, it.lon], Math.max(map.getZoom(), 9));
+    setTimeout(() => incMarkers.get(it.id)?.openPopup(), 1250);
   });
 }
 $$("#panel-events [data-feed]").forEach((b) => b.onclick = () => {
@@ -2278,14 +2289,14 @@ async function runShipSearch(q) {
     const s = items[+b.dataset.i];
     box.hidden = true;
     if (s.lat == null) { openShip(s.mmsi, s.name); return; }     // позиции нет — карточка с тем, что знаем
-    map.flyTo([s.lat, s.lon], Math.max(map.getZoom(), 11), { duration: 0.8 });
+    smoothTo([s.lat, s.lon], Math.max(map.getZoom(), 11));
     trackLayer.clearLayers();
     L.circleMarker([s.lat, s.lon], { radius: 14, weight: 2.5, color: "#ffffff", fill: false, dashArray: "4 3" })
       .addTo(trackLayer);
     setTimeout(() => {
       if (s.in_fleet) selectVessel(s.mmsi, false);
       else openTrafficShip(s.mmsi, L.latLng(s.lat, s.lon));
-    }, 900);
+    }, 1150);
   });
 }
 
@@ -2379,11 +2390,11 @@ function showEventSpot(n, at, opts = {}) {
   m.on("popupclose", () => { eventSpot.clearLayers(); if (n.zone_id && state.selectedZone === n.zone_id) selectZone(null); });
   if (n.zone_id) selectZone(n.zone_id);
   if (opts.keepPanel && shipPanel.isOpen()) {        // карточка открыта — точка в свободной части карты
-    map.fitBounds(L.latLngBounds([at, at]), { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
-    setTimeout(() => m.openPopup(), 400);
+    smoothFit([at, at], { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
+    setTimeout(() => m.openPopup(), 1200);
   } else {
-    map.flyTo(at, Math.max(map.getZoom(), 7), { duration: 0.8 });
-    setTimeout(() => m.openPopup(), 850);
+    smoothTo(at, Math.max(map.getZoom(), 7));
+    setTimeout(() => m.openPopup(), 1200);
   }
 }
 

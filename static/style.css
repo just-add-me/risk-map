@@ -191,7 +191,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   position: absolute; left: 12px; bottom: 34px; z-index: 500; background: rgba(16,35,45,.92);
   border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; min-width: 170px;
   /* не выше карты: иначе на телефоне кнопка «Легенда» уходит за верхний край и легенду не свернуть */
-  max-height: calc(100% - 96px); display: flex; flex-direction: column;   /* и ниже сводки над картой */
+  max-height: calc(100% - 150px); display: flex; flex-direction: column;   /* ниже сводки и кнопок «+» / «−» */
 }
 .legend-toggle { width: 100%; text-align: left; background: none; border: 0; padding: 8px 10px; color: var(--muted); cursor: pointer; }
 .legend.collapsed .legend-body { display: none; }
@@ -771,7 +771,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 @media (min-width: 821px) {
   .layout { position: relative; }
   .map-wrap { position: absolute; inset: 0; }
-  .sidebar { position: absolute; z-index: 1001; top: 12px; left: 12px; bottom: 12px; width: 392px; border: 1px solid var(--line);
+  .sidebar { position: absolute; z-index: 1001; top: 12px; left: 12px; bottom: 36px; width: 392px; border: 1px solid var(--line);
     border-radius: 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, .35); overflow: hidden;
     transition: transform .22s ease, opacity .22s ease; }
   [data-theme=light] .sidebar { border-color: transparent; box-shadow: 0 10px 40px rgba(15, 23, 42, .12), 0 1px 3px rgba(15, 23, 42, .06); }
@@ -801,7 +801,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   .sb-rail .rail-open { color: var(--accent); border-bottom: 1px solid var(--line); border-radius: 9px 9px 4px 4px; margin-bottom: 2px; }
   .rail-n { position: absolute; top: 0; right: -2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
     background: var(--red); color: #fff; font: 700 9px/15px var(--font); }
-  .ship-panel { top: 12px; right: 12px; border-radius: 16px; max-height: calc(100% - 24px); }
+  .ship-panel { top: 12px; right: 12px; border-radius: 16px; max-height: calc(100% - 48px); }   /* не закрывает строку внизу */
   [data-theme=light] .ship-panel { border-color: transparent; box-shadow: 0 10px 40px rgba(15, 23, 42, .14); }
   /* вкладки — переключатель-«таблетка» */
   .tabs { margin: 12px 12px 6px; padding: 3px; background: var(--bg); border: 0; border-radius: 11px; flex-wrap: nowrap; }
@@ -825,3 +825,6 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 /* кнопки масштаба: неактивная (на пределе масштаба) — приглушённая, а не белая */
 .leaflet-bar a.leaflet-disabled { background: var(--bg-2); color: var(--muted); opacity: .45; cursor: default; }
 [data-theme=light] .leaflet-bar a.leaflet-disabled { background: #fff; }
+
+/* строка внизу карты (координаты, масштаб, версия зон) — ничем не закрыта: подпись карты и кнопки — над ней */
+.leaflet-bottom { bottom: 24px; }
