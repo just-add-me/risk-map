@@ -191,7 +191,7 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
   position: absolute; left: 12px; bottom: 34px; z-index: 500; background: rgba(16,35,45,.92);
   border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; min-width: 170px;
   /* не выше карты: иначе на телефоне кнопка «Легенда» уходит за верхний край и легенду не свернуть */
-  max-height: calc(100% - 48px); display: flex; flex-direction: column;
+  max-height: calc(100% - 96px); display: flex; flex-direction: column;   /* и ниже сводки над картой */
 }
 .legend-toggle { width: 100%; text-align: left; background: none; border: 0; padding: 8px 10px; color: var(--muted); cursor: pointer; }
 .legend.collapsed .legend-body { display: none; }
