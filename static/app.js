@@ -910,7 +910,7 @@ function showRiskPop(kind) {
     + (g.map((v) => {
       const z = kind === "inside" ? v.status.inside : v.status.near;
       return `<button type="button" class="rb-v" data-mmsi="${esc(v.mmsi)}"><b>${esc(v.name || v.mmsi)}</b> ${fleetChips(v.mmsi)}
-        <span>${z.map((x) => esc(x.name) + (kind === "inside" ? (x.since ? ` · с ${fmtTime(x.since)}` : "") : ` · ${Math.round(x.distance_nm)} миль`)).join("<br>")}</span></button>`;
+        <span class="rb-z">${z.map((x) => esc(x.name) + (kind === "inside" ? (x.since ? ` · с ${fmtTime(x.since)}` : "") : ` · ${Math.round(x.distance_nm)} миль`)).join("<br>")}</span></button>`;
     }).join("") || `<div class="rb-empty">Таких судов сейчас нет</div>`);
   pop.hidden = false;
   pop.querySelectorAll(".rb-v").forEach((b) => b.onclick = () => { pop.hidden = true; selectVessel(b.dataset.mmsi, true); });
