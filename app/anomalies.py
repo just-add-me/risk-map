@@ -2,7 +2,9 @@
 
 Без внешних сервисов, по нашим же данным AIS:
 * dark — судно молчит больше DARK_HOURS там, где другие суда видны (в радиусе COVER_NM сейчас
-  передают хотя бы COVER_MIN судов): значит, не «дыра» в покрытии, а выключенный AIS;
+  передают хотя бы COVER_MIN судов): значит, не «дыра» в покрытии, а выключенный AIS. Покрытие смотрим
+  там, где судно должно быть сейчас (последняя точка + путь по скорости и курсу), а не в последней точке:
+  судно, ушедшее от берега в океан, просто вышло из зоны береговых станций;
 * sts — судно стоит в открытом море (дальше PORT_NM от портов) рядом с другим крупным судном,
   тоже стоящим, дольше STS_MINUTES: так перегружают груз с борта на борт;
 * spoof — скачок позиции: чтобы оказаться в новой точке, судну пришлось бы идти быстрее JUMP_KN;
@@ -39,6 +41,25 @@ _sts_seen: dict[tuple[str, str], tuple[float, float]] = {}   # (судно, со
 def _nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     k = math.cos(math.radians((lat1 + lat2) / 2))
     return math.hypot((lat2 - lat1) * 60, (((lon2 - lon1 + 180) % 360) - 180) * 60 * k)
+
+
+MOVING_KN = 2.0             # быстрее — считаем, что судно шло, и переносим точку проверки по курсу
+MAX_DR_NM = 600             # дальше не экстраполируем: за сутки курс почти наверняка менялся
+
+
+def expected_position(lat: float, lon: float, sog: Optional[float], cog: Optional[float],
+                      hours: float) -> tuple[float, float, float]:
+    """Где судно должно быть через hours часов, если шло прежним курсом и скоростью (счисление пути).
+    Возвращает (широта, долгота, пройдено миль); стояло или курс неизвестен — последняя точка."""
+    if not sog or sog < MOVING_KN or cog is None or cog >= 360:
+        return lat, lon, 0.0
+    nm = min(sog * hours, MAX_DR_NM)
+    a = math.radians(cog)
+    dlat = nm * math.cos(a) / 60
+    lat2 = max(-85.0, min(85.0, lat + dlat))
+    k = math.cos(math.radians((lat + lat2) / 2)) or 1e-6
+    lon2 = ((lon + nm * math.sin(a) / (60 * k)) + 180) % 360 - 180
+    return lat2, lon2, nm
 
 
 def _once(mmsi: str, kind: str, key: str) -> bool:
@@ -95,12 +116,17 @@ def check_fleet() -> int:
             silent_h = 0
         in_port = any(_nm(r["lat"], r["lon"], a, b) < PORT_NM for a, b in port_pts)
         if silent_h >= DARK_HOURS and not in_port:          # в порту AIS часто выключают законно
-            others = [s for s in traffic.near(r["lat"], r["lon"], COVER_NM) if s["mmsi"] != mmsi]
+            # покрытие — там, где судно должно быть сейчас: ушло в океан — просто вне береговых станций
+            elat, elon, went = expected_position(r["lat"], r["lon"], r["sog"], r["cog"], silent_h)
+            others = [s for s in traffic.near(elat, elon, COVER_NM) if s["mmsi"] != mmsi]
             if len(others) >= COVER_MIN and _once(mmsi, "dark", r["ts"]):
                 found += 1
+                where = (f"Шло {r['sog']:.0f} уз курсом {r['cog']:.0f}° — сейчас должно быть около {elat:.2f}, {elon:.2f}, "
+                         f"и там ({COVER_NM} миль) видно {len(others)} судов" if went
+                         else f"Рядом ({COVER_NM} миль) сейчас видно {len(others)} судов")
                 incidents.record("dark", mmsi, name=name, lat=r["lat"], lon=r["lon"], tracked=True, source="AIS",
-                                 text=f"Нет сигнала AIS {silent_h:.0f} ч, хотя рядом ({COVER_NM} миль) сейчас видно "
-                                      f"{len(others)} судов. Последняя позиция {r['lat']:.3f}, {r['lon']:.3f}.")
+                                 text=f"Нет сигнала AIS {silent_h:.0f} ч. {where}. "
+                                      f"Последняя позиция {r['lat']:.3f}, {r['lon']:.3f}.")
         # 2. встреча с другим судном в открытом море
         elif (silent_h < 1 and (r["sog"] or 0) < STS_KN and not in_port and r["nav"] != MOORED
               and shipinfo.category(r["ship_type"]) in BIG):        # перегрузка с борта на борт — у танкеров и сухогрузов

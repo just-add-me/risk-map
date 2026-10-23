@@ -830,3 +830,14 @@ def test_traffic_snapshot_corrupt_does_not_crash(tmp_path, monkeypatch):
     monkeypatch.setattr(traffic, "SNAPSHOT_FILE", snap)
     assert traffic.load() >= 0
     assert not snap.exists() and list(tmp_path.glob("traffic.json.bad-*"))
+
+
+def test_dark_expected_position():  # [подозрительное-поведение]
+    """«Пропал AIS»: покрытие проверяем там, где судно должно быть сейчас, а не в последней точке."""  # [подозрительное-поведение]
+    from app.anomalies import expected_position  # [подозрительное-поведение]
+    assert expected_position(-38.4, 144.4, 0.3, 90, 6) == (-38.4, 144.4, 0.0)          # стояло  # [подозрительное-поведение]
+    lat, lon, nm = expected_position(-38.4, 144.4, 14.0, 90, 6)  # [подозрительное-поведение]
+    assert nm == 84 and abs(lat + 38.4) < 0.01 and 146.1 < lon < 146.2               # 84 мили на восток  # [подозрительное-поведение]
+    lat, lon, nm = expected_position(10.0, 179.5, 20.0, 90, 3)                        # через 180-й меридиан  # [подозрительное-поведение]
+    assert -180 <= lon < -179 and nm == 60  # [подозрительное-поведение]
+    assert expected_position(0, 0, 30, 0, 48)[2] == 600                               # не дальше MAX_DR_NM  # [подозрительное-поведение]
