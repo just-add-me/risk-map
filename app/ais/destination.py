@@ -220,6 +220,33 @@ def _route_cached(lat: float, lon: float, code: str) -> dict:
             "on_way": on_way}
 
 
+SNAP_NM = 300              # в каком начальном отрезке пути ищем точку, ближайшую к судну
+
+
+def from_ship(line: list[list[float]], lat: float, lon: float) -> tuple[list[list[float]], float]:
+    """Путь от самого судна. Сеть морских путей начинает путь с ближайшего своего узла — он бывает
+    позади судна, и пунктир сначала шёл назад. Находим на начале пути точку, ближайшую к судну,
+    и ведём линию: судно → эта точка → дальше по пути. Вернёт новую линию и поправку длины (мили)."""
+    lon += 360 * round((line[0][1] - lon) / 360)            # долгота судна — в той же «развёртке», что и путь
+    k = math.cos(math.radians(lat))
+    best = (distance_nm(lat, lon, *line[0]), 0, line[0], 0.0)    # (до судна, № отрезка, точка, пройдено по пути)
+    along = 0.0
+    for i, ((la1, lo1), (la2, lo2)) in enumerate(zip(line, line[1:])):
+        if along > SNAP_NM:
+            break
+        dx, dy = (lo2 - lo1) * k, la2 - la1
+        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((lon - lo1) * k * dx + (lat - la1) * dy) / (dx * dx + dy * dy)))
+        p = [la1 + dy * t, lo1 + (lo2 - lo1) * t]
+        seg = distance_nm(la1, lo1, la2, lo2)
+        d = distance_nm(lat, lon, *p)
+        if d < best[0] - 1e-9:
+            best = (d, i, p, along + seg * t)
+        along += seg
+    d, i, p, skipped = best
+    out = [[round(lat, 4), round(lon, 4)], [round(p[0], 4), round(p[1], 4)]] + line[i + 1:]
+    return out, d - skipped
+
+
 def route(lat: float, lon: float, port: dict) -> dict:
     """Путь до порта (по морю, если получилось), зоны в порту и по пути (кроме той, где судно сейчас)."""
     code = port["code"]
@@ -228,7 +255,11 @@ def route(lat: float, lon: float, port: dict) -> dict:
     r = _route_cached(round(lat, 2), round(lon, 2), code)
     at_port = _zones_at(port["lon"], port["lat"], PORT_TOLERANCE_NM)
     here = set(_zones_at(lon, lat))
-    return {"distance_nm": r.get("distance_nm"), "path": r.get("path"), "line": r.get("line"),
+    line, dist = r.get("line"), r.get("distance_nm")
+    if line and len(line) >= 2 and r.get("path") == "sea":
+        line, fix = from_ship(line, lat, lon)
+        dist = max(0, round(dist + fix)) if dist is not None else None
+    return {"distance_nm": dist, "path": r.get("path"), "line": line,
             "port_zones": at_port, "route_zones": [z for z in r.get("on_way", []) if z not in at_port and z not in here]}
 
 

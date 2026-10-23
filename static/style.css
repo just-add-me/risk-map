@@ -337,6 +337,9 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .sc-legend .lg-past { border-top: 2.5px solid #4fc3d9; }
 .sc-legend .lg-ahead { border-top: 2px dashed #e8f1f5; }
 .sc-legend .lg-ahead.risk { border-top-color: #ff5a4e; }
+[data-theme=light] .sc-legend .lg-past { border-top-color: #0e7490; }
+[data-theme=light] .sc-legend .lg-ahead { border-top-color: #1e293b; }
+[data-theme=light] .sc-legend .lg-ahead.risk { border-top-color: #dc2626; }
 .sc-dest .zin { color: var(--red); } .sc-dest .znr { color: var(--amber); } .sc-dest .zok { color: var(--green); }
 .sc-zones .zin { color: var(--red); } .sc-zones .znr { color: var(--amber); } .sc-zones .zok { color: var(--green); }
 .sc-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }

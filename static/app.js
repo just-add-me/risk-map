@@ -1261,7 +1261,10 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && shipPane
 // Путь судна в карточке: пройденный трек (сплошная линия) + типовой путь до порта назначения (пунктир).
 // Рисуется сам при открытии карточки, убирается при закрытии; кнопка в карточке прячет и показывает.
 const pathLayer = L.layerGroup().addTo(map);
-const PATH_PAST = "#4fc3d9";
+// светлая тема: голубой и почти белый на светло-серой карте не видны — темнее и контрастнее
+const pathColors = () => isLight()
+  ? { past: "#0e7490", ahead: "#1e293b", risk: "#dc2626", port: "#ffffff" }
+  : { past: "#4fc3d9", ahead: "#e8f1f5", risk: "#ff5a4e", port: "#0b1a22" };
 
 async function loadShipPath(el, popup, trackUrl) {
   const box = el.querySelector(".sc-dest");
@@ -1273,22 +1276,23 @@ async function loadShipPath(el, popup, trackUrl) {
   const [tr, rt] = await Promise.allSettled([api(trackUrl), api(`/api/traffic/${encodeURIComponent(mmsi)}/route`)]);
   if (!el.isConnected || state.pathFor !== mmsi) return;
   const here = popup.getLatLng();
+  const C = pathColors();
   // пройдено
   const pts = (tr.status === "fulfilled" ? tr.value.points : []).map((p) => [p.lat, p.lon]);
   const first = tr.status === "fulfilled" ? tr.value.points[0] : null;
   const hours = first ? (first.age_s != null ? first.age_s / 3600 : (Date.now() - Date.parse(first.ts)) / 3600e3) : 0;
   if (pts.length > 1) {
-    L.polyline([...pts, [here.lat, here.lng]], { color: PATH_PAST, weight: 2.5, opacity: 0.9, interactive: false }).addTo(pathLayer);
-    L.circleMarker(pts[0], { radius: 3, weight: 0, fillColor: PATH_PAST, fillOpacity: 1, interactive: false }).addTo(pathLayer);
+    L.polyline([...pts, [here.lat, here.lng]], { color: C.past, weight: 2.5, opacity: 0.9, interactive: false }).addTo(pathLayer);
+    L.circleMarker(pts[0], { radius: 3, weight: 0, fillColor: C.past, fillOpacity: 1, interactive: false }).addTo(pathLayer);
   }
   // впереди
   const { destination: dest, route: r } = rt.status === "fulfilled" ? rt.value : {};
   const zl = (zs) => zs.map((z) => esc(z.name)).join(", ");
   let html = "";
   if (r) {
-    const color = r.port_zones.length ? "#ff5a4e" : "#e8f1f5";
-    if (r.line) L.polyline(r.line, { color, weight: 2, opacity: 0.8, dashArray: "6 7", interactive: false }).addTo(pathLayer);
-    L.circleMarker(r.line ? r.line[r.line.length - 1] : [r.lat, r.lon], { radius: 6, color, weight: 2, fillColor: "#0b1a22", fillOpacity: 1 })
+    const color = r.port_zones.length ? C.risk : C.ahead;
+    if (r.line) L.polyline(r.line, { color, weight: 2, opacity: isLight() ? 0.75 : 0.8, dashArray: "6 7", interactive: false }).addTo(pathLayer);
+    L.circleMarker(r.line ? r.line[r.line.length - 1] : [r.lat, r.lon], { radius: 6, color, weight: 2, fillColor: C.port, fillOpacity: 1 })
       .bindTooltip(`Пункт назначения: ${esc(r.port)}`, { direction: "top" }).addTo(pathLayer);
     html = `<div class="small">→ <b>${esc(r.port)}</b> <span class="muted">(${esc(r.country)}, ${esc(r.code)})</span>${
       r.distance_nm != null ? ` · ${r.distance_nm.toLocaleString("ru-RU")} миль ${r.path === "sea" ? "по морю" : "по прямой"}` : ""}</div>
@@ -2290,7 +2294,7 @@ async function runShipSearch(q) {
     if (s.lat == null) { openShip(s.mmsi, s.name); return; }     // позиции нет — карточка с тем, что знаем
     smoothTo([s.lat, s.lon], Math.max(map.getZoom(), 11));
     trackLayer.clearLayers();
-    L.circleMarker([s.lat, s.lon], { radius: 14, weight: 2.5, color: "#ffffff", fill: false, dashArray: "4 3" })
+    L.circleMarker([s.lat, s.lon], { radius: 14, weight: 2.5, color: isLight() ? "#0f172a" : "#ffffff", fill: false, dashArray: "4 3" })
       .addTo(trackLayer);
     setTimeout(() => {
       if (s.in_fleet) selectVessel(s.mmsi, false);
