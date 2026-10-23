@@ -2772,7 +2772,10 @@ function tourTarget(step) {
 function tourShow() {
   const step = TOUR[tour.i];
   const target = tourTarget(step);
-  if (!target) { tourGo(1); return; }
+  if (!target || !target.getClientRects().length) {     // элемента нет на этом экране (на телефоне скрыт) — шаг пропускаем
+    if (tour.i < TOUR.length - 1) tourGo(1); else tourEnd();
+    return;
+  }
   if (!tour.box) {
     tour.box = document.createElement("div");
     tour.box.className = "tour";
