@@ -138,18 +138,30 @@ def zone_type(p: dict) -> Optional[str]:
     return "sea" if p.get("kind") == "defined" else "country"
 
 
+def is_inland(p: dict) -> bool:
+    """«Внутренние воды» (реки, лиманы, речные порты): контур — вся территория страны, иначе речной порт
+    выпал бы из зоны. На карте такие зоны — пунктир без заливки, чтобы не выглядели «зоной вся страна»."""
+    return str(p.get("template") or "").startswith("inland_")
+
+
 def _outlines(feats: list[dict]) -> list[dict]:
     """«Территории» для карты: зоны одного вида склеены в один контур (граница только по внешнему краю),
-    между видами — без наложений. Так у Бахрейна, Катара и ОАЭ не получается клубка пересекающихся линий."""
+    между видами — без наложений. Так у Бахрейна, Катара и ОАЭ не получается клубка пересекающихся линий.
+    Внутренние воды — отдельным контуром (inland) после всех остальных: побережье остаётся за морскими зонами."""
     from shapely.geometry import mapping, shape
     from shapely.ops import unary_union
     from .geo.builder import polygonal
     out = []
     for layer, order in OUTLINE_ORDER.items():
         taken = None
+        inland = []
         for t in order:
+            inland += [(t, shape(f["geometry"]).buffer(0)) for f in feats
+                       if (f["properties"].get("layer") or "jwc") == layer and zone_type(f["properties"]) == t
+                       and is_inland(f["properties"])]
             gs = [shape(f["geometry"]).buffer(0) for f in feats
-                  if (f["properties"].get("layer") or "jwc") == layer and zone_type(f["properties"]) == t]
+                  if (f["properties"].get("layer") or "jwc") == layer and zone_type(f["properties"]) == t
+                  and not is_inland(f["properties"])]
             if not gs:
                 continue
             try:
@@ -162,6 +174,17 @@ def _outlines(feats: list[dict]) -> list[dict]:
                 continue
             if not part.is_empty:
                 out.append({"type": "Feature", "properties": {"layer": layer, "type": t},
+                            "geometry": _seamless(mapping(part))})
+        for t in dict.fromkeys(t for t, _ in inland):
+            try:
+                u = unary_union([g for tt, g in inland if tt == t])
+                part = polygonal(u.difference(taken) if taken is not None else u)
+                part = polygonal(part.simplify(0.002, preserve_topology=True))
+            except Exception:  # noqa: BLE001
+                log.exception("Не удалось склеить внутренние воды %s/%s", layer, t)
+                continue
+            if not part.is_empty:
+                out.append({"type": "Feature", "properties": {"layer": layer, "type": t, "inland": True},
                             "geometry": _seamless(mapping(part))})
     return out
 

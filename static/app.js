@@ -234,10 +234,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 const territoryLayer = L.geoJSON(null, { renderer: mapCanvas, interactive: false, style: territoryStyle }).addTo(map);
 const dissolved = () => !!state.zonesFC?.outlines?.length && !state.zoneFilter.q.trim() && !state.zoneFilter.changedOnly;
 
+// «Внутренние воды» (Украина, юг Беларуси, Дон): контур — вся территория, чтобы речные порты были в зоне;
+// рисуем пунктиром без заливки — зона по рекам и портам, а не «вся страна»
+const isInland = (p) => !!p.inland || String(p.template || "").startsWith("inland_");
+const INLAND = { fillOpacity: 0, dashArray: "6 5", glow: 0, weight: 1.3 };
 function territoryStyle(f) {
   const t = ZONE_TYPES[f.properties.type], layer = f.properties.layer;
-  return lightZone({ color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
+  const s = lightZone({ color: t.color, weight: layer === "ibf" ? 1.6 : 1.2, opacity: 0.95, fillColor: t.color,
     fillOpacity: layer === "ibf" ? 0 : 0.07, glow: layer === "ibf" ? 0.8 : 1, dashArray: t.dash || null, interactive: false });
+  return isInland(f.properties) ? { ...s, ...INLAND } : s;
 }
 // светлая тема: зоны тонкой линией без неонового свечения, заливка чуть плотнее (на светлой карте 7% не видно)
 function lightZone(s) {
@@ -260,6 +265,7 @@ function zoneStyle(f) {
   if (t.dash) s.dashArray = t.dash;
   if (layer === "inl" && !inSeason(p)) Object.assign(s, { fillOpacity: 0.02, glow: 0.35, opacity: 0.6 });   // вне сезона — бледнее
   if (isChanged(p)) Object.assign(s, { weight: s.weight + 0.6, dashArray: "7 4" });     // изменена: пунктир цветом самой зоны
+  if (isInland(p)) Object.assign(s, INLAND);
   if (state.selectedZone === p.id) Object.assign(s, { weight: 2.2, dashArray: null, fillOpacity: 0.14, glow: 1.6 });
   return lightZone(s);
 }
@@ -508,6 +514,7 @@ function renderLegend() {
     return head(`layer:${layer}`, info.label, types.some(([k]) => zf.types.has(k)), info.hint)
       + types.map(([k, d]) => row(`zt:${k}`, `<i class="sw" style="${swatchStyle(d)}"></i>`, d.label, zf.types.has(k))).join("");
   }).join("");
+  html += `<div class="lg"><i class="sw" style="border:1px dashed ${ZONE_TYPES.sea.color}"></i><span>Внутренние воды: реки и речные порты (Украина, Беларусь, Дон)</span></div>`;
   html += `<div class="lg"><i class="sw z-changed"></i><span>Изменена в последней версии</span></div>`;
   const cats = (t.data && t.data.categories) || {};
   html += head("traffic", "Все суда (AIS)", t.on);
