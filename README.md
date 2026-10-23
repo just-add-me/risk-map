@@ -78,6 +78,12 @@ sudo bash deploy/install.sh
 | Проверить зоны на эталонных точках | `docker compose exec app python -m app.geo.selftest` |
 | Тесты | `docker compose exec app python -m pytest -q tests` |
 | Резервная копия | скопировать папку `data/` |
+| Откатить код к метке | `bash deploy/rollback.sh pre-ux-2026-10-23` (данные в `data/` не трогает) |
+| Откатить одну доработку | `git revert <коммит>`, `git push`, `bash deploy/update.sh` |
+
+### Точки отката
+- `pre-ux-2026-10-23` — до переделки интерфейса 23.10.2026 (тема, сводка, вкладки, лента, карточка судна).
+  Копия базы на тот момент: `data/app.db.pre-ux-2026-10-23`.
 
 ## Как устроено
 
