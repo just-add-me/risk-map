@@ -1882,14 +1882,13 @@ function savedIncHidden() {
 function saveIncHidden() { localStorageSet("incHidden", JSON.stringify([...state.inc.hidden])); }
 const isMine = (mmsi) => (state.mineSet ||= new Set(allVessels().map((v) => v.mmsi))).has(mmsi);
 state.inc = { items: [], kinds: {}, hidden: new Set(savedIncHidden()), loadedAt: 0,
-  showRead: localStorageGet("incShowRead") === "1",   // просмотренные происшествия на карте
+  showRead: false,                                    // просмотренные на карте — до перезагрузки (не «залипает»)
   peek: null };                                       // открыли из ленты — метку показываем, даже если просмотрена
 $("#inc-read-show").checked = state.inc.showRead;
 $("#inc-read-show").onchange = (e) => setIncShowRead(e.target.checked);
 function setIncShowRead(on) {
   state.inc.showRead = on;
   $("#inc-read-show").checked = on;
-  localStorageSet("incShowRead", on ? "1" : "0");
   renderIncidents();
   renderLegend();
 }
@@ -1917,8 +1916,8 @@ function sameEvent(n, it) {
 
 function incIcon(it) {
   const st = INC_STYLE[it.kind] || INC_STYLE.safety;
-  const urgent = it.severity === "critical" && !it.test;
-  return L.divIcon({ className: `inc-icon${urgent ? " urgent" : ""}${it.test ? " test" : ""}`, iconSize: [24, 24],
+  const urgent = it.severity === "critical" && !it.test && !it.read;
+  return L.divIcon({ className: `inc-icon${urgent ? " urgent" : ""}${it.test ? " test" : ""}${it.read ? " seen" : ""}`, iconSize: [24, 24],
     html: `<span style="background:${st.color}">${st.glyph}</span>` });
 }
 
@@ -2871,13 +2870,9 @@ loadTrash().then(updateTrashCount).catch(() => {});
 /* ------------------------------------------------------------------ компьютер: свернуть левую панель */
 function setSidebarCollapsed(on) {
   document.body.classList.toggle("sb-collapsed", on);
-  const b = $("#sb-toggle");
-  b.textContent = on ? "›" : "‹";
-  b.title = on ? "Развернуть панель" : "Свернуть панель";
-  b.setAttribute("aria-label", b.title);
-  b.setAttribute("aria-expanded", String(!on));
+  $("#sb-toggle").setAttribute("aria-expanded", String(!on));
   localStorageSet("sidebarCollapsed", on ? "1" : "0");
-  setTimeout(() => map.invalidateSize(), 230);         // после анимации ширины
+  setTimeout(() => map.invalidateSize(), 230);
 }
 $("#sb-toggle").onclick = () => setSidebarCollapsed(!document.body.classList.contains("sb-collapsed"));
 $("#sb-rail").addEventListener("click", (e) => {        // значок на свёрнутой панели — развернуть сразу на этой вкладке
