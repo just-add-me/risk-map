@@ -51,7 +51,18 @@ const ago = (iso) => {
 };
 
 /* ------------------------------------------------------------------ карта */
-const map = L.map("map", { zoomControl: true, worldCopyJump: true, minZoom: 2 }).setView([25, 40], 4);
+// Сверху и снизу карту не утащить за край мира (85° — предел проекции); по долготе мир повторяется
+const WORLD_LAT = 85.0511;
+const map = L.map("map", { zoomControl: true, worldCopyJump: true, minZoom: 2,
+  maxBounds: [[-WORLD_LAT, -1e5], [WORLD_LAT, 1e5]], maxBoundsViscosity: 1 }).setView([25, 40], 4);
+// мир по высоте не меньше окна карты: иначе при отдалении сверху и снизу оставались бы пустые полосы
+function fitMinZoom() {
+  const z = Math.max(2, Math.log2(map.getSize().y / 256));
+  map.setMinZoom(z);
+  if (map.getZoom() < z) map.setZoom(z, { animate: false });
+}
+fitMinZoom();
+map.on("resize", fitMinZoom);
 // Плавные переходы к судну, событию, зоне. Обычный fitBounds/setView при разнице масштабов больше 4
 // не анимируется, а перескакивает — с обзора мира к судну это резкий скачок. Перелёт — всегда плавный.
 const FLY = { duration: 1.1, easeLinearity: 0.3 };
