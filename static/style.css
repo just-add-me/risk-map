@@ -657,3 +657,10 @@ pre.log { white-space: pre-wrap; font: 11px var(--mono); color: var(--muted); ma
 .ico-b[data-feed=starred].on { color: #ffd166; }
 .ico-n { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
   background: var(--muted); color: var(--bg); font: 700 9px/14px var(--font); }
+
+/* ---------- вкладки: Флот · Лента · Зоны + шестерёнка настройки уведомлений ---------- */
+.tab-ico { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.tab-ico svg { width: 17px; height: 17px; fill: currentColor; }
+.tab-ico-label { font-size: 12.5px; }
+.back-btn { margin: 0 0 8px -6px; }
+.fleet-actions { flex-wrap: wrap; }

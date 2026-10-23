@@ -69,10 +69,13 @@
       title="Потяните, чтобы изменить высоту панели; нажмите — на весь экран"><span></span></div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="fleet">Флот</button>
-      <button class="tab" data-tab="zones">Зоны</button>
-      <button class="tab" data-tab="rules">Уведомления</button>
       <button class="tab" data-tab="events">Лента <span class="tab-count" id="tab-alert-count" hidden></span></button>
-      <button class="tab" data-tab="log">Журнал <span class="tab-count" id="tab-log-count" hidden></span></button>
+      <button class="tab" data-tab="zones">Зоны</button>
+      <!-- настройка уведомлений — значком; журнал и отчёты открываются кнопкой во «Флоте» -->
+      <button class="tab tab-ico" data-tab="rules" title="Настройка уведомлений: о чём сообщать" aria-label="Настройка уведомлений">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.1-2.4.1-1.1-.1-1.1 2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.9-1.1L15.5 3h-4l-.4 2.6c-.7.3-1.3.6-1.9 1.1l-2.4-1-2 3.4 2 1.6-.1 1.1.1 1.1-2 1.6 2 3.4 2.4-1c.6.5 1.2.8 1.9 1.1l.4 2.6h4l.4-2.6c.7-.3 1.3-.6 1.9-1.1l2.4 1 2-3.4z"/></svg>
+        <span class="tab-ico-label">Уведомления</span></button>
+      <button class="tab" data-tab="log" hidden>Журнал</button>
     </nav>
 
     <!-- ФЛОТ -->
@@ -101,6 +104,9 @@
           <button class="btn ghost" type="button" id="btn-share-toggle" title="Открыть флот другому пользователю">
             <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M18 16a3 3 0 0 0-2.4 1.2l-6.7-3.4a3 3 0 0 0 0-1.6l6.7-3.4A3 3 0 1 0 15 7l-6.7 3.4a3 3 0 1 0 0 3.2L15 17a3 3 0 1 0 3-1Z" fill="currentColor"/></svg>
             Поделиться<span id="share-count"></span></button>
+          <button class="btn ghost" type="button" id="btn-reports" title="Журнал событий и пребывания судов в зонах — с выгрузкой в Excel">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 2h9l5 5v15H6zM14 3v5h5M9 13h8M9 17h8M9 9h3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            Отчёты</button>
         </div>
         <details class="card" id="add-vessel" hidden>
           <summary>Добавить судно</summary>
@@ -246,6 +252,7 @@
     </section>
     <!-- ЖУРНАЛ: документы для выгрузки -->
     <section class="panel" id="panel-log">
+      <button class="text-btn back-btn" type="button" id="btn-log-back">← Флот</button>
       <div class="card">
         <b>Журнал событий</b>
         <p class="muted small">Всё, что пришло в «Ленту» по вашим судам и системе, — одной таблицей Excel.</p>
