@@ -885,7 +885,54 @@ function renderFleet() {
   });
 }
 
+/* ------------------------------------------------------------------ сводка над картой */
+// Всегда на виду: сколько судов всех ваших флотов в зонах риска, сколько подходят, сколько новых событий.
+// Нажатие на число — список этих судов (нажатие на судно открывает его карточку) или лента с новыми.
+function riskGroups() {
+  const vs = allVessels().filter((v) => v.position);
+  return { inside: vs.filter((v) => v.status.level === "inside"), near: vs.filter((v) => v.status.level === "near") };
+}
+function updateRiskBar() {
+  const bar = $("#riskbar");
+  if (!bar) return;
+  const g = riskGroups();
+  bar.hidden = !allVessels().length;
+  bar.querySelector("[data-rb=inside] b").textContent = g.inside.length;
+  bar.querySelector("[data-rb=near] b").textContent = g.near.length;
+  bar.querySelector("[data-rb=new] b").textContent = state.unread || 0;
+  bar.querySelectorAll(".rb").forEach((b) => b.classList.toggle("zero", b.querySelector("b").textContent === "0"));
+  if (!$("#rb-pop").hidden) showRiskPop($("#rb-pop").dataset.kind);       // список открыт — обновить
+}
+function showRiskPop(kind) {
+  const pop = $("#rb-pop"), g = riskGroups()[kind] || [];
+  pop.dataset.kind = kind;
+  pop.innerHTML = `<div class="rb-h">${kind === "inside" ? "В зонах риска" : "Подходят к зонам риска"}</div>`
+    + (g.map((v) => {
+      const z = kind === "inside" ? v.status.inside : v.status.near;
+      return `<button type="button" class="rb-v" data-mmsi="${esc(v.mmsi)}"><b>${esc(v.name || v.mmsi)}</b> ${fleetChips(v.mmsi)}
+        <span>${z.map((x) => esc(x.name) + (kind === "inside" ? (x.since ? ` · с ${fmtTime(x.since)}` : "") : ` · ${Math.round(x.distance_nm)} миль`)).join("<br>")}</span></button>`;
+    }).join("") || `<div class="rb-empty">Таких судов сейчас нет</div>`);
+  pop.hidden = false;
+  pop.querySelectorAll(".rb-v").forEach((b) => b.onclick = () => { pop.hidden = true; selectVessel(b.dataset.mmsi, true); });
+}
+$("#riskbar").addEventListener("click", (e) => {
+  const b = e.target.closest(".rb");
+  if (!b) return;
+  const kind = b.dataset.rb, pop = $("#rb-pop");
+  if (kind === "new") {                                   // новые события — лента «Мои суда», только новые
+    pop.hidden = true;
+    switchTab("events");
+    $("#panel-events [data-feed=mine]").click();
+    if (!$("#n-unread-only").checked) $("#feed-new").click();
+    return;
+  }
+  if (!pop.hidden && pop.dataset.kind === kind) { pop.hidden = true; return; }
+  showRiskPop(kind);
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#riskbar")) $("#rb-pop").hidden = true; });
+
 function renderVessels() {
+  updateRiskBar();
   const live = new Set();
   for (const v of allVessels()) {
     if (!v.position || !state.showFleet || !state.fleetLevels.has(v.status.level)) continue;
@@ -2259,6 +2306,7 @@ async function loadNotifications() {
 
 function setUnread(n) {
   state.unread = n;
+  updateRiskBar();
   $("#bell-count").hidden = !n;
   $("#bell-count").textContent = n > 99 ? "99+" : n;
   $("#tab-alert-count").hidden = !n;

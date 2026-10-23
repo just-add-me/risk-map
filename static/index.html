@@ -284,6 +284,13 @@
 
   <main class="map-wrap">
     <div id="map"></div>
+    <!-- сводка: главное для брокера — сколько судов в зонах риска, сколько подходят, сколько новых событий -->
+    <div class="riskbar" id="riskbar" hidden>
+      <button type="button" class="rb in" data-rb="inside" title="Суда ваших флотов в зонах риска"><i></i><b>0</b><span>в зонах риска</span></button>
+      <button type="button" class="rb near" data-rb="near" title="Суда, которые подходят к зонам риска"><i></i><b>0</b><span>подходят</span></button>
+      <button type="button" class="rb new" data-rb="new" title="Новые события по вашим судам — открыть в ленте"><i></i><b>0</b><span>новых событий</span></button>
+      <div class="rb-pop" id="rb-pop" hidden></div>
+    </div>
     <button class="sb-toggle" id="sb-toggle" type="button" title="Свернуть панель" aria-label="Свернуть панель"
       aria-controls="sidebar" aria-expanded="true">‹</button>
     <aside class="ship-panel" id="ship-panel" hidden aria-label="Карточка судна">
