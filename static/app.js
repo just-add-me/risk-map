@@ -2087,7 +2087,7 @@ function splitTitle(title, mmsi) {
   const rest = m ? m[3] : (mmsi && /^MMSI \d+: /.test(title) ? title.replace(/^MMSI \d+: /, "") : title);
   const vessel = m ? m[1] : (mmsi && rest !== title ? "" : null);
   const z = /^(.*?)\s*«(.+)»\s*(.*)$/s.exec(rest || "");
-  // «заход в «X» не заявлен» → «заход в зону не заявлен» (зона — отдельной строкой)
+  // «вход в «X»» → «вход в зону» (зона — отдельной строкой)
   let event = z ? (z[3] ? `${z[1]}${/ (в|из|к)$/.test(z[1]) ? " зону" : ""} ${z[3]}` : z[1]).trim() : rest || "";
   event = event.replace(/:$/, "");
   return { vessel, mmsi: m ? m[2] : mmsi, event: event.charAt(0).toUpperCase() + event.slice(1), zone: z ? z[2] : null };
