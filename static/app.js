@@ -1518,25 +1518,39 @@ async function openTrafficShip(mmsi, latlng, fly = false, name = "") {
       smoothFit([shipPanel.latlng, shipPanel.latlng], { ...shipPanel.padding(), maxZoom: Math.max(map.getZoom(), 7) });
     }
     const zs = s.zones || [];
+    const own = state.fleets.filter((f) => f.access !== "view");
     const actions = s.fleets.length ? `<span class="sc-tag">Флот: ${s.fleets.map(esc).join(", ")}</span>`
-      : state.fleets.some((f) => f.access !== "view") ? `<button class="btn" type="button" data-add-fleet>+ Добавить во флот</button>
-        <select class="sc-fleet" title="В какой флот добавить">${state.fleets.filter((f) => f.access !== "view").map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}</select>` : "";
+      : `<button class="btn" type="button" data-add-fleet>+ Добавить во флот</button>
+        <select class="sc-fleet" title="В какой флот добавить">${own.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("")}
+          <option value="new">+ Новый флот…</option></select>`;
     popup.setContent(shipCard(s, zoneLines(zs.filter((z) => z.status === "inside"), zs.filter((z) => z.status !== "inside")),
       { actions, ageS: s.age_s, note: s.archived ? (s.lat != null
         ? `Сейчас судно вне зоны покрытия AIS. Показано последнее, что о нём известно: позиция ${fmtAge(s.age_s)}.`
         : "Сейчас судно вне зоны покрытия AIS, позиция неизвестна. Показан паспорт из справочника.") : "" }));
     hydrateCard(popup, `/api/traffic/${encodeURIComponent(mmsi)}/track`);
     const btn = popup.getElement()?.querySelector("[data-add-fleet]");
-    if (btn) btn.onclick = async () => {
-      const fid = +popup.getElement().querySelector(".sc-fleet").value;
+    const sel = popup.getElement()?.querySelector(".sc-fleet");
+    const add = async (fid, fleetName) => {
       try {
         await api(`/api/fleets/${fid}/vessels`, { json: { mmsi: s.mmsi, imo: s.imo || "", name: s.name || "" } });
-        toast("Судно добавлено во флот", s.name || s.mmsi);
+        toast(fleetName ? `Создан флот «${fleetName}», судно добавлено` : "Судно добавлено во флот", s.name || s.mmsi);
         shipPanel.close();
         await loadFleets();
         renderTraffic();
       } catch (e) { toast("Не удалось добавить", e.message, "critical"); }
     };
+    // «+ Новый флот…» — создаём флот с этим судном (своих флотов может и не быть: тогда это единственный пункт)
+    const addToNew = async () => {
+      const fleetName = prompt("Название нового флота:", "")?.trim();
+      if (!fleetName) { if (own.length) sel.value = own[0].id; return; }
+      try {
+        const r = await api("/api/fleets/create", { json: { name: fleetName } });
+        state.fleetId = r.id; localStorageSet("fleetId", r.id);
+        await add(r.id, fleetName);
+      } catch (e) { toast("Не удалось создать флот", e.message, "critical"); }
+    };
+    if (sel) sel.onchange = () => { if (sel.value === "new") addToNew(); };
+    if (btn) btn.onclick = () => (sel.value === "new" ? addToNew() : add(+sel.value));
   } catch (e) { popup.setContent(`<div class="sc-loading muted">${esc(e.message)}</div>`); }
 }
 
