@@ -2023,6 +2023,9 @@ function renderIncidents() {
     renderIncidents();
     renderLegend();
   });
+  // открытую карточку события не трогаем: перерисовка (раз в 10 с) удалила бы метку вместе с ней — обновим после закрытия
+  if (inc.open != null && incMarkers.get(inc.open)?.isPopupOpen()) { inc.dirty = true; renderFeed(); return; }
+  inc.dirty = false;
   const shown = inc.items.filter(incVisible);
   incidentsLayer.clearLayers();
   incMarkers.clear();
@@ -2035,14 +2038,16 @@ function renderIncidents() {
         .bindTooltip(esc(`${it.label}: ${it.name || it.mmsi}`), { direction: "top", offset: [0, -10] })
         .bindPopup(incPopup(it), { minWidth: 240, maxWidth: 320 })
         .on("popupopen", (e) => {
+          inc.open = it.id;
           markIncRead(it);
           const m = e.target;
           const bind = () => bindPopActs(m.getPopup(), { type: "inc", it }, () => { m.setPopupContent(incPopup(it)); bind(); });
           bind();
         })
         .on("popupclose", () => {
+          if (inc.open === it.id) inc.open = null;
           if (inc.peek === it.id) inc.peek = null;
-          if (!inc.showRead) setTimeout(renderIncidents, 0);      // просмотренное убираем с карты
+          if (!inc.showRead || inc.dirty) setTimeout(renderIncidents, 0);      // просмотренное убираем с карты
         }));
     placeIncMarkers();
   }
