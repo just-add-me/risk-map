@@ -441,6 +441,12 @@ def test_rules_engine():
     assert mine("olga") == ["ВХОД в зону"] and mine("pavel") == ["ВХОД в зону"]   # audience=fleet
     ingest.position(m, 44.5, 32.5, sog=10, nav=0)          # вышло; «выход» только владельцу
     assert mine("olga")[-1] == "ВЫХОД из зоны" and mine("pavel") == ["ВХОД в зону"]
+    # два пересекающихся правила на вход в одну зону — одно уведомление
+    dup = add("zone_enter", {"scope": f"area:{area}"})
+    ingest.position(m, 44.5, 31.5, sog=10, nav=0)
+    assert mine("olga").count("ВХОД в зону") == 2 and mine("pavel").count("ВХОД в зону") == 2
+    ingest.position(m, 44.5, 32.5, sog=10, nav=0)
+    db.execute("DELETE FROM rules WHERE id=?", (dup,))
     ingest.position(m, 44.01, 30.01, sog=0.5, nav=1)       # у порта, якорь, медленно
     assert {"Смена статуса", "Скорость", "Заход в порт"} <= set(mine("olga"))
     ingest.position(m, 44.5, 30.5, sog=12, nav=0)          # ушло дальше 5 миль от порта

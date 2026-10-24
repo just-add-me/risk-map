@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
@@ -250,6 +251,35 @@ def _recipients(r: dict, via: list[int]) -> set[str]:
     return users
 
 
+# Одно событие (позиция, смена назначения, происшествие) — одно уведомление человеку, даже если сработали
+# два пересекающихся правила («вход в любую зону» и «вход в зону JWC»).
+_event = threading.local()
+
+
+def _one_event(fn: Callable) -> Callable:
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if getattr(_event, "told", None) is not None:      # вложенный вызов — то же событие
+            return fn(*args, **kwargs)
+        _event.told = set()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _event.told = None
+    return wrapper
+
+
+def _already_told(user: str, mmsi: str, zone_id: Optional[str], title: str) -> bool:
+    told = getattr(_event, "told", None)
+    if told is None:
+        return False
+    key = (user, mmsi, zone_id, title)
+    if key in told:
+        return True
+    told.add(key)
+    return False
+
+
 def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str] = None,
          title: Optional[str] = None, severity: Optional[str] = None,
          at: Optional[tuple[Optional[float], Optional[float]]] = None) -> None:
@@ -262,6 +292,8 @@ def fire(r: dict, mmsi: str, via: list[int], detail: str, zone_id: Optional[str]
         pos = db.query_one("SELECT lat, lon FROM ais_state WHERE mmsi=?", (mmsi,)) or {}
         at = (pos.get("lat"), pos.get("lon"))
     for user in _recipients(r, via):
+        if _already_told(user, mmsi, zone_id, title):
+            continue
         # rule_event — уведомление о событии с самим судном: в карточке судна его не показываем отдельно,
         # там уже есть само происшествие (санкции, новость, авария)
         kind = "rule_event" if r["kind"] == "vessel_event" else "rule"
@@ -441,6 +473,7 @@ def _safe(fn: Callable, *args) -> None:
         log.exception("Ошибка правила %s", args[0].get("id") if args and isinstance(args[0], dict) else "")
 
 
+@_one_event
 def on_position(mmsi: str, lat: float, lon: float, sog: Optional[float], nav: Optional[int]) -> None:
     for r, via in rules_for(mmsi, ("zone_enter", "zone_exit", "zone_near", "nav_status", "speed",
                                    "port_arrival", "port_departure", "ais_lost")):
@@ -457,6 +490,7 @@ def on_position(mmsi: str, lat: float, lon: float, sog: Optional[float], nav: Op
             db.execute("UPDATE rule_state SET fired=0 WHERE rule_id=? AND mmsi=?", (r["id"], mmsi))
 
 
+@_one_event
 def on_static(mmsi: str, destination: Optional[str], eta: Optional[str]) -> None:
     for r, via in rules_for(mmsi, ("destination",)):
         value = f"{destination or ''}|{eta or ''}" if r["params"]["eta"] else (destination or "")
@@ -470,6 +504,7 @@ def on_static(mmsi: str, destination: Optional[str], eta: Optional[str]) -> None
             fire(r, mmsi, via, f"{text} (было: {old[0] or '—'}" + (f", ETA {old[1] or '—'}" if len(old) > 1 else "") + ").")
 
 
+@_one_event
 def on_incident(inc: dict) -> None:
     from .ais import incidents
     # санкции, задержания и новости — про само судно, а не событие в точке: «рядом с судном» не бывает
@@ -497,6 +532,7 @@ def on_incident(inc: dict) -> None:
                      + (f" «{inc['text']}»" if inc.get("text") else ""))
 
 
+@_one_event
 def periodic() -> None:
     """Раз в 10 минут: «нет сигнала AIS», порт назначения в зоне."""
     _safe(lambda: _dest_rules())
@@ -526,6 +562,7 @@ def event_group(kind: str) -> Optional[str]:
     return next((g for g, (_, kinds) in EVENT_GROUPS.items() if kind in kinds), None)
 
 
+@_one_event
 def on_vessel_event(mmsi: str, kind: str, severity: str, label: str, text: str,
                     lat: Optional[float] = None, lon: Optional[float] = None) -> None:
     """Происшествие с судном флота (из incidents.record, screening, news): правила vessel_event.

@@ -38,7 +38,7 @@
 |---|---|
 | Что в очереди и когда была оценка | `docker compose exec app python -m app.world_news status` |
 | Оценить сейчас | `bash deploy/news_judge.sh` |
-| Журнал оценок | `tail data/news_judge.log` |
+| Журнал оценок | `tail logs/news_judge.log` |
 
 Если Claude недоступен (кончился лимит, слетел вход — войти заново: `claude` на сервере), статьи ждут до 3 суток
 и оцениваются при следующем запуске.

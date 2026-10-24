@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Оценка мировых морских новостей ИИ [мировые-новости] — запускается по расписанию (cron) раз в час:
-#   17 * * * * bash /home/deploy/risk-map/deploy/news_judge.sh >> /home/deploy/risk-map/data/news_judge.log 2>&1
+#   17 * * * * bash /home/deploy/risk-map/deploy/news_judge.sh >> /home/deploy/risk-map/logs/news_judge.log 2>&1
 #
 # Берёт у сайта очередь статей, спрашивает Claude (Claude Code по подписке, самая экономная модель),
 # отдаёт ответ сайту. Если Claude недоступен (кончился лимит, нет входа) — статьи ждут следующего запуска.
@@ -40,5 +40,5 @@ print("токенов: вход", (u.get("input_tokens") or 0) + (u.get("cache_r
 res=$(docker compose exec -T app python -m app.world_news apply < "$work/apply.json")
 echo "$(date -u +%FT%TZ) статей $n | $(cat "$work/usage")$res"
 # журнал не разрастается: последние 2000 строк
-log=data/news_judge.log
+log=logs/news_judge.log
 if [ -f "$log" ] && [ "$(wc -l < "$log")" -gt 2000 ]; then tail -n 1000 "$log" > "$log.tmp" && mv "$log.tmp" "$log"; fi
